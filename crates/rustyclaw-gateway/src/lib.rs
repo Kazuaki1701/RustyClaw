@@ -142,143 +142,233 @@ impl LaneRegistry {
                         }
                     }
 
-                    // レイヤー3：gmn 統合セマフォの獲得 (待機タイムアウト 60秒)
-                    // user / bg / flush を一本化し、同時 gmn 数を最大1に制限する
-                    tracing::debug!("Session {} attempting to acquire gmn_sem ({:?})...", session_id, priority);
+                    // 最新設定の取得
+                    let active_config = {
+                        let cfg = config.lock().unwrap();
+                        cfg.clone()
+                    };
 
-                    let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
-                    
-                    match permit_res {
-                        Ok(Ok(_permit)) => {
-                            tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
-                            
-                            // 最新設定の取得
-                            let active_config = {
-                                let cfg = config.lock().unwrap();
-                                cfg.clone()
-                            };
+                    let db_path = workspace_path.join("memory.db");
 
-                            let db_path = workspace_path.join("memory.db");
+                    // 1. Heartbeat 実行処理
+                    if session_id == "cron:heartbeat" {
+                        let heartbeat_svc = crate::heartbeat::HeartbeatService::new(active_config.clone(), workspace_path.clone(), bus.clone());
+                        
+                        let setup_res = {
+                            if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                if let Ok(digest) = heartbeat_svc.generate_digest(&db) {
+                                    let is_step5_allowed = heartbeat_svc.is_step5_allowed(&db).unwrap_or(false);
+                                    Some((digest, is_step5_allowed))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        };
 
-                            // 1. Heartbeat 実行処理
-                            if session_id == "cron:heartbeat" {
-                                let heartbeat_svc = crate::heartbeat::HeartbeatService::new(active_config.clone(), workspace_path.clone(), bus.clone());
-                                
-                                let setup_res = {
-                                    if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
-                                        if let Ok(digest) = heartbeat_svc.generate_digest(&db) {
-                                            let is_step5_allowed = heartbeat_svc.is_step5_allowed(&db).unwrap_or(false);
-                                            Some((digest, is_step5_allowed))
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                };
+                        if let Some((digest, is_step5_allowed)) = setup_res {
+                            let heartbeat_prompt = format!(
+                                "You are executing your HEARTBEAT patrol. Step 5 Vocal Greeting allowed: {}.\n\nRecent activity digest:\n{}", 
+                                is_step5_allowed, digest
+                            );
 
-                                if let Some((digest, is_step5_allowed)) = setup_res {
-                                    let heartbeat_prompt = format!(
-                                        "You are executing your HEARTBEAT patrol. Step 5 Vocal Greeting allowed: {}.\n\nRecent activity digest:\n{}", 
-                                        is_step5_allowed, digest
-                                    );
+                            let mut attempt = 0;
+                            let max_attempts = 3;
+                            let base_delay = Duration::from_secs(5);
 
-                                    let pipeline = Pipeline::new(active_config, gmn_sem.clone());
-                                    match pipeline.execute(&workspace_path, &session_id, &heartbeat_prompt).await {
-                                        Ok(response) => {
-                                            tracing::info!("Heartbeat LLM execution successful. Processing response...");
-                                            if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
-                                                let _ = heartbeat_svc.process_heartbeat_response(&response.content, &db);
+                            loop {
+                                tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
+                                let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
+                                match permit_res {
+                                    Ok(Ok(permit)) => {
+                                        tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
+                                        let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                        match pipeline.execute(&workspace_path, &session_id, &heartbeat_prompt).await {
+                                            Ok(response) => {
+                                                tracing::info!("Heartbeat LLM execution successful. Processing response...");
+                                                if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                                    let _ = heartbeat_svc.process_heartbeat_response(&response.content, &db);
+                                                }
+                                                break; // Exit the retry loop!
                                             }
+                                            Err(e) => {
+                                                drop(permit); // Release permit immediately so other lanes aren't blocked!
+                                                if let Some(rustyclaw_providers::ProviderError::RateLimit(limit_msg)) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
+                                                    if attempt < max_attempts {
+                                                        let backoff = base_delay * 2u32.pow(attempt);
+                                                        tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                        tokio::time::sleep(backoff).await;
+                                                        attempt += 1;
+                                                        continue;
+                                                    }
+                                                }
+                                                // Non-rate-limit error or max retries exceeded
+                                                tracing::error!("Heartbeat LLM execution failed: {:#}", e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Ok(Err(_)) => {
+                                        tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        tracing::error!("Session {} timed out (60s) waiting for permit slot. Execution skipped.", session_id);
+                                        let _ = bus.publish(SystemEvent::SystemError {
+                                            message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
+                                        });
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 2. Daily Summary 実行処理
+                    else if session_id == "cron:daily-summary" {
+                        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                        let prompt = format!("Compile the daily summary of activities and conversation for date: {}. Please output a concise markdown summary containing a 'TL;DR' section and a list of key topics.", today);
+                        
+                        let mut attempt = 0;
+                        let max_attempts = 3;
+                        let base_delay = Duration::from_secs(5);
+
+                        loop {
+                            tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
+                            let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
+                            match permit_res {
+                                Ok(Ok(permit)) => {
+                                    tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
+                                    let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                    match pipeline.execute(&workspace_path, &session_id, &prompt).await {
+                                        Ok(response) => {
+                                            tracing::info!("Daily Summary generated successfully.");
+                                            let summaries_dir = workspace_path.join("memory").join("summaries");
+                                            let _ = std::fs::create_dir_all(&summaries_dir);
+                                            let file_path = summaries_dir.join(format!("{}-daily-summary.md", today));
+                                            
+                                            let _ = rustyclaw_storage::atomic_write(&file_path, response.content.as_bytes());
+                                            
+                                            // Index matching summary in Tantivy
+                                            let index_dir = workspace_path.join("memory").join("index");
+                                            if let Ok(search_mgr) = rustyclaw_storage::SearchIndexManager::new(&index_dir) {
+                                                let _ = search_mgr.index_file(&file_path, &response.content, &today);
+                                            }
+                                            break; // Exit the retry loop!
                                         }
                                         Err(e) => {
-                                            tracing::error!("Heartbeat LLM execution failed: {:#}", e);
-                                        }
-                                    }
-                                }
-                            }
-                            // 2. Daily Summary 実行処理
-                            else if session_id == "cron:daily-summary" {
-                                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                                let prompt = format!("Compile the daily summary of activities and conversation for date: {}. Please output a concise markdown summary containing a 'TL;DR' section and a list of key topics.", today);
-                                
-                                let pipeline = Pipeline::new(active_config, gmn_sem.clone());
-                                match pipeline.execute(&workspace_path, &session_id, &prompt).await {
-                                    Ok(response) => {
-                                        tracing::info!("Daily Summary generated successfully.");
-                                        let summaries_dir = workspace_path.join("memory").join("summaries");
-                                        let _ = std::fs::create_dir_all(&summaries_dir);
-                                        let file_path = summaries_dir.join(format!("{}-daily-summary.md", today));
-                                        
-                                        let _ = rustyclaw_storage::atomic_write(&file_path, response.content.as_bytes());
-                                        
-                                        // Index matching summary in Tantivy
-                                        let index_dir = workspace_path.join("memory").join("index");
-                                        if let Ok(search_mgr) = rustyclaw_storage::SearchIndexManager::new(&index_dir) {
-                                            let _ = search_mgr.index_file(&file_path, &response.content, &today);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to generate Daily Summary: {:#}", e);
-                                    }
-                                }
-                            }
-                            // 3. 通常ユーザーセッション実行処理
-                            else {
-                                let pipeline = Pipeline::new(active_config, gmn_sem.clone());
-                                match pipeline.execute(&workspace_path, &session_id, &content).await {
-                                    Ok(response) => {
-                                        tracing::info!("Agent response generated successfully for Session {}", session_id);
-                                        let _ = bus.publish(SystemEvent::AgentResponse {
-                                            session_id: session_id.clone(),
-                                            channel_id: channel_id.clone(),
-                                            content: response.content,
-                                        });
-
-                                        // lastUserContact を更新 (SQLite & heartbeat-state.json)
-                                        if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
-                                            let now = chrono::Local::now().to_rfc3339();
-                                            let _ = db.set_state_value("lastUserContact", &now);
-
-                                            let state_path = workspace_path.join("memory").join("heartbeat-state.json");
-                                            let mut current_state = serde_json::json!({
-                                                "lastChecks": {
-                                                    "activityReview": "1970-01-01T00:00:00Z",
-                                                    "memoryMaintenance": "1970-01-01T00:00:00Z",
-                                                    "calendar": "1970-01-01T00:00:00Z",
-                                                    "email": "1970-01-01T00:00:00Z",
-                                                    "weather": "1970-01-01T00:00:00Z",
-                                                    "lastUserContact": now
+                                            drop(permit); // Release permit immediately so other lanes aren't blocked!
+                                            if let Some(rustyclaw_providers::ProviderError::RateLimit(limit_msg)) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
+                                                if attempt < max_attempts {
+                                                    let backoff = base_delay * 2u32.pow(attempt);
+                                                    tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                    tokio::time::sleep(backoff).await;
+                                                    attempt += 1;
+                                                    continue;
                                                 }
+                                            }
+                                            // Non-rate-limit error or max retries exceeded
+                                            tracing::error!("Failed to generate Daily Summary: {:#}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+                                Ok(Err(_)) => {
+                                    tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                    break;
+                                }
+                                Err(_) => {
+                                    tracing::error!("Session {} timed out (60s) waiting for permit slot. Execution skipped.", session_id);
+                                    let _ = bus.publish(SystemEvent::SystemError {
+                                        message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // 3. 通常ユーザーセッション実行処理
+                    else {
+                        let mut attempt = 0;
+                        let max_attempts = 3;
+                        let base_delay = Duration::from_secs(5);
+
+                        loop {
+                            tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
+                            let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
+                            match permit_res {
+                                Ok(Ok(permit)) => {
+                                    tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
+                                    let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                    match pipeline.execute(&workspace_path, &session_id, &content).await {
+                                        Ok(response) => {
+                                            tracing::info!("Agent response generated successfully for Session {}", session_id);
+                                            let _ = bus.publish(SystemEvent::AgentResponse {
+                                                session_id: session_id.clone(),
+                                                channel_id: channel_id.clone(),
+                                                content: response.content,
                                             });
-                                            if let Ok(c) = std::fs::read_to_string(&state_path) {
-                                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&c) {
-                                                    current_state = parsed;
-                                                    current_state["lastChecks"]["lastUserContact"] = serde_json::json!(now);
+
+                                            // lastUserContact を更新 (SQLite & heartbeat-state.json)
+                                            if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                                let now = chrono::Local::now().to_rfc3339();
+                                                let _ = db.set_state_value("lastUserContact", &now);
+
+                                                let state_path = workspace_path.join("memory").join("heartbeat-state.json");
+                                                let mut current_state = serde_json::json!({
+                                                    "lastChecks": {
+                                                        "activityReview": "1970-01-01T00:00:00Z",
+                                                        "memoryMaintenance": "1970-01-01T00:00:00Z",
+                                                        "calendar": "1970-01-01T00:00:00Z",
+                                                        "email": "1970-01-01T00:00:00Z",
+                                                        "weather": "1970-01-01T00:00:00Z",
+                                                        "lastUserContact": now
+                                                    }
+                                                });
+                                                if let Ok(c) = std::fs::read_to_string(&state_path) {
+                                                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&c) {
+                                                        current_state = parsed;
+                                                        current_state["lastChecks"]["lastUserContact"] = serde_json::json!(now);
+                                                    }
+                                                }
+                                                if let Ok(serialized) = serde_json::to_string_pretty(&current_state) {
+                                                    let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes());
                                                 }
                                             }
-                                            if let Ok(serialized) = serde_json::to_string_pretty(&current_state) {
-                                                let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes());
+                                            break; // Exit the retry loop!
+                                        }
+                                        Err(e) => {
+                                            drop(permit); // Release permit immediately so other lanes aren't blocked!
+                                            if let Some(rustyclaw_providers::ProviderError::RateLimit(limit_msg)) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
+                                                if attempt < max_attempts {
+                                                    let backoff = base_delay * 2u32.pow(attempt);
+                                                    tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                    tokio::time::sleep(backoff).await;
+                                                    attempt += 1;
+                                                    continue;
+                                                }
                                             }
+                                            // Non-rate-limit error or max retries exceeded
+                                            tracing::error!("Error in Agent execution for Session {}: {:#}", session_id, e);
+                                            let _ = bus.publish(SystemEvent::SystemError {
+                                                message: format!("Agent execution failed for session {}: {}", session_id, e),
+                                            });
+                                            break;
                                         }
                                     }
-                                    Err(e) => {
-                                        tracing::error!("Error in Agent execution for Session {}: {:#}", session_id, e);
-                                        let _ = bus.publish(SystemEvent::SystemError {
-                                            message: format!("Agent execution failed for session {}: {}", session_id, e),
-                                        });
-                                    }
+                                }
+                                Ok(Err(_)) => {
+                                    tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                    break;
+                                }
+                                Err(_) => {
+                                    tracing::error!("Session {} timed out (60s) waiting for permit slot. Execution skipped.", session_id);
+                                    let _ = bus.publish(SystemEvent::SystemError {
+                                        message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
+                                    });
+                                    break;
                                 }
                             }
-                        }
-                        Ok(Err(_)) => {
-                            tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
-                        }
-                        Err(_) => {
-                            tracing::error!("Session {} timed out (60s) waiting for permit slot. Execution skipped.", session_id);
-                            let _ = bus.publish(SystemEvent::SystemError {
-                                message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
-                            });
                         }
                     }
                 }
