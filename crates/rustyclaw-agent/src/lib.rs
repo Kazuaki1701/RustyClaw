@@ -25,8 +25,12 @@ impl Pipeline {
 
     /// 各種人格定義ファイルを読み込んでシステムプロンプト（Context）を構築する
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
+        // ── 現在日時を1行で先頭に注入（rate limit 対策で最小文字数）──
+        let now = chrono::Local::now();
+        let runtime_block = format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z"));
+
         let files = ["SOUL.md", "AGENTS.md", "MEMORY.md", "USER.md"];
-        let mut context = String::new();
+        let mut context = runtime_block;
 
         for filename in &files {
             let path = workspace_dir.join(filename);
@@ -623,6 +627,36 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     #[test]
+    fn test_build_system_context_injects_runtime_context() {
+        let ws_dir = tempdir().unwrap();
+        std::fs::write(ws_dir.path().join("SOUL.md"), "soul").unwrap();
+
+        let config = Config {
+            model_provider: "openai".to_string(),
+            model_name: "gpt-4o-mini".to_string(),
+            api_key: "dummy".to_string(),
+            api_base_url: "http://localhost".to_string(),
+            max_tokens: None,
+            temperature: None,
+            debug_dump: false,
+            timezone: None,
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
+        };
+        let flush_sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, flush_sem);
+        let context = pipeline.build_system_context(ws_dir.path()).unwrap();
+
+        // フォーマット: [now: YYYY-MM-DDTHH:MM:SS+HH:MM]
+        let first_line = context.lines().next().unwrap();
+        assert!(first_line.starts_with("[now: "), "datetime line must be first");
+        assert!(first_line.ends_with(']'));
+        assert!(first_line.contains('T'), "must be ISO 8601 format");
+        assert!(context.contains("# SOUL.md"));
+    }
+
+    #[test]
     fn test_extract_delimited_block_found() {
         let text = "preamble\n---NEW_MEMORY---\nhello world\n---END_MEMORY---\ntrailing";
         let result = extract_delimited_block(text, "---NEW_MEMORY---", "---END_MEMORY---");
@@ -690,6 +724,10 @@ mod tests {
             max_tokens: None,
             temperature: None,
             debug_dump: true,
+            timezone: Some("Asia/Tokyo".to_string()),
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
         };
 
         let flush_sem = Arc::new(Semaphore::new(1));
