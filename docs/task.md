@@ -117,34 +117,37 @@
 
 > 5/28 00:00〜06:55 のセッションログ（`sessions/`・`memory/logs/`）分析で判明した問題。
 
-- `[ ]` **【バグ】Heartbeat セッション履歴の無制限肥大化**
+- `[x]` **【バグ】Heartbeat セッション履歴の無制限肥大化**
   - **症状**: `cron-heartbeat.jsonl` に 182 ターン・179KB（6 時間稼働）。10 分毎に全履歴を LLM に流し込んでいる
   - **原因**: `cron:heartbeat` という固定セッション ID を使い続けるため、会話履歴が日をまたいで追記され続ける
   - **影響**: コンテキスト肥大 → レイテンシ増大・rate limit リスク増大
-  - **対策候補**: Heartbeat セッションは毎回新規 ID（例: `cron:heartbeat-YYYYMMDD-HHMM`）を使うか、会話履歴を使わずプロンプトのみで完結させる
+  - **対策**: Heartbeat などの `cron:` で始まるセッションIDの場合、Pipeline側で履歴の読み込みを完全にスキップしてステートレス化
+  - **完了日**: 2026-05-28
 
-- `[ ]` **【バグ】Heartbeat の LLM 応答が空（セッション履歴に記録されない）**
+- `[x]` **【バグ】Heartbeat の LLM 応答が空（セッション履歴に記録されない）**
   - **症状**: `cron-heartbeat.jsonl` の全 assistant エントリが空文字 `""`
   - **原因**: `--no-agent` モードでモデルがツール呼び出し JSON のみを生成しテキスト部分を生成しない場合、gmn がテキスト部分のみを返すため空になる
   - **影響**: セッション履歴が空で蓄積し続ける（メモリの無駄）・デバッグ困難
-  - **確認事項**: `process_heartbeat_response()` は activity log に正しく記録できているか（ログ上は OK に見えるが要精査）
+  - **対策**: `GmnCliProvider` にて `type == "content"` のテキストがない場合、標準出力の全生行をフォールバックとして採用して空のままになるのを防止
+  - **完了日**: 2026-05-28
 
-- `[ ]` **【バグ】heartbeat-digest.md が 0 バイト**
+- `[x]` **【バグ】heartbeat-digest.md が 0 バイト**
   - **症状**: `workspace/memory/heartbeat-digest.md` が空ファイル（0 byte）のまま
   - **影響**: Dashboard の heartbeat-digest パネルに何も表示されない
-  - **調査箇所**: `HeartbeatService::generate_digest()` の戻り値が空か、書き込み先パスが異なるか確認
+  - **対策**: `HeartbeatService::generate_digest` において増分条件によるスキップを廃止し、過去24時間以内にアクティブであったログを常に網羅的にスキャンしてダイジェストを維持
+  - **完了日**: 2026-05-28
 
-- `[ ]` **【既知問題・要対処】MCP ツール呼び出し JSON がチャットに漏出**
+- `[x]` **【既知問題・要対処】MCP ツール呼び出し JSON がチャットに漏出**
   - **症状**: Discord チャンネルに `{"action": "geminiclaw_status", ...}` 等の JSON ブロックが送信される
   - **原因**: `--no-agent` でツール実行ループなし。LLM がツール呼び出し JSON を生成しそのままテキスト出力として返る
-  - **対処案 A（応急）**: `Pipeline` のレスポンス後処理で ` ```json ... ``` ` ブロック（tool call パターン）をフィルタリング
-  - **対処案 B（根本）**: `workspace/AGENTS.md` 等から GeminiClaw 固有 MCP ツール指示を削除 → LLM がツール呼び出しを試みなくなる
-  - **対処案 C（長期）**: MCP クライアント実装（Phase 7-4）
+  - **対策**: `AGENTS.md` のレガシーMCP指示を削除し、さらに `Pipeline` にてアシスタントの応答時に生のツール呼び出しJSONブロック（` ```json ... ``` `）をフィルタリング除去する機構（JSON Leak Filter）を追加
+  - **完了日**: 2026-05-28
 
-- `[ ]` **【要確認】00:12〜01:25 の約 73 分間 Heartbeat が停止**
+- `[x]` **【要確認】00:12〜01:25 の約 73 分間 Heartbeat が停止**
   - **症状**: 本来 10 分間隔のはずが 00:12 → 01:25 と 73 分の空白
   - **推定原因**: 00:43 の Daily Summary 実行が gmn_sem を長時間占有 + rate limit による待機
-  - **対策候補**: Daily Summary の実行タイミングを CronService 内で Heartbeat と重ならないよう調整
+  - **対策**: `CronService` 内の Daily Summary トリガー処理に5分間（300秒）の tokio 待機オフセットを導入し、深夜の Heartbeat との同時起動による gmn_sem ロック・セマフォ競合を回避
+  - **完了日**: 2026-05-28
 
 ---
 

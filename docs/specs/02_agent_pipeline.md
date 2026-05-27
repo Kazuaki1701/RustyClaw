@@ -21,7 +21,7 @@
 - インプット：現在の会話入力、セッション履歴、ワークスペースの人格定義（`SOUL.md`、`AGENTS.md`、`MEMORY.md`、`USER.md`）。
 - 処理内容：
   - 各種人格・コンテキストファイルの読み込みとシステムプロンプトへの結合。
-  - セッション会話履歴（`ConversationHistory`）の取得とトークン上限チェック。
+  - セッション会話履歴（`ConversationHistory`）の取得とトークン上限チェック。**※ `cron:` から始まるセッションIDの場合は履歴のロードをスキップし、完全にステートレスとして扱うことでコンテキストの無限の肥大化を防止します。**
   - 必要に応じた会話履歴の圧縮（`compact_if_needed`）。
   - 日またぎの文脈復元（`Session Continuation`）や自発メッセージ（`Proactive Posts`）の注入。
 - アウトプット：LLM APIに送信可能な形式の `Vec<Message>`。
@@ -45,6 +45,7 @@
 ### ④ PublishResponse (応答の配信)
 - インプット：LLMの最終応答コンテンツ。
 - 処理内容：
+  - **JSON Leak Filter**: ユーザーやチャンネルへの配信前に、アシスタントの応答テキストから未加工のツール呼び出し用JSON（例: ````json {"action": ...} ````）等のリークを自動検知・除去するフィルタを適用します。
   - 出力先チャンネル（Telegram、Discord、CLI等）へ応答データを送信。
   - 送信成功時、セッションログ（`sessions/*.jsonl`）への追記（atomic/fail-closed）。
   - セッション完了に伴う非同期処理（Memory Flush 等）のトリガー。
