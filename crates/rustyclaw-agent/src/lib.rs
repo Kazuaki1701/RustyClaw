@@ -457,7 +457,8 @@ Rules:
         };
 
         // 3. LLMプロバイダ呼び出し
-        let response = self.provider.complete(&messages, &[], &opts).await?;
+        let mut response = self.provider.complete(&messages, &[], &opts).await?;
+        response.content = filter_json_leaks(&response.content);
 
         // 4. 会話ログの保存 (fail-closed)
         logger.append_message(session_id, &user_msg)
@@ -543,16 +544,66 @@ Rules:
         let mut buffer = String::new();
         let wrapped_stream = async_stream::try_stream! {
             let mut pin_stream = stream;
+            let mut pending_stream_buffer = String::new();
             while let Some(chunk_res) = pin_stream.next().await {
                 let chunk = chunk_res?;
                 buffer.push_str(&chunk.content);
-                yield chunk;
+                pending_stream_buffer.push_str(&chunk.content);
+
+                loop {
+                    if let Some(start_idx) = pending_stream_buffer.find("```json") {
+                        if start_idx > 0 {
+                            let safe_to_yield = pending_stream_buffer[..start_idx].to_string();
+                            yield StreamChunk { content: safe_to_yield };
+                            pending_stream_buffer.drain(..start_idx);
+                        }
+
+                        if let Some(end_offset) = pending_stream_buffer[7..].find("```") {
+                            let end_idx = 7 + end_offset + 3;
+                            let json_block = pending_stream_buffer[..end_idx].to_string();
+                            if json_block.contains("\"action\"") || json_block.contains("\"command\"") {
+                                pending_stream_buffer.drain(..end_idx);
+                            } else {
+                                yield StreamChunk { content: json_block };
+                                pending_stream_buffer.drain(..end_idx);
+                            }
+                            continue;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        let mut yield_len = pending_stream_buffer.len();
+                        for prefix_len in (1..=7).rev() {
+                            let prefix = &"```json"[..prefix_len];
+                            if pending_stream_buffer.ends_with(prefix) {
+                                yield_len = pending_stream_buffer.len() - prefix_len;
+                                break;
+                            }
+                        }
+
+                        if yield_len > 0 {
+                            let safe_to_yield: String = pending_stream_buffer.drain(..yield_len).collect();
+                            yield StreamChunk { content: safe_to_yield };
+                        }
+                        break;
+                    }
+                }
             }
+
+            if !pending_stream_buffer.is_empty() {
+                if pending_stream_buffer.contains("```json") && (pending_stream_buffer.contains("\"action\"") || pending_stream_buffer.contains("\"command\"")) {
+                    // Discard
+                } else {
+                    yield StreamChunk { content: pending_stream_buffer };
+                }
+            }
+
+            let cleaned_buffer = filter_json_leaks(&buffer);
 
             // ストリーム終了時: アシスタント返答を履歴保存 (fail-closed)
             let assistant_msg = Message {
                 role: "assistant".to_string(),
-                content: buffer.clone(),
+                content: cleaned_buffer.clone(),
                 name: None,
             };
             let logger_inner = SessionLogger::new(&workspace_dir_clone);
@@ -581,7 +632,7 @@ Rules:
 
                 let dump_data = DumpResponse {
                     role: "assistant".to_string(),
-                    content: buffer.clone(),
+                    content: cleaned_buffer.clone(),
                 };
                 if let Ok(file) = File::create(&file_path) {
                     let _ = serde_json::to_writer_pretty(file, &dump_data);
@@ -623,6 +674,30 @@ fn truncate_70_20(content: &str, max_bytes: usize) -> String {
         omitted,
         &content[tail_start..],
     )
+}
+
+/// Residual tool-calling JSON leaks (like ```json { "action": ... } ```) を除去する。
+fn filter_json_leaks(content: &str) -> String {
+    let mut cleaned = content.to_string();
+    let mut search_start = 0;
+    while let Some(offset) = cleaned[search_start..].find("```json") {
+        let start_idx = search_start + offset;
+        let rest = &cleaned[start_idx..];
+        if let Some(end_offset) = rest[7..].find("```") {
+            let end_idx = start_idx + 7 + end_offset + 3;
+            let json_block = &cleaned[start_idx..end_idx];
+            if json_block.contains("\"action\"") || json_block.contains("\"command\"") {
+                cleaned.replace_range(start_idx..end_idx, "");
+                // Do not update search_start, we keep searching from the same absolute index since content shifted left.
+                continue;
+            } else {
+                search_start = end_idx;
+                continue;
+            }
+        }
+        break;
+    }
+    cleaned.trim().to_string()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -824,6 +899,85 @@ mod tests {
             assert!(!msg.content.contains("old dummy history"), "History must be ignored!");
             assert!(!msg.content.contains("old robot reply"), "History must be ignored!");
         }
+
+        let _ = server_task.await;
+        Ok(())
+    }
+
+    #[test]
+    fn test_filter_json_leaks() {
+        let input = "Hello, user!\n```json\n{\n  \"action\": \"run_command\",\n  \"command\": \"ls\"\n}\n```\nDone.";
+        assert_eq!(filter_json_leaks(input), "Hello, user!\n\nDone.");
+
+        let input_no_leak = "Hello, user!\n```json\n{\n  \"name\": \"test\"\n}\n```\nDone.";
+        assert_eq!(filter_json_leaks(input_no_leak), "Hello, user!\n```json\n{\n  \"name\": \"test\"\n}\n```\nDone.");
+
+        let input_multiple = "Start.\n```json\n{\n  \"name\": \"test\"\n}\n```\nMiddle.\n```json\n{\n  \"action\": \"run_command\"\n}\n```\nEnd.";
+        assert_eq!(filter_json_leaks(input_multiple), "Start.\n```json\n{\n  \"name\": \"test\"\n}\n```\nMiddle.\n\nEnd.");
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_execute_stream_leak_filter() -> Result<()> {
+        let ws_dir = tempdir()?;
+        fs::write(ws_dir.path().join("SOUL.md"), "Soul Content")?;
+        fs::write(ws_dir.path().join("AGENTS.md"), "Agents Content")?;
+        fs::write(ws_dir.path().join("MEMORY.md"), "Memory Content")?;
+        fs::write(ws_dir.path().join("USER.md"), "User Content")?;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut writer = tokio::io::BufWriter::new(&mut socket);
+                let response_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
+                let _ = writer.write_all(response_header.as_bytes()).await;
+                let _ = writer.flush().await;
+
+                let chunks = vec![
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"```json\\n{\\n  \\\"action\\\": \\\"run_command\\\",\\n  \\\"command\\\": \\\"ls\\\"\\n}\\n```\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"}}]}\n\n",
+                    "data: [DONE]\n\n",
+                ];
+
+                for chunk in chunks {
+                    let _ = writer.write_all(chunk.as_bytes()).await;
+                    let _ = writer.flush().await;
+                }
+                let _ = writer.shutdown().await;
+            }
+        });
+
+        let config = Config {
+            model_provider: "openai".to_string(),
+            model_name: "gpt-4o-mini".to_string(),
+            api_key: "dummy".to_string(),
+            api_base_url: format!("http://{}", addr),
+            max_tokens: None,
+            temperature: None,
+            debug_dump: true,
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
+        };
+
+        let flush_sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, flush_sem);
+        let mut stream_res = pipeline.execute_stream(ws_dir.path(), "session-stream-test", "hello").await?;
+
+        let mut chunks = Vec::new();
+        while let Some(chunk_res) = stream_res.next().await {
+            let chunk = chunk_res?;
+            chunks.push(chunk.content);
+        }
+
+        assert_eq!(chunks.join(""), "Hello Done.");
+
+        let logger = SessionLogger::new(ws_dir.path());
+        let history = logger.load_history("session-stream-test")?;
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1].content, "Hello Done.");
 
         let _ = server_task.await;
         Ok(())

@@ -83,11 +83,6 @@ Follow `HEARTBEAT.md` exactly. Each check produces one of three outcomes:
 - If **any** check is Critical → reply with alert summary only (no `HEARTBEAT_OK`)
 - Informational items are always logged, never sent as alerts — they surface in the daily summary or when the user asks
 
-## GeminiClaw Self-Management
-
-- **CLI commands** — use `geminiclaw_admin` MCP tool (see `self-manage` skill for usage)
-- **Cron jobs** — use `geminiclaw_cron_*` tools (see `cron` skill for usage)
-- **Skill editing** — edit `.gemini/skills/<name>/SKILL.md` with file tools for content changes; use `geminiclaw_admin` for install/remove/enable/disable
 
 ## Secret Management (Vault)
 
