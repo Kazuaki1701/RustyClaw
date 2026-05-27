@@ -21,8 +21,8 @@ pub mod heartbeat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Priority {
-    Normal,     // ユーザー対話 (Semaphoreスロット数 4)
-    Background, // 自発パトロール / Heartbeat (Semaphoreスロット数 2)
+    Normal,     // ユーザー対話
+    Background, // 自発パトロール / Heartbeat
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -74,11 +74,10 @@ impl MessageBus {
 
 pub struct LaneRegistry {
     lanes: Arc<TokioMutex<HashMap<String, mpsc::Sender<SystemEvent>>>>,
-    user_sem: Arc<Semaphore>,
-    bg_sem: Arc<Semaphore>,
-    /// flush_memory() 専用セマフォ (容量1)。
-    /// セマフォ管理外で走っていた flush gmn を制限し、意図した上限を超えないようにする。
-    flush_sem: Arc<Semaphore>,
+    /// 全 gmn プロセスを直列化する統合セマフォ (容量1)。
+    /// user 対話 / bg (heartbeat) / flush_memory() の全ての gmn 起動がこの枠を取得する。
+    /// MEMORY.md 等ワークスペースファイルへの並列書き込みによるデータ消失を防止する。
+    gmn_sem: Arc<Semaphore>,
     config: Arc<StdMutex<Config>>,
     workspace_path: PathBuf,
     bus: Arc<MessageBus>,
@@ -88,9 +87,7 @@ impl LaneRegistry {
     pub fn new(config: Config, workspace_path: PathBuf, bus: Arc<MessageBus>) -> Self {
         Self {
             lanes: Arc::new(TokioMutex::new(HashMap::new())),
-            user_sem: Arc::new(Semaphore::new(1)),  // ユーザー対話同時枠: 共有ファイル（MEMORY.md等）の競合防止のため直列化
-            bg_sem: Arc::new(Semaphore::new(1)),    // バックグラウンド同時枠 (heartbeat / daily-summary)
-            flush_sem: Arc::new(Semaphore::new(1)), // flush_memory() 専用枠
+            gmn_sem: Arc::new(Semaphore::new(1)), // 全 gmn プロセス統合枠 (user + bg + flush を一本化)
             config: Arc::new(StdMutex::new(config)),
             workspace_path,
             bus,
@@ -127,9 +124,7 @@ impl LaneRegistry {
         let (tx, rx) = mpsc::channel::<SystemEvent>(10);
         lanes.insert(session_id.clone(), tx.clone());
 
-        let user_sem = self.user_sem.clone();
-        let bg_sem = self.bg_sem.clone();
-        let flush_sem = self.flush_sem.clone();
+        let gmn_sem = self.gmn_sem.clone();
         let config = self.config.clone();
         let workspace_path = self.workspace_path.clone();
         let bus = self.bus.clone();
@@ -147,15 +142,11 @@ impl LaneRegistry {
                         }
                     }
 
-                    // レイヤー3：優先度に応じたセマフォの獲得 (待機タイムアウト 60秒)
-                    let sem = match priority {
-                        Priority::Normal => user_sem.clone(),
-                        Priority::Background => bg_sem.clone(),
-                    };
+                    // レイヤー3：gmn 統合セマフォの獲得 (待機タイムアウト 60秒)
+                    // user / bg / flush を一本化し、同時 gmn 数を最大1に制限する
+                    tracing::debug!("Session {} attempting to acquire gmn_sem ({:?})...", session_id, priority);
 
-                    tracing::debug!("Session {} attempting to acquire {:?} slot permit...", session_id, priority);
-                    
-                    let permit_res = tokio::time::timeout(Duration::from_secs(60), sem.acquire()).await;
+                    let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                     
                     match permit_res {
                         Ok(Ok(_permit)) => {
@@ -192,7 +183,7 @@ impl LaneRegistry {
                                         is_step5_allowed, digest
                                     );
 
-                                    let pipeline = Pipeline::new(active_config, flush_sem.clone());
+                                    let pipeline = Pipeline::new(active_config, gmn_sem.clone());
                                     match pipeline.execute(&workspace_path, &session_id, &heartbeat_prompt).await {
                                         Ok(response) => {
                                             tracing::info!("Heartbeat LLM execution successful. Processing response...");
@@ -211,7 +202,7 @@ impl LaneRegistry {
                                 let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                                 let prompt = format!("Compile the daily summary of activities and conversation for date: {}. Please output a concise markdown summary containing a 'TL;DR' section and a list of key topics.", today);
                                 
-                                let pipeline = Pipeline::new(active_config, flush_sem.clone());
+                                let pipeline = Pipeline::new(active_config, gmn_sem.clone());
                                 match pipeline.execute(&workspace_path, &session_id, &prompt).await {
                                     Ok(response) => {
                                         tracing::info!("Daily Summary generated successfully.");
@@ -234,7 +225,7 @@ impl LaneRegistry {
                             }
                             // 3. 通常ユーザーセッション実行処理
                             else {
-                                let pipeline = Pipeline::new(active_config, flush_sem.clone());
+                                let pipeline = Pipeline::new(active_config, gmn_sem.clone());
                                 match pipeline.execute(&workspace_path, &session_id, &content).await {
                                     Ok(response) => {
                                         tracing::info!("Agent response generated successfully for Session {}", session_id);

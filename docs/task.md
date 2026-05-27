@@ -42,7 +42,12 @@
 
 - `[x]` **`user_sem` を 1 に削減**（共有ファイル競合防止）
   - `MEMORY.md` 等への並列書き込みによるデータ消失リスクへの対策（A案採用）
-  - 詳細: `docs/specs/05_gateway_spec.md` の `[^user_sem]` 脚注を参照
+  - 詳細: `docs/specs/05_gateway_spec.md` の `[^gmn_sem]` 脚注を参照
+
+- `[x]` **`gmn_sem` 統合セマフォへの一本化**（全 gmn プロセスを直列化）
+  - `user_sem` / `bg_sem` / `flush_sem` の3セマフォを `gmn_sem(1)` に統合
+  - user 対話 / bg heartbeat / flush_memory が同時に1つしか gmn を起動できない
+  - Phase 5 MCP 統合時の影響は `[^mcp_heartbeat]` 脚注を参照
 
 - `[x]` **`flush_sem` 専用セマフォ追加**
   - `flush_memory()` がセマフォ管理外で走っていた問題を修正
@@ -106,9 +111,14 @@
 
 ## 継続検討課題
 
-- `[ ]` **`user_sem > 1` の並列化復活（2026-05-28 積み残し）**
-  - 現状 `user_sem=1` でユーザーセッションを直列化中（共有ファイル競合防止のため）
+- `[ ]` **`gmn_sem > 1` の並列化復活（2026-05-28 積み残し）**
+  - 現状 `gmn_sem=1` で全 gmn プロセスを直列化中（共有ファイル競合防止のため）
   - 並列化を再導入するには以下のいずれかが前提条件：
     - B案: `run-progress.json` によるソフト保護（TOCTOU 問題が残るため部分的対策）
     - C案: プロバイダー層でのファイルロック機構（Gemini CLI サブプロセス経由のため実装難度高）
-  - 詳細設計は `docs/specs/05_gateway_spec.md` の `[^user_sem]` 脚注を参照
+  - 詳細設計は `docs/specs/05_gateway_spec.md` の `[^gmn_sem]` 脚注を参照
+
+- `[ ]` **Phase 5 MCP 統合時の Heartbeat 所要時間増大への対応（2026-05-28 積み残し）**
+  - Calendar / Gmail MCP ツール統合後、Heartbeat が gmn_sem を 1〜5 分占有する可能性
+  - ユーザー対話が最大 5 分待機を強いられる場合がある
+  - 詳細は `docs/specs/05_gateway_spec.md` の `[^mcp_heartbeat]` 脚注を参照
