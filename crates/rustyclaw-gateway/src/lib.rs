@@ -511,7 +511,6 @@ mod tests {
             max_tokens: None,
             temperature: None,
             debug_dump: false,
-            timezone: None,
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],

@@ -14,9 +14,6 @@ pub struct Config {
     pub temperature: Option<f32>,
     #[serde(default)]
     pub debug_dump: bool,
-    /// IANA タイムゾーン文字列（例: "Asia/Tokyo"）。未設定時はシステムローカルを使用。
-    #[serde(default)]
-    pub timezone: Option<String>,
     /// Discord Bot トークン。未設定時は環境変数 DISCORD_TOKEN にフォールバック。
     #[serde(default)]
     pub discord_token: Option<String>,
@@ -44,6 +41,29 @@ impl Config {
     }
 }
 
+/// システムの IANA タイムゾーン名を検出する。
+///
+/// 優先順位:
+///   1. /etc/timezone（Debian / Raspberry Pi OS）
+///   2. /etc/localtime シンボリックリンクから zoneinfo パスを抽出
+///   3. TZ 環境変数
+///   4. None（呼び出し側は chrono::Local にフォールバック）
+pub fn detect_timezone() -> Option<String> {
+    if let Ok(tz) = std::fs::read_to_string("/etc/timezone") {
+        let tz = tz.trim().to_string();
+        if !tz.is_empty() {
+            return Some(tz);
+        }
+    }
+    if let Ok(link) = std::fs::read_link("/etc/localtime") {
+        let s = link.to_string_lossy();
+        if let Some(idx) = s.find("zoneinfo/") {
+            return Some(s[idx + 9..].to_string());
+        }
+    }
+    std::env::var("TZ").ok()
+}
+
 /// 指定されたパスから `config.json` をロードする
 pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     let file = File::open(&path)
@@ -51,10 +71,10 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     let reader = BufReader::new(file);
     let mut config: Config = serde_json::from_reader(reader)
         .with_context(|| "Failed to parse config.json schema")?;
-    
+
     // 環境変数によるオーバーライドの適用
     config.override_with_env();
-    
+
     Ok(config)
 }
 
@@ -99,7 +119,6 @@ mod tests {
             max_tokens: None,
             temperature: None,
             debug_dump: false,
-            timezone: None,
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
@@ -119,5 +138,14 @@ mod tests {
             std::env::remove_var("RUSTYCLAW_MODEL_NAME");
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_detect_timezone_returns_string() {
+        // 検出結果が Some の場合、空文字列でないこと
+        if let Some(tz) = detect_timezone() {
+            assert!(!tz.is_empty());
+        }
+        // None の場合は chrono::Local にフォールバックするため問題なし
     }
 }
