@@ -76,17 +76,24 @@ impl CronService {
                         let _ = db.set_state_value("daily_summary_date", &today);
                     }
 
-                    tracing::info!("CronService: Triggering Daily Summary event for date: {}...", today);
-                    let event = SystemEvent::IncomingMessage {
-                        session_id: "cron:daily-summary".to_string(),
-                        user_id: "cron".to_string(),
-                        channel_id: "cron".to_string(),
-                        content: "daily-summary".to_string(),
-                        priority: Priority::Background,
-                    };
-                    if let Err(e) = bus_daily.publish(event) {
-                        tracing::error!("CronService: Failed to publish Daily Summary event: {:#}", e);
-                    }
+                    // Offset triggering by 5 minutes to prevent locks/collisions with Heartbeat 10m ticks on gmn_sem
+                    tracing::info!("CronService: Daily Summary date changed. Waiting 5 minutes offset before triggering...");
+                    let bus_clone = bus_daily.clone();
+                    let today_clone = today.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(300)).await;
+                        tracing::info!("CronService: Triggering Daily Summary event for date: {}...", today_clone);
+                        let event = SystemEvent::IncomingMessage {
+                            session_id: "cron:daily-summary".to_string(),
+                            user_id: "cron".to_string(),
+                            channel_id: "cron".to_string(),
+                            content: "daily-summary".to_string(),
+                            priority: Priority::Background,
+                        };
+                        if let Err(e) = bus_clone.publish(event) {
+                            tracing::error!("CronService: Failed to publish Daily Summary event: {:#}", e);
+                        }
+                    });
                 }
             }
         });
