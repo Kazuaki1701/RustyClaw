@@ -422,8 +422,12 @@ Rules:
 
         // 1. 過去履歴のロードとトークン圧縮処理の適用
         let logger = SessionLogger::new(workspace_dir);
-        let history_messages = logger.load_history(session_id)
-            .context("Failed to load session history messages")?;
+        let history_messages = if session_id.starts_with("cron:") {
+            Vec::new()
+        } else {
+            logger.load_history(session_id)
+                .context("Failed to load session history messages")?
+        };
 
         let mut history = ConversationHistory::new(history_messages);
         history.compact_if_needed(4000);
@@ -489,8 +493,12 @@ Rules:
 
         // 1. 過去履歴のロードとトークン圧縮処理の適用
         let logger = SessionLogger::new(workspace_dir);
-        let history_messages = logger.load_history(session_id)
-            .context("Failed to load session history messages")?;
+        let history_messages = if session_id.starts_with("cron:") {
+            Vec::new()
+        } else {
+            logger.load_history(session_id)
+                .context("Failed to load session history messages")?
+        };
 
         let mut history = ConversationHistory::new(history_messages);
         history.compact_if_needed(4000);
@@ -744,6 +752,78 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].content, "hello");
         assert_eq!(history[1].content, "I am a robot.");
+
+        let _ = server_task.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cron_session_ignores_history() -> Result<()> {
+        let ws_dir = tempdir()?;
+        fs::write(ws_dir.path().join("SOUL.md"), "Soul Content")?;
+        fs::write(ws_dir.path().join("AGENTS.md"), "Agents Content")?;
+        fs::write(ws_dir.path().join("MEMORY.md"), "Memory Content")?;
+        fs::write(ws_dir.path().join("USER.md"), "User Content")?;
+
+        // 1. Create a dummy session log or mock history.
+        let logger = SessionLogger::new(ws_dir.path());
+        logger.append_message("cron:heartbeat", &Message {
+            role: "user".to_string(),
+            content: "old dummy history".to_string(),
+            name: None,
+        })?;
+        logger.append_message("cron:heartbeat", &Message {
+            role: "assistant".to_string(),
+            content: "old robot reply".to_string(),
+            name: None,
+        })?;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
+                    \"choices\": [{\
+                        \"message\": {\
+                            \"role\": \"assistant\",\
+                            \"content\": \"cron response\"\
+                        }\
+                    }]\
+                }";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let config = Config {
+            model_provider: "openai".to_string(),
+            model_name: "gpt-4o-mini".to_string(),
+            api_key: "dummy".to_string(),
+            api_base_url: format!("http://{}", addr),
+            max_tokens: None,
+            temperature: None,
+            debug_dump: true,
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
+        };
+
+        let flush_sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, flush_sem);
+        
+        // 2. Call pipeline.execute("cron:heartbeat") and verify that it skips history.
+        let resp = pipeline.execute(ws_dir.path(), "cron:heartbeat", "new message").await?;
+        assert_eq!(resp.content, "cron response");
+
+        let req_dump_path = ws_dir.path().join("memory").join("debug").join("last_request.json");
+        let req_dump_content = fs::read_to_string(req_dump_path)?;
+        let sent_messages: Vec<Message> = serde_json::from_str(&req_dump_content)?;
+
+        // Verify that the old history is NOT present in the sent messages.
+        for msg in &sent_messages {
+            assert!(!msg.content.contains("old dummy history"), "History must be ignored!");
+            assert!(!msg.content.contains("old robot reply"), "History must be ignored!");
+        }
 
         let _ = server_task.await;
         Ok(())
