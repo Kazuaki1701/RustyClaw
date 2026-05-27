@@ -88,7 +88,7 @@ impl LaneRegistry {
     pub fn new(config: Config, workspace_path: PathBuf, bus: Arc<MessageBus>) -> Self {
         Self {
             lanes: Arc::new(TokioMutex::new(HashMap::new())),
-            user_sem: Arc::new(Semaphore::new(2)),  // ユーザー対話同時枠 (Antigravity 2.0 クォータ保護のため抑制)
+            user_sem: Arc::new(Semaphore::new(1)),  // ユーザー対話同時枠: 共有ファイル（MEMORY.md等）の競合防止のため直列化
             bg_sem: Arc::new(Semaphore::new(1)),    // バックグラウンド同時枠 (heartbeat / daily-summary)
             flush_sem: Arc::new(Semaphore::new(1)), // flush_memory() 専用枠
             config: Arc::new(StdMutex::new(config)),
