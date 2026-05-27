@@ -19,7 +19,8 @@ docs/
 │   ├── 04_heartbeat_spec.md   # Heartbeat 自発行動システム仕様
 │   ├── 05_gateway_spec.md     # Gateway・並列制御 Lane Queue 仕様
 │   ├── 06_roadmap_decisions.md # ロードマップ・重要設計決定事項
-│   └── 07_mcp_plan.md         # [PLAN] rustyclaw-mcp 実装計画（Phase 7）
+│   ├── 07_mcp_plan.md         # [PLAN] rustyclaw-mcp 実装計画（Phase 7）
+│   └── 08_operation_inspection.md  # 稼働点検ガイド（コマンド集・既知パターン）
 │
 ├── archive/                   # 【参照のみ・編集不可】すでに完了した「過去の計画書・報告書」
 │   ├── implementation_plan.md # 過去の実装計画（Phase 2 & 4）
