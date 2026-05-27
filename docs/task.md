@@ -79,35 +79,35 @@
 
 ---
 
-## Phase 6: 次回セッション向け Todo
+## Phase 6: 次回セッション向け Todo ✅ 完了
 
-- `[ ]` **gmn デバッグログの稼働確認**
+- `[x]` **gmn デバッグログの稼働確認**
   - `RUST_LOG=debug` で起動し `gmn spawn: args` / `gmn exit: response` が出力されるか確認
   - rate limit 時の stderr 内容が `WARN` として拾えているか確認
 
-- `[ ]` **Memory Flush の動作確認**
+- `[x]` **Memory Flush の動作確認**
   - 実チャット 6 ターン後に flush が起動するか確認（`memory flush: starting` ログ）
   - 15 分ゲートのスキップ動作確認（`memory flush: skipping (time gate...)` ログ）
   - `MEMORY.md` が全書き直しされ 5KB 以内に収まっているか確認
 
-- `[ ]` **Dashboard の動作確認**
+- `[x]` **Dashboard の動作確認**
   - `MEMORY.md`・`heartbeat-digest.md`・`heartbeat-state.json` の表示確認
   - 5 秒ポーリングで内容が更新されるか確認
 
-- `[ ]` **rate limit 時のリトライ戦略検討**
+- `[x]` **rate limit 時のリトライ戦略検討**
   - 現状: `GMN_MAX_RETRIES=0` で即エラー返却（RustyClaw 側でリトライなし）
   - 検討: `LaneRegistry` レベルでの指数バックオフリトライ実装
   - 検討: rate limit エラー時のユーザー通知メッセージ整備
 
-- `[ ]` **Session Continuation の動作確認**
+- `[x]` **Session Continuation の動作確認**
   - 日またぎセッションで前日サマリーが注入されるか確認
   - `memory/summaries/` の Daily Summary 生成確認
 
-- `[ ]` **コードレビュー指摘の対応 (Minor)**
+- `[x]` **コードレビュー指摘の対応 (Minor)**
   - `rustyclaw-gateway` クレートの 10 件のコンパイラ警告（未使用インポートや非 snake_case 命名）を解消する
   - 命名警告（`activityReview` 等）については、`#[serde(rename = "...")]` や `#[allow(non_snake_case)]` を用いて警告をクリーンにする
 
-- `[ ]` **仕様書へのフィードバック（DoD の適用）**
+- `[x]` **仕様書へのフィードバック（DoD の適用）**
   - 各種動作確認で仕様との差異が判明した場合、`docs/specs/` 配下の基本仕様書（`01_`〜`06_`）を最新コードに同期させる
   - rate limit のリトライ戦略を検討・実装した際、`docs/specs/02_agent_pipeline.md` 等の関連仕様書をアップデートする
 
