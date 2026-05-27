@@ -13,11 +13,14 @@ pub struct HeartbeatService {
     config: Config,
     workspace_path: PathBuf,
     bus: std::sync::Arc<MessageBus>,
+    /// proactive 通知の送信先チャンネル ID。None の場合はセッション検索にフォールバック。
+    home_channel_id: Option<String>,
 }
 
 impl HeartbeatService {
     pub fn new(config: Config, workspace_path: PathBuf, bus: std::sync::Arc<MessageBus>) -> Self {
-        Self { config, workspace_path, bus }
+        let home_channel_id = config.discord_home_channel_id.clone();
+        Self { config, workspace_path, bus, home_channel_id }
     }
 
     /// Heartbeat pre-run: heartbeat-digest.md の自動生成
@@ -193,32 +196,38 @@ impl HeartbeatService {
             // Proactive speak / Critical
             tracing::info!("HeartbeatService: Proactive vocal speak triggered! Sending proactive message...");
 
-            // Find last active user session to post response back to
-            let sessions_dir = self.workspace_path.join("sessions");
-            let mut last_active_session = None;
-            let mut last_mod_time = SystemTime::UNIX_EPOCH;
-
-            if let Ok(dir_entries) = fs::read_dir(&sessions_dir) {
-                for entry in dir_entries.flatten() {
-                    let path = entry.path();
-                    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    if filename.ends_with(".jsonl") && !filename.starts_with("cron") {
-                        if let Ok(metadata) = fs::metadata(&path) {
-                            if let Ok(mod_time) = metadata.modified() {
-                                if mod_time > last_mod_time {
-                                    last_mod_time = mod_time;
-                                    last_active_session = Some(filename.trim_end_matches(".jsonl").to_string());
+            // home_channel_id が設定されていればそれを優先、なければ旧来のセッション検索
+            let (target_session_id, channel_id) = if let Some(ref ch_id) = self.home_channel_id {
+                let today = chrono::Local::now().format("%Y%m%d").to_string();
+                let session_id = format!("discord-C{}-{}", ch_id, today);
+                (session_id, ch_id.clone())
+            } else {
+                // フォールバック: 最後にアクティブだったセッションを探す
+                let sessions_dir = self.workspace_path.join("sessions");
+                let mut last_active_session: Option<String> = None;
+                let mut last_mod_time = SystemTime::UNIX_EPOCH;
+                if let Ok(dir_entries) = fs::read_dir(&sessions_dir) {
+                    for entry in dir_entries.flatten() {
+                        let path = entry.path();
+                        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        if filename.ends_with(".jsonl") && !filename.starts_with("cron") {
+                            if let Ok(metadata) = fs::metadata(&path) {
+                                if let Ok(mod_time) = metadata.modified() {
+                                    if mod_time > last_mod_time {
+                                        last_mod_time = mod_time;
+                                        last_active_session = Some(filename.trim_end_matches(".jsonl").to_string());
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-
-            let target_session_id = last_active_session.unwrap_or_else(|| "discord-Cdefault-general".to_string());
-            let channel_id = target_session_id.split('-').nth(1)
-                .map(|s| s.trim_start_matches('C').to_string())
-                .unwrap_or_else(|| "default".to_string());
+                let sid = last_active_session.unwrap_or_else(|| "discord-Cunknown-00000000".to_string());
+                let ch = sid.split('-').nth(1)
+                    .map(|s| s.trim_start_matches('C').to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                (sid, ch)
+            };
 
             // 1. Proactive Post 注入 (ユーザーの会話履歴ファイルへ記録)
             let logger = SessionLogger::new(&self.workspace_path);
