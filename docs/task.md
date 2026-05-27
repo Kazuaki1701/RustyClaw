@@ -130,9 +130,12 @@
 - `[ ]` **MCP クライアント自前実装（PicoClaw 方式、長期課題）**
   - 現状: gmn CLI の `--no-agent` で LLM 呼び出しのみ行い、MCP ツール実行能力を持たない
   - 目標: PicoClaw の `pkg/mcp` に相当する Rust クレート `rustyclaw-mcp` を実装し、AgentLoop 内で直接 MCP サーバーと JSON-RPC 通信する
-  - PicoClaw 実装の参照先: `/home/kazuaki/Projects/PicoClaw/master/upstream/pkg/agent/agent_mcp.go`
-  - 主な機能要件:
-    - `mcp::Manager` — MCP サーバーへの接続・ツール定義取得
-    - `tools::Registry` — LLM へのツール一覧提供とツール呼び出し実行ループ
-    - ツール検索（Discovery）— BM25 / Regex によるツール絞り込み（大量ツール対応）
+  - 詳細実装計画: `docs/specs/07_mcp_plan.md` を参照
+  - 実装フェーズ（計画書より抜粋）:
+    - Phase 7-1: Tool トレイト + ToolRegistry（`rustyclaw-tools` 実装）
+    - Phase 7-2: Provider 拡張（ToolCall レスポンス対応）
+    - Phase 7-3: Agent アジェンティックループ
+    - Phase 7-4: `rustyclaw-mcp` クレート新設（MCP クライアント）
+    - Phase 7-5: 設定統合 + Gateway への組み込み
+    - Phase 7-6: ツール検索 Discovery（オプション）
   - 前提条件: `gmn_sem > 1` の並列化（共有ファイル排他制御）と同時に検討すること
