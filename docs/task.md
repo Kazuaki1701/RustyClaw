@@ -1,5 +1,9 @@
 # Task List — RustyClaw
 
+> [!NOTE]
+> **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
+> **最終更新日**: 2026-05-28  
+
 ---
 
 ## Phase 2 & 4: Gateway Services, Heartbeat System, Long-Term Memory ✅ 完了
@@ -35,6 +39,10 @@
 
 - `[x]` **セマフォ値削減**（Antigravity 2.0 対応）
   - `user_sem`: 4 → 2、`bg_sem`: 2 → 1
+
+- `[x]` **`user_sem` を 1 に削減**（共有ファイル競合防止）
+  - `MEMORY.md` 等への並列書き込みによるデータ消失リスクへの対策（A案採用）
+  - 詳細: `docs/specs/05_gateway_spec.md` の `[^user_sem]` 脚注を参照
 
 - `[x]` **`flush_sem` 専用セマフォ追加**
   - `flush_memory()` がセマフォ管理外で走っていた問題を修正
@@ -89,3 +97,18 @@
 - `[ ]` **Session Continuation の動作確認**
   - 日またぎセッションで前日サマリーが注入されるか確認
   - `memory/summaries/` の Daily Summary 生成確認
+
+- `[ ]` **仕様書へのフィードバック（DoD の適用）**
+  - 各種動作確認で仕様との差異が判明した場合、`docs/specs/` 配下の基本仕様書（`01_`〜`06_`）を最新コードに同期させる
+  - rate limit のリトライ戦略を検討・実装した際、`docs/specs/02_agent_pipeline.md` 等の関連仕様書をアップデートする
+
+---
+
+## 継続検討課題
+
+- `[ ]` **`user_sem > 1` の並列化復活（2026-05-28 積み残し）**
+  - 現状 `user_sem=1` でユーザーセッションを直列化中（共有ファイル競合防止のため）
+  - 並列化を再導入するには以下のいずれかが前提条件：
+    - B案: `run-progress.json` によるソフト保護（TOCTOU 問題が残るため部分的対策）
+    - C案: プロバイダー層でのファイルロック機構（Gemini CLI サブプロセス経由のため実装難度高）
+  - 詳細設計は `docs/specs/05_gateway_spec.md` の `[^user_sem]` 脚注を参照
