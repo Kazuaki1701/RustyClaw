@@ -109,9 +109,6 @@ impl HealthServer {
                                                 };
 
                                                 if bus_clone.publish(event).is_ok() {
-                                                    let mut timeout = tokio::time::interval(std::time::Duration::from_secs(60));
-                                                    timeout.tick().await;
-
                                                     tokio::select! {
                                                         res = async {
                                                             loop {
@@ -122,7 +119,7 @@ impl HealthServer {
                                                                 }
                                                             }
                                                         } => { chat_resp = res; }
-                                                        _ = timeout.tick() => {
+                                                        _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
                                                             chat_resp = "Error: Request timeout".to_string();
                                                         }
                                                     }
