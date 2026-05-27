@@ -375,8 +375,11 @@ impl Gateway {
         tokio::spawn(async move {
             while let Ok(event) = rx_responses.recv().await {
                 if let SystemEvent::AgentResponse { channel_id, content, .. } = event {
-                    if let Err(e) = discord_sender.send_message(&channel_id, &content).await {
-                        tracing::error!("Failed to send agent response to channel {}: {:#}", channel_id, e);
+                    // 数字以外の channel_id（"http" など）は Discord チャンネルではないのでスキップ
+                    if channel_id.chars().all(|c| c.is_ascii_digit()) {
+                        if let Err(e) = discord_sender.send_message(&channel_id, &content).await {
+                            tracing::error!("Failed to send agent response to channel {}: {:#}", channel_id, e);
+                        }
                     }
                 }
             }
