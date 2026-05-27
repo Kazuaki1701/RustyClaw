@@ -1,5 +1,10 @@
 # Walkthrough — Completed Implementation of Phase 2 & 4 Gateway Services, Heartbeat System, and Long-Term Memory
 
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去のウォークスルー報告書 - 完了済み)  
+> **完了日**: 2026-05-27  
+> **備考**: Phase 2 & 4 完了時の動作検証および自動テスト結果の記録です。
+
 This document details the completed technical changes, automated test suite runs, and manual verification results for the RustyClaw AI agent runtime upgrades. All features are fully implemented, verified, and compiling successfully.
 
 ---

@@ -1,5 +1,10 @@
 # 02. エージェントパイプライン・LLMプロバイダ仕様
 
+> [!NOTE]
+> **ステータス**: `[ACTIVE]` (最新の真実 - コードと同期中)  
+> **最終更新日**: 2026-05-28  
+> **対象コード**: `rustyclaw-agent`, `rustyclaw-providers` の最新実装
+
 ## 1. Pipeline の 4 ステージ
 
 エージェントの1ターン（Turn）の処理は、以下の 4 つの論理ステージから構成されるパイプラインを通じて実行されます。
@@ -172,7 +177,7 @@ pub fn create_provider(config: Config) -> Box<dyn LlmProvider> {
 
 **動作仕様**:
 - `tokio::process::Command` で `gmn -p <prompt> -m <model>` をサブプロセスとして起動します。
-- `Vec<Message>` をシステム・ユーザー・アシスタントのロールごとにフラットなテキストへ変換し（`build_prompt()`）、`-p` 引数に渡します。
+- `Vec<Message>` をシステム・ユーザー・アシスタントのロールごとにフラットなテキストへ変換し（`build_prompt()`）、プロンプトのサイズ制限を回避するため**標準入力（stdin）**経由で `gmn` CLI に流し込みます（詳細は後述の OS error 7 対策を参照）。
 - stdout から JSON Lines 形式（`{"type":"content","text":"..."}`)を読み取りテキストを組み立てます。プレーンテキスト行はそのままストリームに流します。
 
 **gmn パッチビルド（RustyClaw fork）の前提**:
@@ -200,15 +205,28 @@ gmn --version
 | LaneRegistry セマフォ | 同時起動数を user: 2 / bg: 1（最大 3）に制限（→ `05_gateway_spec.md` §3 参照） |
 
 ```rust
-// GmnCliProvider での起動例
-tokio::process::Command::new("gmn")
+// GmnCliProvider での起動例 (標準入力経由方式)
+let mut child = tokio::process::Command::new("gmn")
     .env("GMN_MAX_RETRIES", "0")  // gmn 内部リトライ無効化
-    .arg("-p").arg(&prompt)
     .arg("-m").arg(&opts.model)
     .arg("-t").arg(format!("{}s", opts.timeout.as_secs()))
     .arg("--no-agent")            // エージェントループ無効化（単一ターン）
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
     .spawn()
+    .context("Failed to spawn gmn CLI process")?;
+
+if let Some(mut stdin) = child.stdin.take() {
+    use tokio::io::AsyncWriteExt;
+    stdin.write_all(prompt.as_bytes()).await?;
+    drop(stdin); // EOFを伝達
+}
 ```
+
+> **`Argument list too long` (OS error 7) 対策と標準入力設計**:  
+> 当初、マージされたプロンプト全体を引数 `-p` で直接 `gmn` コマンドに渡していましたが、会話履歴や Heartbeat 巡回コンテキストの肥大化に伴い、Linux OS の引数最大長（`ARG_MAX`）を超過し、子プロセスの起動時に OS エラー 7 でクラッシュする問題が発生しました。  
+> そこで、`gmn` CLI の標準入力パース機能（`-p` が空の際に stdin からプロンプトを吸い上げる仕様）を利用し、プロンプトデータを引数リストではなく子プロセスの `stdin` に書き込んで流し込む方式に移行しました。これにより、無制限に長いプロンプトを安全に受け渡し可能となりました。
 
 > **`--no-agent` は必須**: gmn のデフォルトはエージェントモード ON（最大 25 ターン）。
 > このフラグなしでは `complete()` 1 回で Gemini API が最大 25 回呼ばれ、rate limit の直接原因になる。

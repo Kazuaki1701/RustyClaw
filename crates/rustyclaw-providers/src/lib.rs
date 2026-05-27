@@ -295,19 +295,25 @@ impl LlmProvider for GmnCliProvider {
             );
             tracing::trace!(prompt = %prompt, "gmn spawn: full prompt");
 
-            let child = tokio::process::Command::new("gmn")
+            let mut child = tokio::process::Command::new("gmn")
                 .env("GMN_MAX_RETRIES", "0")
-                .arg("-p")
-                .arg(&prompt)
                 .arg("-m")
                 .arg(&opts.model)
                 .arg("-t")
                 .arg(format!("{}s", opts.timeout.as_secs()))
                 .arg("--no-agent") // RustyClaw が自前でループ制御するためエージェントモード無効化
+                .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .context("Failed to spawn gmn CLI process")?;
+
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                stdin.write_all(prompt.as_bytes()).await
+                    .context("Failed to write prompt to gmn CLI stdin")?;
+                drop(stdin);
+            }
 
             let output = child.wait_with_output().await
                 .context("Error waiting for gmn CLI execution")?;
@@ -394,17 +400,23 @@ impl LlmProvider for GmnCliProvider {
             loop {
                 let mut child = tokio::process::Command::new("gmn")
                     .env("GMN_MAX_RETRIES", "0")
-                    .arg("-p")
-                    .arg(&prompt)
                     .arg("-m")
                     .arg(&model)
                     .arg("-t")
                     .arg(format!("{}s", timeout_secs))
                     .arg("--no-agent") // RustyClaw が自前でループ制御するためエージェントモード無効化
+                    .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
                     .spawn()
                     .context("Failed to spawn gmn CLI process for streaming")?;
+
+                if let Some(mut stdin) = child.stdin.take() {
+                    use tokio::io::AsyncWriteExt;
+                    stdin.write_all(prompt.as_bytes()).await
+                        .context("Failed to write prompt to gmn CLI stdin for streaming")?;
+                    drop(stdin);
+                }
 
                 let stdout = child.stdout.take()
                     .context("Failed to capture gmn CLI stdout")?;

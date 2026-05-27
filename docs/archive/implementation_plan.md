@@ -1,5 +1,10 @@
 # Implementation Plan — Phase 2 & 4: Gateway Services, Heartbeat System, and Long-Term Memory
 
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去の実装計画書 - 開発完了済み)  
+> **完了日**: 2026-05-27  
+> **備考**: この計画書に記載された機能はすべて実装・検証が完了しています。最新の基本仕様については、`docs/specs/` 配下の最新仕様書を参照してください。
+
 This plan outlines the design and implementation details for completing the remaining core architectural pieces of RustyClaw (Phase 2 & 4). This will turn RustyClaw from a single-turn CLI agent into a fully autonomous, long-running, self-active gateway runtime.
 
 ---
