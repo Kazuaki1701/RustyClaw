@@ -123,6 +123,7 @@ pub struct DiscordConnector {
     callback: Option<MessageCallback>,
     http: Option<Arc<serenity::http::Http>>,
     respond_in_channels: Vec<String>,
+    shard_manager: Arc<tokio::sync::Mutex<Option<Arc<serenity::gateway::ShardManager>>>>,
 }
 
 impl DiscordConnector {
@@ -132,12 +133,12 @@ impl DiscordConnector {
         } else {
             Some(Arc::new(serenity::http::Http::new(token)))
         };
-
         Self {
             token: token.to_string(),
             callback: None,
             http,
             respond_in_channels: Vec::new(),
+            shard_manager: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -148,6 +149,15 @@ impl DiscordConnector {
 
     pub fn set_respond_in_channels(&mut self, channels: Vec<String>) {
         self.respond_in_channels = channels;
+    }
+
+    /// Discord WebSocket 接続をグレースフルに切断する。
+    pub async fn shutdown(&self) {
+        let lock = self.shard_manager.lock().await;
+        if let Some(sm) = lock.as_ref() {
+            sm.shutdown_all().await;
+            tracing::info!("Discord ShardManager shutdown complete.");
+        }
     }
 
     /// コネクタ（クライアント）の起動
@@ -172,8 +182,13 @@ impl DiscordConnector {
             .context("Failed to create serenity client")?;
 
         tracing::info!("Connecting to Discord Gateway...");
-        
-        // 別タスクでクライアントを動かす
+
+        // ShardManager を保存（graceful shutdown 用）
+        {
+            let mut sm_lock = self.shard_manager.lock().await;
+            *sm_lock = Some(client.shard_manager.clone());
+        }
+
         tokio::spawn(async move {
             if let Err(why) = client.start().await {
                 tracing::error!("Serenity client error: {:?}", why);
@@ -215,6 +230,14 @@ struct DiscordHandler {
 
 #[serenity_async_trait]
 impl EventHandler for DiscordHandler {
+    async fn ready(&self, _ctx: serenity::prelude::Context, ready: serenity::model::gateway::Ready) {
+        tracing::info!(
+            bot_name = %ready.user.name,
+            guild_count = ready.guilds.len(),
+            "Discord bot connected and ready"
+        );
+    }
+
     async fn message(&self, ctx: serenity::prelude::Context, msg: SerenityMessage) {
         // ボット自身の発言は無視（自己ループ防止）
         if msg.author.bot {

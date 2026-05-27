@@ -446,11 +446,13 @@ impl Gateway {
                 // SIGINT: Graceful Shutdown
                 _ = sig_int.recv() => {
                     tracing::info!("Received SIGINT. Initiating graceful shutdown...");
+                    discord_client.shutdown().await;
                     break;
                 }
                 // SIGTERM: Graceful Shutdown
                 _ = sig_term.recv() => {
                     tracing::info!("Received SIGTERM. Initiating graceful shutdown...");
+                    discord_client.shutdown().await;
                     break;
                 }
             }
