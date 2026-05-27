@@ -352,6 +352,7 @@ impl Gateway {
             });
         }));
 
+        discord.set_respond_in_channels(config.discord_respond_in_channels.clone());
         discord.start().await.context("Failed to start DiscordConnector")?;
         let discord_client = Arc::new(discord);
 

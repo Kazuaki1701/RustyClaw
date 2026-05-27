@@ -98,12 +98,31 @@ pub fn split_message(text: &str, max_len: usize) -> Vec<String> {
     chunks
 }
 
+/// Discord メッセージタイプフィルタ。
+/// DEFAULT (0) と REPLY (19) のみ処理する（システムイベントを除外）。
+/// (GeminiClaw channels/chat-handlers.ts isUserMessage() 相当)
+fn is_allowed_message_type(kind: &serenity::model::channel::MessageType) -> bool {
+    matches!(
+        kind,
+        serenity::model::channel::MessageType::Regular
+            | serenity::model::channel::MessageType::InlineReply
+    )
+}
+
+/// respond_in_channels ホワイトリストチェック。
+/// リストが空の場合は全チャンネル対象。リストが非空の場合は一致するチャンネルのみ。
+/// (GeminiClaw channels/chat-handlers.ts shouldRespondInChannel() 相当)
+fn should_respond_in_channel(channel_id: &str, respond_in_channels: &[String]) -> bool {
+    respond_in_channels.is_empty() || respond_in_channels.iter().any(|c| c == channel_id)
+}
+
 pub type MessageCallback = Arc<dyn Fn(IncomingMessage) + Send + Sync>;
 
 pub struct DiscordConnector {
     token: String,
     callback: Option<MessageCallback>,
     http: Option<Arc<serenity::http::Http>>,
+    respond_in_channels: Vec<String>,
 }
 
 impl DiscordConnector {
@@ -118,12 +137,17 @@ impl DiscordConnector {
             token: token.to_string(),
             callback: None,
             http,
+            respond_in_channels: Vec::new(),
         }
     }
 
     /// 受信メッセージコールバックの登録
     pub fn register_callback(&mut self, callback: MessageCallback) {
         self.callback = Some(callback);
+    }
+
+    pub fn set_respond_in_channels(&mut self, channels: Vec<String>) {
+        self.respond_in_channels = channels;
     }
 
     /// コネクタ（クライアント）の起動
@@ -139,6 +163,7 @@ impl DiscordConnector {
 
         let handler = DiscordHandler {
             callback: self.callback.clone(),
+            respond_in_channels: self.respond_in_channels.clone(),
         };
 
         let mut client = Client::builder(&self.token, intents)
@@ -185,31 +210,47 @@ impl Channel for DiscordConnector {
 
 struct DiscordHandler {
     callback: Option<MessageCallback>,
+    respond_in_channels: Vec<String>,
 }
 
 #[serenity_async_trait]
 impl EventHandler for DiscordHandler {
-    async fn message(&self, _ctx: serenity::prelude::Context, msg: SerenityMessage) {
-        // ボット自身の発言は無視
+    async fn message(&self, ctx: serenity::prelude::Context, msg: SerenityMessage) {
+        // ボット自身の発言は無視（自己ループ防止）
         if msg.author.bot {
             return;
         }
 
-        tracing::info!("Received message on Discord from {}: {}", msg.author.name, msg.content);
+        // Discord システムメッセージをフィルタ
+        // DEFAULT (0) と REPLY (19) のみ処理（GeminiClaw isUserMessage() 相当）
+        if !is_allowed_message_type(&msg.kind) {
+            return;
+        }
+
+        // respond_in_channels ホワイトリストチェック（空リストは全チャンネル対象）
+        if !should_respond_in_channel(&msg.channel_id.to_string(), &self.respond_in_channels) {
+            return;
+        }
+
+        tracing::info!(
+            user = %msg.author.name,
+            channel = %msg.channel_id,
+            content = %msg.content,
+            "Discord message received"
+        );
+
+        // "入力中..." インジケーター送信（失敗しても続行）
+        let _ = ctx.http.broadcast_typing(msg.channel_id.get().into()).await;
 
         if let Some(ref cb) = self.callback {
-            // セッションIDの命名規則：discord-C{チャンネルID}-{YYYYMMDD}
-            let today = chrono::Utc::now().format("%Y%m%d").to_string();
+            let today = chrono::Local::now().format("%Y%m%d").to_string();
             let session_id = format!("discord-C{}-{}", msg.channel_id, today);
-
-            let incoming = IncomingMessage {
+            cb(IncomingMessage {
                 session_id,
                 user_id: msg.author.id.to_string(),
                 channel_id: msg.channel_id.to_string(),
                 content: msg.content.clone(),
-            };
-
-            cb(incoming);
+            });
         }
     }
 }
@@ -288,5 +329,48 @@ mod tests {
             // 次チャンクは ``` で再開される
             assert!(chunks[1].starts_with("```"), "next chunk must reopen fence");
         }
+    }
+
+    #[test]
+    fn test_is_allowed_message_type_regular() {
+        use serenity::model::channel::MessageType;
+        assert!(is_allowed_message_type(&MessageType::Regular));
+    }
+
+    #[test]
+    fn test_is_allowed_message_type_inline_reply() {
+        use serenity::model::channel::MessageType;
+        assert!(is_allowed_message_type(&MessageType::InlineReply));
+    }
+
+    #[test]
+    fn test_is_allowed_message_type_pins_add() {
+        use serenity::model::channel::MessageType;
+        assert!(!is_allowed_message_type(&MessageType::PinsAdd));
+    }
+
+    #[test]
+    fn test_is_allowed_message_type_member_join() {
+        use serenity::model::channel::MessageType;
+        assert!(!is_allowed_message_type(&MessageType::MemberJoin));
+    }
+
+    #[test]
+    fn test_should_respond_in_channel_empty_list() {
+        // 空リスト → 全チャンネル対象
+        assert!(should_respond_in_channel("123456789", &[]));
+    }
+
+    #[test]
+    fn test_should_respond_in_channel_listed() {
+        let list = vec!["111".to_string(), "222".to_string()];
+        assert!(should_respond_in_channel("111", &list));
+        assert!(should_respond_in_channel("222", &list));
+    }
+
+    #[test]
+    fn test_should_respond_in_channel_not_listed() {
+        let list = vec!["111".to_string()];
+        assert!(!should_respond_in_channel("999", &list));
     }
 }
