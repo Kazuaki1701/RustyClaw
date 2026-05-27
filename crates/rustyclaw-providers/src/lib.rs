@@ -1,10 +1,20 @@
-use anyhow::{Context, Result};
+use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
 use rustyclaw_config::Config;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::time::Duration;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProviderError {
+    #[error("Rate limit or quota exceeded: {0}")]
+    RateLimit(String),
+    #[error("API or CLI execution failed: {0}")]
+    ExecutionFailed(String),
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -46,14 +56,14 @@ pub trait LlmProvider: Send + Sync {
         messages: &[Message],
         tools: &[ToolDef],
         opts: &CompletionOptions,
-    ) -> Result<LlmResponse>;
+    ) -> std::result::Result<LlmResponse, ProviderError>;
 
     async fn complete_stream(
         &self,
         messages: &[Message],
         tools: &[ToolDef],
         opts: &CompletionOptions,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>>;
+    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError>;
 }
 
 pub struct OpenAiCompatProvider {
@@ -122,7 +132,7 @@ impl LlmProvider for OpenAiCompatProvider {
         messages: &[Message],
         _tools: &[ToolDef], // Phase 1 ではツール実行はスキップ
         opts: &CompletionOptions,
-    ) -> Result<LlmResponse> {
+    ) -> std::result::Result<LlmResponse, ProviderError> {
         let url = format!("{}/chat/completions", self.config.api_base_url);
         
         let request_body = OpenAiRequest {
@@ -145,7 +155,10 @@ impl LlmProvider for OpenAiCompatProvider {
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("LLM API returned error status {}: {}", status, error_text));
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS || error_text.contains("insufficient_quota") {
+                return Err(ProviderError::RateLimit(error_text));
+            }
+            return Err(ProviderError::ExecutionFailed(format!("LLM API returned error status {}: {}", status, error_text)));
         }
 
         let resp_data: OpenAiResponse = response.json()
@@ -166,7 +179,7 @@ impl LlmProvider for OpenAiCompatProvider {
         messages: &[Message],
         _tools: &[ToolDef],
         opts: &CompletionOptions,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
+    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
         let url = format!("{}/chat/completions", self.config.api_base_url);
         
         let request_body = OpenAiRequest {
@@ -189,7 +202,10 @@ impl LlmProvider for OpenAiCompatProvider {
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("LLM Stream API returned error status {}: {}", status, error_text));
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS || error_text.contains("insufficient_quota") {
+                return Err(ProviderError::RateLimit(error_text));
+            }
+            return Err(ProviderError::ExecutionFailed(format!("LLM Stream API returned error status {}: {}", status, error_text)));
         }
 
         let mut stream = response.bytes_stream();
@@ -261,19 +277,6 @@ impl GmnCliProvider {
     }
 }
 
-fn parse_reset_seconds(stderr: &str) -> Option<u64> {
-    if let Some(idx) = stderr.find("reset after ") {
-        let sub = &stderr[idx + "reset after ".len()..];
-        let digits: String = sub.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            if let Ok(secs) = digits.parse::<u64>() {
-                return Some(secs);
-            }
-        }
-    }
-    None
-}
-
 #[async_trait]
 impl LlmProvider for GmnCliProvider {
     async fn complete(
@@ -281,99 +284,89 @@ impl LlmProvider for GmnCliProvider {
         messages: &[Message],
         _tools: &[ToolDef],
         opts: &CompletionOptions,
-    ) -> Result<LlmResponse> {
+    ) -> std::result::Result<LlmResponse, ProviderError> {
         let prompt = self.build_prompt(messages);
         
-        let mut retries = 3;
-        loop {
-            tracing::debug!(
-                model = %opts.model,
-                timeout_secs = opts.timeout.as_secs(),
-                prompt_len = prompt.len(),
-                prompt_head = %&prompt[..prompt.len().min(200)],
-                "gmn spawn: args"
-            );
-            tracing::trace!(prompt = %prompt, "gmn spawn: full prompt");
+        tracing::debug!(
+            model = %opts.model,
+            timeout_secs = opts.timeout.as_secs(),
+            prompt_len = prompt.len(),
+            prompt_head = %&prompt[..prompt.len().min(200)],
+            "gmn spawn: args"
+        );
+        tracing::trace!(prompt = %prompt, "gmn spawn: full prompt");
 
-            let mut child = tokio::process::Command::new("gmn")
-                .env("GMN_MAX_RETRIES", "0")
-                .arg("-m")
-                .arg(&opts.model)
-                .arg("-t")
-                .arg(format!("{}s", opts.timeout.as_secs()))
-                .arg("--no-agent") // RustyClaw が自前でループ制御するためエージェントモード無効化
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .context("Failed to spawn gmn CLI process")?;
+        let mut child = tokio::process::Command::new("gmn")
+            .env("GMN_MAX_RETRIES", "0")
+            .arg("-m")
+            .arg(&opts.model)
+            .arg("-t")
+            .arg(format!("{}s", opts.timeout.as_secs()))
+            .arg("--no-agent") // RustyClaw が自前でループ制御するためエージェントモード無効化
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to spawn gmn CLI process: {}", e)))?;
 
-            if let Some(mut stdin) = child.stdin.take() {
-                use tokio::io::AsyncWriteExt;
-                stdin.write_all(prompt.as_bytes()).await
-                    .context("Failed to write prompt to gmn CLI stdin")?;
-                drop(stdin);
-            }
-
-            let output = child.wait_with_output().await
-                .context("Error waiting for gmn CLI execution")?;
-
-            let stdout_str = String::from_utf8_lossy(&output.stdout);
-            let stderr_str = String::from_utf8_lossy(&output.stderr);
-
-            tracing::debug!(
-                status = ?output.status.code(),
-                stdout_len = stdout_str.len(),
-                stderr_len = stderr_str.len(),
-                stdout_head = %&stdout_str[..stdout_str.len().min(200)],
-                "gmn exit: response"
-            );
-            tracing::trace!(stdout = %stdout_str, stderr = %stderr_str, "gmn exit: full output");
-
-            let combined_err = format!("{}\n{}", stdout_str, stderr_str);
-
-            if !output.status.success() || combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
-                if combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
-                    if retries > 0 {
-                        let wait_secs = parse_reset_seconds(&combined_err).unwrap_or(23);
-                        tracing::warn!("gmn rate-limit exceeded. Waiting {} seconds before retry...", wait_secs);
-                        tokio::time::sleep(std::time::Duration::from_secs(wait_secs + 1)).await;
-                        retries -= 1;
-                        continue;
-                    }
-                    return Err(anyhow::anyhow!("gmn quota/rate-limit exceeded: {}", combined_err));
-                }
-                if !output.status.success() {
-                    return Err(anyhow::anyhow!("gmn CLI execution failed: {}", combined_err));
-                }
-            }
-
-            let content = String::from_utf8(output.stdout)
-                .context("Failed to parse gmn CLI output as UTF-8")?;
-
-            let mut final_content = String::new();
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                    if val["type"] == "content" {
-                        if let Some(text) = val["text"].as_str() {
-                            final_content.push_str(text);
-                        }
-                    }
-                } else {
-                    final_content.push_str(line);
-                    final_content.push('\n');
-                }
-            }
-
-            return Ok(LlmResponse {
-                content: final_content.trim().to_string(),
-                role: "assistant".to_string(),
-            });
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin.write_all(prompt.as_bytes()).await
+                .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to write prompt to gmn CLI stdin: {}", e)))?;
+            drop(stdin);
         }
+
+        let output = child.wait_with_output().await
+            .map_err(|e| ProviderError::ExecutionFailed(format!("Error waiting for gmn CLI execution: {}", e)))?;
+
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+
+        tracing::debug!(
+            status = ?output.status.code(),
+            stdout_len = stdout_str.len(),
+            stderr_len = stderr_str.len(),
+            stdout_head = %&stdout_str[..stdout_str.len().min(200)],
+            "gmn exit: response"
+        );
+        tracing::trace!(stdout = %stdout_str, stderr = %stderr_str, "gmn exit: full output");
+
+        let combined_err = format!("{}\n{}", stdout_str, stderr_str);
+
+        if !output.status.success() || combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
+            if combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
+                return Err(ProviderError::RateLimit(combined_err));
+            }
+            if !output.status.success() {
+                return Err(ProviderError::ExecutionFailed(combined_err));
+            }
+        }
+
+        let content = String::from_utf8(output.stdout)
+            .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to parse gmn CLI output as UTF-8: {}", e)))?;
+
+        let mut final_content = String::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if val["type"] == "content" {
+                    if let Some(text) = val["text"].as_str() {
+                        final_content.push_str(text);
+                    }
+                }
+            } else {
+                final_content.push_str(line);
+                final_content.push('\n');
+            }
+        }
+
+        Ok(LlmResponse {
+            content: final_content.trim().to_string(),
+            role: "assistant".to_string(),
+        })
     }
 
     async fn complete_stream(
@@ -381,7 +374,7 @@ impl LlmProvider for GmnCliProvider {
         messages: &[Message],
         _tools: &[ToolDef],
         opts: &CompletionOptions,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
+    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
         let prompt = self.build_prompt(messages);
         let model = opts.model.clone();
         let timeout_secs = opts.timeout.as_secs();
@@ -396,133 +389,122 @@ impl LlmProvider for GmnCliProvider {
         tracing::trace!(prompt = %prompt, "gmn spawn (stream): full prompt");
 
         let output_stream = async_stream::try_stream! {
-            let mut retries = 3;
+            let mut child = tokio::process::Command::new("gmn")
+                .env("GMN_MAX_RETRIES", "0")
+                .arg("-m")
+                .arg(&model)
+                .arg("-t")
+                .arg(format!("{}s", timeout_secs))
+                .arg("--no-agent") // RustyClaw が自前でループ制御するためエージェントモード無効化
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to spawn gmn CLI process for streaming: {}", e)))?;
+
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                stdin.write_all(prompt.as_bytes()).await
+                    .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to write prompt to gmn CLI stdin for streaming: {}", e)))?;
+                drop(stdin);
+            }
+
+            let stdout = child.stdout.take()
+                .ok_or_else(|| ProviderError::ExecutionFailed("Failed to capture gmn CLI stdout".to_string()))?;
+            let stderr = child.stderr.take()
+                .ok_or_else(|| ProviderError::ExecutionFailed("Failed to capture gmn CLI stderr".to_string()))?;
+
+            let mut reader = tokio::io::BufReader::new(stdout);
+            let mut buffer = [0u8; 1024];
+            let mut line_buffer = String::new();
+            let mut has_yielded = false;
+            let mut rate_limit_error = None;
+
             loop {
-                let mut child = tokio::process::Command::new("gmn")
-                    .env("GMN_MAX_RETRIES", "0")
-                    .arg("-m")
-                    .arg(&model)
-                    .arg("-t")
-                    .arg(format!("{}s", timeout_secs))
-                    .arg("--no-agent") // RustyClaw が自前でループ制御するためエージェントモード無効化
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .context("Failed to spawn gmn CLI process for streaming")?;
-
-                if let Some(mut stdin) = child.stdin.take() {
-                    use tokio::io::AsyncWriteExt;
-                    stdin.write_all(prompt.as_bytes()).await
-                        .context("Failed to write prompt to gmn CLI stdin for streaming")?;
-                    drop(stdin);
+                use tokio::io::AsyncReadExt;
+                let n = reader.read(&mut buffer).await
+                    .map_err(|e| ProviderError::ExecutionFailed(format!("Error reading byte chunk from gmn CLI stdout: {}", e)))?;
+                if n == 0 {
+                    break;
                 }
+                let text = std::str::from_utf8(&buffer[..n])
+                    .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to decode gmn CLI stdout as UTF-8: {}", e)))?;
+                
+                line_buffer.push_str(text);
 
-                let stdout = child.stdout.take()
-                    .context("Failed to capture gmn CLI stdout")?;
-                let stderr = child.stderr.take()
-                    .context("Failed to capture gmn CLI stderr")?;
+                while let Some(pos) = line_buffer.find('\n') {
+                    let line = line_buffer[..pos].trim().to_string();
+                    line_buffer = line_buffer[pos + 1..].to_string();
 
-                let mut reader = tokio::io::BufReader::new(stdout);
-                let mut buffer = [0u8; 1024];
-                let mut line_buffer = String::new();
-                let mut has_yielded = false;
-                let mut rate_limit_error = None;
-
-                loop {
-                    use tokio::io::AsyncReadExt;
-                    let n = reader.read(&mut buffer).await
-                        .context("Error reading byte chunk from gmn CLI stdout")?;
-                    if n == 0 {
-                        break;
+                    if line.is_empty() {
+                        continue;
                     }
-                    let text = std::str::from_utf8(&buffer[..n])
-                        .context("Failed to decode gmn CLI stdout as UTF-8")?;
-                    
-                    line_buffer.push_str(text);
 
-                    while let Some(pos) = line_buffer.find('\n') {
-                        let line = line_buffer[..pos].trim().to_string();
-                        line_buffer = line_buffer[pos + 1..].to_string();
-
-                        if line.is_empty() {
-                            continue;
-                        }
-
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if val["type"] == "content" {
-                                if let Some(content_text) = val["text"].as_str() {
-                                    has_yielded = true;
-                                    yield StreamChunk {
-                                        content: content_text.to_string(),
-                                    };
-                                }
-                            } else if val["type"] == "error" {
-                                if let Some(err_str) = val["error"].as_str() {
-                                    if err_str.contains("quota") || err_str.contains("RESOURCE_EXHAUSTED") || err_str.contains("429") || err_str.contains("rate limited") {
-                                        rate_limit_error = Some(err_str.to_string());
-                                        break;
-                                    }
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if val["type"] == "content" {
+                            if let Some(content_text) = val["text"].as_str() {
+                                has_yielded = true;
+                                yield StreamChunk {
+                                    content: content_text.to_string(),
+                                };
+                            }
+                        } else if val["type"] == "error" {
+                            if let Some(err_str) = val["error"].as_str() {
+                                if err_str.contains("quota") || err_str.contains("RESOURCE_EXHAUSTED") || err_str.contains("429") || err_str.contains("rate limited") {
+                                    rate_limit_error = Some(err_str.to_string());
+                                    break;
                                 }
                             }
-                        } else {
-                            if line.contains("quota") || line.contains("RESOURCE_EXHAUSTED") || line.contains("429") || line.contains("rate limited") {
-                                rate_limit_error = Some(line.clone());
-                                break;
-                            }
-                            has_yielded = true;
-                            yield StreamChunk {
-                                content: line,
-                            };
                         }
-                    }
-                    if rate_limit_error.is_some() {
-                        break;
+                    } else {
+                        if line.contains("quota") || line.contains("RESOURCE_EXHAUSTED") || line.contains("429") || line.contains("rate limited") {
+                            rate_limit_error = Some(line.clone());
+                            break;
+                        }
+                        has_yielded = true;
+                        yield StreamChunk {
+                            content: line,
+                        };
                     }
                 }
-
-                let status = child.wait().await
-                    .context("Error waiting for gmn CLI process to exit")?;
-
-                let mut stderr_content = String::new();
-                let mut stderr = stderr;
-                let mut err_buf = String::new();
-                if tokio::io::AsyncReadExt::read_to_string(&mut stderr, &mut err_buf).await.is_ok() {
-                    stderr_content = err_buf;
+                if rate_limit_error.is_some() {
+                    break;
                 }
+            }
 
-                tracing::debug!(
-                    status = ?status.code(),
-                    has_yielded = has_yielded,
-                    stderr_len = stderr_content.len(),
-                    stderr_head = %&stderr_content[..stderr_content.len().min(200)],
-                    "gmn exit (stream): response"
-                );
-                tracing::trace!(stderr = %stderr_content, "gmn exit (stream): full stderr");
+            let status = child.wait().await
+                .map_err(|e| ProviderError::ExecutionFailed(format!("Error waiting for gmn CLI process to exit: {}", e)))?;
 
-                let combined_err = if let Some(ref e) = rate_limit_error {
-                    format!("{}\n{}", e, stderr_content)
+            let mut stderr_content = String::new();
+            let mut stderr = stderr;
+            let mut err_buf = String::new();
+            if tokio::io::AsyncReadExt::read_to_string(&mut stderr, &mut err_buf).await.is_ok() {
+                stderr_content = err_buf;
+            }
+
+            tracing::debug!(
+                status = ?status.code(),
+                has_yielded = has_yielded,
+                stderr_len = stderr_content.len(),
+                stderr_head = %&stderr_content[..stderr_content.len().min(200)],
+                "gmn exit (stream): response"
+            );
+            tracing::trace!(stderr = %stderr_content, "gmn exit (stream): full stderr");
+
+            let combined_err = if let Some(ref e) = rate_limit_error {
+                format!("{}\n{}", e, stderr_content)
+            } else {
+                stderr_content.clone()
+            };
+
+            let is_rate_limit = combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited");
+
+            if (!status.success() || is_rate_limit) && !has_yielded {
+                if is_rate_limit {
+                    Err(ProviderError::RateLimit(combined_err))?;
                 } else {
-                    stderr_content.clone()
-                };
-
-                let is_rate_limit = combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited");
-
-                if (!status.success() || is_rate_limit) && !has_yielded {
-                    if is_rate_limit {
-                        if retries > 0 {
-                            let wait_secs = parse_reset_seconds(&combined_err).unwrap_or(23);
-                            tracing::warn!("gmn rate-limit exceeded in streaming mode. Waiting {} seconds before retry...", wait_secs);
-                            tokio::time::sleep(std::time::Duration::from_secs(wait_secs + 1)).await;
-                            retries -= 1;
-                            let _ = child.kill().await;
-                            continue;
-                        }
-                        Err(anyhow::anyhow!("gmn quota/rate-limit exceeded: {}", combined_err))?;
-                    }
-                    Err(anyhow::anyhow!("gmn CLI process exited with non-zero status: {:?}", status.code()))?;
+                    Err(ProviderError::ExecutionFailed(format!("gmn CLI process exited with non-zero status: {:?}", status.code())))?;
                 }
-                break;
             }
         };
 
@@ -546,7 +528,7 @@ mod tests {
     use tokio::io::{AsyncWriteExt, BufWriter};
 
     #[tokio::test]
-    async fn test_openai_compat_complete() -> Result<()> {
+    async fn test_openai_compat_complete() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         
@@ -594,7 +576,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_openai_compat_complete_stream() -> Result<()> {
+    async fn test_openai_compat_complete_stream() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         
