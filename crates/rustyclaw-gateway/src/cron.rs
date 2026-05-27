@@ -1,4 +1,3 @@
-use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -16,7 +15,7 @@ impl CronService {
 
     pub fn start(self) {
         let bus = self.bus.clone();
-        let db_path = self.db_path.clone();
+        let _db_path = self.db_path.clone();
 
         // 1. Heartbeat patrol loop (every 10 minutes)
         tokio::spawn(async move {

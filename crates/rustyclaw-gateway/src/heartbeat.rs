@@ -1,16 +1,16 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::SystemTime;
-use chrono::{Local, DateTime, Utc, Timelike};
+use chrono::{Local, DateTime, Timelike};
 use rustyclaw_config::Config;
 use rustyclaw_providers::Message;
 use rustyclaw_storage::{DbManager, SessionLogger};
 use crate::{MessageBus, SystemEvent};
 
 pub struct HeartbeatService {
-    config: Config,
+    _config: Config,
     workspace_path: PathBuf,
     bus: std::sync::Arc<MessageBus>,
     /// proactive 通知の送信先チャンネル ID。None の場合はセッション検索にフォールバック。
@@ -20,7 +20,7 @@ pub struct HeartbeatService {
 impl HeartbeatService {
     pub fn new(config: Config, workspace_path: PathBuf, bus: std::sync::Arc<MessageBus>) -> Self {
         let home_channel_id = config.discord_home_channel_id.clone();
-        Self { config, workspace_path, bus, home_channel_id }
+        Self { _config: config, workspace_path, bus, home_channel_id }
     }
 
     /// Heartbeat pre-run: heartbeat-digest.md の自動生成
@@ -255,11 +255,13 @@ impl HeartbeatService {
         let last_patrol = Local::now().to_rfc3339();
         
         #[derive(serde::Serialize)]
+        #[allow(non_snake_case)]
         struct HeartbeatState {
             lastChecks: LastChecks,
         }
 
         #[derive(serde::Serialize)]
+        #[allow(non_snake_case)]
         struct LastChecks {
             activityReview: String,
             memoryMaintenance: String,
