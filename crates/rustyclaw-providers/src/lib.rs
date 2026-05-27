@@ -346,11 +346,13 @@ impl LlmProvider for GmnCliProvider {
             .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to parse gmn CLI output as UTF-8: {}", e)))?;
 
         let mut final_content = String::new();
+        let mut raw_lines = Vec::new();
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
+            raw_lines.push(line);
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 if val["type"] == "content" {
                     if let Some(text) = val["text"].as_str() {
@@ -361,6 +363,10 @@ impl LlmProvider for GmnCliProvider {
                 final_content.push_str(line);
                 final_content.push('\n');
             }
+        }
+
+        if final_content.trim().is_empty() && !raw_lines.is_empty() {
+            final_content = raw_lines.join("\n");
         }
 
         Ok(LlmResponse {
@@ -634,6 +640,68 @@ mod tests {
         assert_eq!(chunks.join(""), "Hello world");
 
         let _ = server_task.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_gmn_cli_fallback_raw_output() -> anyhow::Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Create a temporary directory for the dummy `gmn` CLI
+        let temp_dir = tempfile::tempdir()?;
+        let dummy_gmn_path = temp_dir.path().join("gmn");
+
+        // Write a mock `gmn` script that outputs JSON without any `type == "content"` lines
+        let mut f = File::create(&dummy_gmn_path)?;
+        f.write_all(b"#!/bin/sh\ncat > /dev/null\necho '{\"type\": \"tool_use\", \"name\": \"do_something\"}'\n")?;
+        f.flush()?;
+        drop(f);
+
+        // Make the script executable
+        let mut perms = std::fs::metadata(&dummy_gmn_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&dummy_gmn_path, perms)?;
+
+        // Prepend temp_dir to PATH
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{}", temp_dir.path().to_string_lossy(), old_path));
+        }
+
+        // Create provider and call complete
+        let config = Config {
+            model_provider: "gmn".to_string(),
+            model_name: "gemini-2.5-pro".to_string(),
+            api_key: "".to_string(),
+            api_base_url: "".to_string(),
+            max_tokens: None,
+            temperature: None,
+            debug_dump: false,
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
+        };
+        let provider = GmnCliProvider::new(config);
+        let opts = CompletionOptions {
+            model: "gemini-2.5-pro".to_string(),
+            max_tokens: None,
+            temperature: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let result = provider.complete(&[], &[], &opts).await;
+
+        // Restore PATH
+        unsafe {
+            std::env::set_var("PATH", old_path);
+        }
+
+        let resp = result?;
+        assert_eq!(resp.content, "{\"type\": \"tool_use\", \"name\": \"do_something\"}");
+        assert_eq!(resp.role, "assistant");
+
         Ok(())
     }
 }
