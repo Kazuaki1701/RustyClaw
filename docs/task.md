@@ -103,6 +103,10 @@
   - 日またぎセッションで前日サマリーが注入されるか確認
   - `memory/summaries/` の Daily Summary 生成確認
 
+- `[ ]` **コードレビュー指摘の対応 (Minor)**
+  - `rustyclaw-gateway` クレートの 10 件のコンパイラ警告（未使用インポートや非 snake_case 命名）を解消する
+  - 命名警告（`activityReview` 等）については、`#[serde(rename = "...")]` や `#[allow(non_snake_case)]` を用いて警告をクリーンにする
+
 - `[ ]` **仕様書へのフィードバック（DoD の適用）**
   - 各種動作確認で仕様との差異が判明した場合、`docs/specs/` 配下の基本仕様書（`01_`〜`06_`）を最新コードに同期させる
   - rate limit のリトライ戦略を検討・実装した際、`docs/specs/02_agent_pipeline.md` 等の関連仕様書をアップデートする
@@ -122,3 +126,13 @@
   - Calendar / Gmail MCP ツール統合後、Heartbeat が gmn_sem を 1〜5 分占有する可能性
   - ユーザー対話が最大 5 分待機を強いられる場合がある
   - 詳細は `docs/specs/05_gateway_spec.md` の `[^mcp_heartbeat]` 脚注を参照
+
+- `[ ]` **MCP クライアント自前実装（PicoClaw 方式、長期課題）**
+  - 現状: gmn CLI の `--no-agent` で LLM 呼び出しのみ行い、MCP ツール実行能力を持たない
+  - 目標: PicoClaw の `pkg/mcp` に相当する Rust クレート `rustyclaw-mcp` を実装し、AgentLoop 内で直接 MCP サーバーと JSON-RPC 通信する
+  - PicoClaw 実装の参照先: `/home/kazuaki/Projects/PicoClaw/master/upstream/pkg/agent/agent_mcp.go`
+  - 主な機能要件:
+    - `mcp::Manager` — MCP サーバーへの接続・ツール定義取得
+    - `tools::Registry` — LLM へのツール一覧提供とツール呼び出し実行ループ
+    - ツール検索（Discovery）— BM25 / Regex によるツール絞り込み（大量ツール対応）
+  - 前提条件: `gmn_sem > 1` の並列化（共有ファイル排他制御）と同時に検討すること
