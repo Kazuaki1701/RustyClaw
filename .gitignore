@@ -1,0 +1,37 @@
+# Rust build artifacts
+/target/
+
+# IDE and Editor configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# RustyClaw local runtime configurations & state
+/config.json
+/.security.yml
+/memory.db
+/memory.db-journal
+/memory.db-wal
+/memory.db-shm
+
+# Dynamic runtime logs and generated digests
+/workspace/memory/heartbeat-state.json
+/workspace/memory/heartbeat-digest.md
+/workspace/memory/logs/
+/workspace/memory/summaries/
+/workspace/memory/debug/
+/workspace/sessions/
+
+# Temporary and backup files
+*.tmp
+*.bak
+tempfile*
+
+# Antigravity CLI metadata
+.antigravitycli/
+

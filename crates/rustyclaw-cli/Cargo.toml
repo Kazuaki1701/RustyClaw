@@ -1,0 +1,18 @@
+[package]
+name = "rustyclaw-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rustyclaw-config = { path = "../rustyclaw-config" }
+rustyclaw-agent = { path = "../rustyclaw-agent" }
+rustyclaw-providers = { path = "../rustyclaw-providers" }
+rustyclaw-gateway = { path = "../rustyclaw-gateway" }
+clap = { version = "4.4", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+futures-util = "0.3"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+tracing-appender = "0.2"
+dirs = "5.0"

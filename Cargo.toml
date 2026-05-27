@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rustyclaw-cli",
+    "crates/rustyclaw-gateway",
+    "crates/rustyclaw-agent",
+    "crates/rustyclaw-providers",
+    "crates/rustyclaw-channels",
+    "crates/rustyclaw-tools",
+    "crates/rustyclaw-config",
+    "crates/rustyclaw-storage",
+]
+
+[profile.release]
+opt-level     = 3           # 速度優先（8GB あるのでサイズ不問）
+lto           = "thin"      # コンパイル時間と最適化のバランス
+codegen-units = 4           # RPi4 の 4 コアに合わせる
+strip         = "debuginfo" # パニック時スタックトレースは残す
+panic         = "unwind"    # anyhow のエラー伝播に必要
