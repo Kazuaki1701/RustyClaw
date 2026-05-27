@@ -27,6 +27,77 @@ pub trait Channel: Send + Sync {
 // 2. Discord コネクタ (DiscordConnector) の実装
 // ==============================================================================
 
+const DISCORD_MAX_LENGTH: usize = 2000;
+
+/// Discord 2000文字制限に合わせてテキストを分割する。
+///
+/// 分割優先順:
+///   1. 行境界（改行）
+///   2. 単一行が制限超の場合はハードカット
+///
+/// コードブロック（```）をまたいで分割される場合は、
+/// 閉じフェンスと開きフェンスを自動挿入して各チャンクを有効な Markdown にする。
+/// (GeminiClaw channels/reply.ts の splitMessage() 移植)
+pub fn split_message(text: &str, max_len: usize) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if text.len() <= max_len {
+        return vec![text.to_string()];
+    }
+
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_code_block = false;
+    let mut code_fence = String::new();
+
+    for line in lines {
+        // コードフェンス検出（``` または ````）
+        let is_fence = line.trim_start().starts_with("```");
+        let would_be_len = if current.is_empty() {
+            line.len()
+        } else {
+            current.len() + 1 + line.len()
+        };
+
+        if would_be_len > max_len && !current.is_empty() {
+            // コードブロック内で分割する場合はフェンスを閉じる
+            if in_code_block {
+                current.push_str("\n```");
+            }
+            chunks.push(current.clone());
+            // 次チャンクの先頭: コードブロック継続中なら再開フェンスを追加
+            current = if in_code_block {
+                format!("{}\n", code_fence)
+            } else {
+                String::new()
+            };
+        }
+
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+
+        // フェンスのトグル
+        if is_fence {
+            if !in_code_block {
+                in_code_block = true;
+                code_fence = line.trim_start().to_string();
+            } else {
+                in_code_block = false;
+                code_fence.clear();
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
 pub type MessageCallback = Arc<dyn Fn(IncomingMessage) + Send + Sync>;
 
 pub struct DiscordConnector {
@@ -92,19 +163,18 @@ impl DiscordConnector {
 #[async_trait]
 impl Channel for DiscordConnector {
     async fn send_message(&self, channel_id: &str, content: &str) -> Result<()> {
-        tracing::info!("Sending message to Discord Channel {}: {}", channel_id, content);
-        
         let http = self.http.as_ref()
-            .context("DiscordConnector is in MOCK mode (or token not set). Cannot send real message.")?;
+            .context("DiscordConnector is in MOCK mode. Cannot send real message.")?;
 
         let cid: u64 = channel_id.parse()
             .context("Failed to parse channel_id as u64")?;
-
         let serenity_channel_id = serenity::model::id::ChannelId::new(cid);
-        
-        serenity_channel_id.say(http, content).await
-            .context("Failed to send message via serenity http client")?;
 
+        for chunk in split_message(content, DISCORD_MAX_LENGTH) {
+            tracing::debug!("Sending chunk ({} chars) to channel {}", chunk.len(), channel_id);
+            serenity_channel_id.say(http, &chunk).await
+                .context("Failed to send message chunk via serenity")?;
+        }
         Ok(())
     }
 }
@@ -156,7 +226,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_connector_callback() -> Result<()> {
         let mut connector = DiscordConnector::new("mock");
-        
+
         let received = Arc::new(Mutex::new(Vec::new()));
         let received_clone = received.clone();
 
@@ -181,5 +251,42 @@ mod tests {
         assert_eq!(msgs[0].content, "Hello Mock");
 
         Ok(())
+    }
+
+    #[test]
+    fn test_split_message_short() {
+        let chunks = split_message("hello", 2000);
+        assert_eq!(chunks, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_split_message_empty() {
+        let chunks = split_message("", 2000);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_split_message_line_boundary() {
+        // 3行、各行700文字。1チャンク = 最大2000文字なので 2行+1行 に分割される
+        let line = "a".repeat(700);
+        let text = format!("{}\n{}\n{}", line, line, line);
+        let chunks = split_message(&text, 2000);
+        assert_eq!(chunks.len(), 2, "should split into 2 chunks at line boundary");
+        assert!(chunks[0].len() <= 2000);
+        assert!(chunks[1].len() <= 2000);
+    }
+
+    #[test]
+    fn test_split_message_preserves_code_fence() {
+        // コードブロックをまたいで分割される場合、フェンスが補完されること
+        let code_line = "x".repeat(500);
+        let text = format!("```rust\n{}\n{}\n{}\n```", code_line, code_line, code_line);
+        let chunks = split_message(&text, 2000);
+        if chunks.len() > 1 {
+            // 途中チャンクは ``` で閉じられる
+            assert!(chunks[0].ends_with("```"), "first chunk must close fence: {:?}", &chunks[0][chunks[0].len().saturating_sub(10)..]);
+            // 次チャンクは ``` で再開される
+            assert!(chunks[1].starts_with("```"), "next chunk must reopen fence");
+        }
     }
 }

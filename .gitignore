@@ -18,6 +18,13 @@ Thumbs.db
 /memory.db-journal
 /memory.db-wal
 /memory.db-shm
+/workspace/memory.db
+/workspace/memory.db-journal
+/workspace/memory.db-wal
+/workspace/memory.db-shm
+
+# Tantivy search index (generated at runtime)
+/workspace/memory/index/
 
 # Dynamic runtime logs and generated digests
 /workspace/memory/heartbeat-state.json
