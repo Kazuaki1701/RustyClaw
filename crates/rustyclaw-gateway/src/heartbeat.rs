@@ -26,10 +26,7 @@ impl HeartbeatService {
     /// Heartbeat pre-run: heartbeat-digest.md の自動生成
     pub fn generate_digest(&self, db: &DbManager) -> Result<String> {
         let now_dt = Local::now();
-        let last_patrol_time_str = db.get_last_patrol_run("heartbeat_patrol")?.unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
-        let last_patrol_dt = DateTime::parse_from_rfc3339(&last_patrol_time_str)
-            .map(|dt| dt.with_timezone(&Local))
-            .unwrap_or_else(|_| now_dt - chrono::Duration::hours(24));
+
 
         // 実行回数カウンタの取得・更新 (6回に1回 Deep Scan)
         let run_count_str = db.get_last_patrol_run("heartbeat_run_count")?.unwrap_or_else(|| "0".to_string());
@@ -58,12 +55,8 @@ impl HeartbeatService {
                 let metadata = fs::metadata(&path)?;
                 let modified: DateTime<Local> = metadata.modified()?.into();
 
-                // incremental vs deep scan の判定条件
-                let should_scan = if is_deep_scan {
-                    now_dt.signed_duration_since(modified).num_hours() < 24
-                } else {
-                    modified > last_patrol_dt
-                };
+                // Always capture sessions active within the last 24 hours:
+                let should_scan = now_dt.signed_duration_since(modified).num_hours() < 24;
 
                 if should_scan {
                     entries.push((modified, path, filename));
@@ -289,3 +282,90 @@ impl HeartbeatService {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_generate_digest_persists_recent_dialogue() -> Result<()> {
+        let ws_dir = tempdir()?;
+        let ws_path = ws_dir.path().to_path_buf();
+
+        // 1. Create a dummy session log telegram-U123-20260528.jsonl with a user-assistant pair.
+        let sessions_dir = ws_path.join("sessions");
+        fs::create_dir_all(&sessions_dir)?;
+        
+        let session_file_path = sessions_dir.join("telegram-U123-20260528.jsonl");
+        
+        let msg_user = Message {
+            role: "user".to_string(),
+            content: "What is the weather today?".to_string(),
+            name: None,
+        };
+        let msg_assistant = Message {
+            role: "assistant".to_string(),
+            content: "It is sunny and 22 degrees.".to_string(),
+            name: None,
+        };
+        
+        fs::write(
+            &session_file_path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&msg_user)?,
+                serde_json::to_string(&msg_assistant)?
+            ),
+        )?;
+
+        // 2. Setup DbManager and HeartbeatService
+        let db_path = ws_path.join("test.db");
+        let db = DbManager::new(db_path.to_str().unwrap())?;
+        
+        let bus = std::sync::Arc::new(MessageBus::new());
+        let config = Config {
+            model_provider: "gmn".to_string(),
+            model_name: "dummy".to_string(),
+            api_key: "dummy".to_string(),
+            api_base_url: "dummy".to_string(),
+            max_tokens: None,
+            temperature: None,
+            debug_dump: false,
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
+        };
+        
+        let service = HeartbeatService::new(config, ws_path.clone(), bus);
+
+        // 3. Call generate_digest() multiple times sequentially and verify the digest contains the conversation.
+        // First run
+        let digest_1 = service.generate_digest(&db)?;
+        assert!(
+            digest_1.contains("What is the weather today?"),
+            "First digest should contain prompt"
+        );
+        assert!(
+            digest_1.contains("It is sunny and 22 degrees."),
+            "First digest should contain response"
+        );
+
+        // Update patrol state as if it just finished
+        db.update_patrol_state("heartbeat_patrol")?;
+
+        // Second run - should still contain the conversation because it's within the 24 hour window
+        let digest_2 = service.generate_digest(&db)?;
+        assert!(
+            digest_2.contains("What is the weather today?"),
+            "Second digest should contain prompt"
+        );
+        assert!(
+            digest_2.contains("It is sunny and 22 degrees."),
+            "Second digest should contain response"
+        );
+
+        Ok(())
+    }
+}
+
