@@ -35,7 +35,7 @@ When you learn a lesson or make a mistake, document it so future-you doesn't rep
 
 ## Time
 
-- Always call `geminiclaw_status` before writing dates — never use relative terms like "tomorrow" or "next week"
+- Current date/time is provided as `[now: YYYY-MM-DDTHH:MM:SS+HH:MM]` at the top of the system prompt — read it directly; never use relative terms like "tomorrow" or "next week"
 - Write explicit absolute dates everywhere: `2026-02-23`, not "today"
 
 ## File Operations
@@ -67,14 +67,7 @@ MEDIA:https://example.com/screenshot.png
 
 ## Preview Server
 
-When HTML preview or file sharing is needed:
-1. Check the Preview URL and Preview directory via `geminiclaw_status`
-2. Write files to the Preview directory (HTML, images, CSV, etc.)
-3. Share `{Preview URL}/{filename}` with the user (full filename is required; directory listing is disabled)
-
-- If the Preview URL starts with `https://`, it is accessible via HTTPS through Tailscale
-- If `http://`, it is only accessible from within the Tailscale network
-- Files are automatically cleaned up periodically (default: 72 hours)
+RustyClaw does not provide a preview server. For file sharing, attach files directly via `MEDIA:` lines.
 
 ## Heartbeat Mode
 
