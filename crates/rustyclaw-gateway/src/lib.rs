@@ -202,9 +202,9 @@ impl LaneRegistry {
                                                                 .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                                 .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
                                                             if let Some(reset_duration) = parsed_reset {
-                                                                tracing::warn!("Rate limit exceeded. Detected quota reset time: {:?}. Dynamic backoff applied: {:?} (including 2s safety buffer). Error: {}", reset_duration, backoff, limit_msg);
+                                                                tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                             } else {
-                                                                tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:?}. Error: {}", backoff, limit_msg);
+                                                                tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:.1}s. Error: {}", backoff.as_secs_f64(), limit_msg);
                                                             }
                                                             tokio::time::sleep(backoff).await;
                                                             attempt += 1;
@@ -275,9 +275,9 @@ impl LaneRegistry {
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                             .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
                                                         if let Some(reset_duration) = parsed_reset {
-                                                            tracing::warn!("Rate limit exceeded. Detected quota reset time: {:?}. Dynamic backoff applied: {:?} (including 2s safety buffer). Error: {}", reset_duration, backoff, limit_msg);
+                                                            tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                         } else {
-                                                            tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:?}. Error: {}", backoff, limit_msg);
+                                                            tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:.1}s. Error: {}", backoff.as_secs_f64(), limit_msg);
                                                         }
                                                         tokio::time::sleep(backoff).await;
                                                         attempt += 1;
@@ -365,9 +365,9 @@ impl LaneRegistry {
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                             .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
                                                         if let Some(reset_duration) = parsed_reset {
-                                                            tracing::warn!("Rate limit exceeded. Detected quota reset time: {:?}. Dynamic backoff applied: {:?} (including 2s safety buffer). Error: {}", reset_duration, backoff, limit_msg);
+                                                            tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                         } else {
-                                                            tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:?}. Error: {}", backoff, limit_msg);
+                                                            tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:.1}s. Error: {}", backoff.as_secs_f64(), limit_msg);
                                                         }
                                                         tokio::time::sleep(backoff).await;
                                                         attempt += 1;

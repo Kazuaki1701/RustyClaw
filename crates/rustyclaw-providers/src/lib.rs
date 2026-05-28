@@ -458,8 +458,8 @@ impl LlmProvider for GmnCliProvider {
                 if now < reset_instant {
                     let wait_dur = reset_instant - now;
                     tracing::warn!(
-                        "Global rate limit active. Waiting {:?} before spawning gmn...",
-                        wait_dur
+                        "Global rate limit active. Waiting {:.1}s before spawning gmn...",
+                        wait_dur.as_secs_f64()
                     );
                     tokio::time::sleep(wait_dur).await;
                 }
@@ -582,8 +582,8 @@ impl LlmProvider for GmnCliProvider {
                 if now < reset_instant {
                     let wait_dur = reset_instant - now;
                     tracing::warn!(
-                        "Global rate limit active. Waiting {:?} before spawning gmn (stream)...",
-                        wait_dur
+                        "Global rate limit active. Waiting {:.1}s before spawning gmn (stream)...",
+                        wait_dur.as_secs_f64()
                     );
                     tokio::time::sleep(wait_dur).await;
                 }
