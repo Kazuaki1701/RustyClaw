@@ -1774,6 +1774,7 @@ dependencies = [
  "rustyclaw-config",
  "rustyclaw-providers",
  "rustyclaw-storage",
+ "rustyclaw-tools",
  "serde",
  "serde_json",
  "tempfile",
@@ -1833,9 +1834,26 @@ dependencies = [
  "rustyclaw-agent",
  "rustyclaw-channels",
  "rustyclaw-config",
+ "rustyclaw-mcp",
  "rustyclaw-providers",
  "rustyclaw-storage",
+ "rustyclaw-tools",
  "sd-notify",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "rustyclaw-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "rustyclaw-config",
+ "rustyclaw-tools",
  "serde",
  "serde_json",
  "tempfile",
@@ -1881,6 +1899,13 @@ dependencies = [
 [[package]]
 name = "rustyclaw-tools"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "ryu"

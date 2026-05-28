@@ -9,6 +9,8 @@ rustyclaw-channels = { path = "../rustyclaw-channels" }
 rustyclaw-agent = { path = "../rustyclaw-agent" }
 rustyclaw-storage = { path = "../rustyclaw-storage" }
 rustyclaw-providers = { path = "../rustyclaw-providers" }
+rustyclaw-mcp = { path = "../rustyclaw-mcp" }
+rustyclaw-tools = { path = "../rustyclaw-tools" }
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
 tracing = "0.1"

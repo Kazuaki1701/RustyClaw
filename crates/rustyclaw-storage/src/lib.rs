@@ -274,6 +274,7 @@ impl ConversationHistory {
                 middle_count
             ),
             name: None,
+            ..Default::default()
         };
         new_messages.push(omitted_msg);
 
@@ -348,6 +349,7 @@ mod tests {
             role: "user".to_string(),
             content: "Hello".to_string(),
             name: None,
+            ..Default::default()
         };
 
         logger.append_message("session-abc", &msg)?;
@@ -368,6 +370,7 @@ mod tests {
                 role: if i % 2 == 0 { "user".to_string() } else { "assistant".to_string() },
                 content: "A".repeat(100),
                 name: None,
+                ..Default::default()
             });
         }
 

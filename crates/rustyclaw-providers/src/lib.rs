@@ -16,12 +16,82 @@ pub enum ProviderError {
     Other(#[from] anyhow::Error),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl ProviderError {
+    /// エラーメッセージ内に "Your Quota will reset after XXs" や "XXm YYs" 等の記述があればその時間を解析して Duration として返す。
+    pub fn reset_after(&self) -> Option<Duration> {
+        match self {
+            ProviderError::RateLimit(msg) => {
+                if let Some(pos) = msg.find("Your Quota will reset after ") {
+                    let start = pos + "Your Quota will reset after ".len();
+                    let sub = &msg[start..];
+
+                    let mut total_secs = 0;
+                    let mut has_parsed = false;
+
+                    if let Some(m_pos) = sub.find('m') {
+                        // 'm' の前の数字をパース (分)
+                        let m_str = sub[..m_pos].trim();
+                        let m_num_str: String = m_str.chars().rev().take_while(|c| c.is_numeric()).collect();
+                        let m_num_str: String = m_num_str.chars().rev().collect();
+                        if let Ok(mins) = m_num_str.parse::<u64>() {
+                            total_secs += mins * 60;
+                            has_parsed = true;
+                        }
+
+                        // 'm' の後ろから 's' の間の数字をパース (秒)
+                        let remaining = &sub[m_pos + 1..];
+                        if let Some(s_pos) = remaining.find('s') {
+                            let s_str = remaining[..s_pos].trim();
+                            let s_num_str: String = s_str.chars().take_while(|c| c.is_numeric()).collect();
+                            if let Ok(secs) = s_num_str.parse::<u64>() {
+                                total_secs += secs;
+                            }
+                        }
+                    } else if let Some(s_pos) = sub.find('s') {
+                        // 's' の前の数字をパース (秒のみ)
+                        let s_str = sub[..s_pos].trim();
+                        let s_num_str: String = s_str.chars().rev().take_while(|c| c.is_numeric()).collect();
+                        let s_num_str: String = s_num_str.chars().rev().collect();
+                        if let Ok(secs) = s_num_str.parse::<u64>() {
+                            total_secs += secs;
+                            has_parsed = true;
+                        }
+                    }
+
+                    if has_parsed {
+                        return Some(Duration::from_secs(total_secs));
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolCall {
+    pub id: String,
+    pub r#type: String, // "function"
+    pub function: FunctionCall,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FunctionCall {
+    pub name: String,
+    pub arguments: String, // Stringified JSON arguments
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Message {
     pub role: String,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +105,7 @@ pub struct ToolDef {
 pub struct LlmResponse {
     pub content: String,
     pub role: String,
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,15 +154,43 @@ impl OpenAiCompatProvider {
 }
 
 #[derive(Debug, Serialize)]
+struct OpenAiMessage<'a> {
+    role: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<&'a [ToolCall]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiTool {
+    r#type: String, // always "function"
+    function: OpenAiFunction,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiFunction {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
 struct OpenAiRequest<'a> {
     model: &'a str,
-    messages: &'a [Message],
+    messages: Vec<OpenAiMessage<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OpenAiTool>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,13 +200,14 @@ struct OpenAiResponse {
 
 #[derive(Debug, Deserialize)]
 struct OpenAiChoice {
-    message: OpenAiMessage,
+    message: OpenAiMessageResponse,
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenAiMessage {
+struct OpenAiMessageResponse {
     role: String,
     content: Option<String>,
+    tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,17 +230,51 @@ impl LlmProvider for OpenAiCompatProvider {
     async fn complete(
         &self,
         messages: &[Message],
-        _tools: &[ToolDef], // Phase 1 ではツール実行はスキップ
+        tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<LlmResponse, ProviderError> {
         let url = format!("{}/chat/completions", self.config.api_base_url);
         
+        let openai_messages: Vec<OpenAiMessage> = messages
+            .iter()
+            .map(|msg| OpenAiMessage {
+                role: &msg.role,
+                content: if msg.content.is_empty() && msg.tool_calls.is_some() {
+                    None
+                } else {
+                    Some(&msg.content)
+                },
+                name: msg.name.as_deref(),
+                tool_calls: msg.tool_calls.as_deref(),
+                tool_call_id: msg.tool_call_id.as_deref(),
+            })
+            .collect();
+
+        let openai_tools = if tools.is_empty() {
+            None
+        } else {
+            Some(
+                tools
+                    .iter()
+                    .map(|t| OpenAiTool {
+                        r#type: "function".to_string(),
+                        function: OpenAiFunction {
+                            name: t.name.clone(),
+                            description: t.description.clone(),
+                            parameters: t.parameters.clone(),
+                        },
+                    })
+                    .collect(),
+            )
+        };
+
         let request_body = OpenAiRequest {
             model: &opts.model,
-            messages,
+            messages: openai_messages,
             max_tokens: opts.max_tokens.or(self.config.max_tokens),
             temperature: opts.temperature.or(self.config.temperature),
             stream: None,
+            tools: openai_tools,
         };
 
         tracing::info!("Sending LLM request to OpenAI compat API at {}", url);
@@ -171,6 +305,7 @@ impl LlmProvider for OpenAiCompatProvider {
         Ok(LlmResponse {
             content: choice.message.content.clone().unwrap_or_default(),
             role: choice.message.role.clone(),
+            tool_calls: choice.message.tool_calls.clone(),
         })
     }
 
@@ -182,12 +317,28 @@ impl LlmProvider for OpenAiCompatProvider {
     ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
         let url = format!("{}/chat/completions", self.config.api_base_url);
         
+        let openai_messages: Vec<OpenAiMessage> = messages
+            .iter()
+            .map(|msg| OpenAiMessage {
+                role: &msg.role,
+                content: if msg.content.is_empty() && msg.tool_calls.is_some() {
+                    None
+                } else {
+                    Some(&msg.content)
+                },
+                name: msg.name.as_deref(),
+                tool_calls: msg.tool_calls.as_deref(),
+                tool_call_id: msg.tool_call_id.as_deref(),
+            })
+            .collect();
+
         let request_body = OpenAiRequest {
             model: &opts.model,
-            messages,
+            messages: openai_messages,
             max_tokens: opts.max_tokens.or(self.config.max_tokens),
             temperature: opts.temperature.or(self.config.temperature),
             stream: Some(true),
+            tools: None,
         };
 
         tracing::info!("Sending streaming LLM request to OpenAI compat API at {}", url);
@@ -282,9 +433,12 @@ impl LlmProvider for GmnCliProvider {
     async fn complete(
         &self,
         messages: &[Message],
-        _tools: &[ToolDef],
+        tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<LlmResponse, ProviderError> {
+        if !tools.is_empty() {
+            return Err(ProviderError::ExecutionFailed("GmnCliProvider does not support tool calling".to_string()));
+        }
         let prompt = self.build_prompt(messages);
         
         tracing::debug!(
@@ -372,6 +526,7 @@ impl LlmProvider for GmnCliProvider {
         Ok(LlmResponse {
             content: final_content.trim().to_string(),
             role: "assistant".to_string(),
+            tool_calls: None,
         })
     }
 
@@ -563,6 +718,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
 
         let provider = OpenAiCompatProvider::new(config);
@@ -619,6 +775,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
 
         let provider = OpenAiCompatProvider::new(config);
@@ -682,6 +839,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
         let provider = GmnCliProvider::new(config);
         let opts = CompletionOptions {
@@ -703,5 +861,145 @@ mod tests {
         assert_eq!(resp.role, "assistant");
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_openai_compat_complete_with_tools() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
+                    \"choices\": [{\
+                        \"message\": {\
+                            \"role\": \"assistant\",\
+                            \"content\": \"Hello, using tool now.\",\
+                            \"tool_calls\": [{\
+                                \"id\": \"call_xyz\",\
+                                \"type\": \"function\",\
+                                \"function\": {\
+                                    \"name\": \"add\",\
+                                    \"arguments\": \"{\\\"a\\\": 2, \\\"b\\\": 3}\"\
+                                }\
+                            }]\
+                        }\
+                    }]\
+                }";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let config = Config {
+            model_provider: "openai".to_string(),
+            model_name: "gpt-4o-mini".to_string(),
+            api_key: "dummy_key".to_string(),
+            api_base_url: format!("http://{}", addr),
+            max_tokens: None,
+            temperature: None,
+            debug_dump: false,
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
+        };
+
+        let provider = OpenAiCompatProvider::new(config);
+        let opts = CompletionOptions {
+            model: "gpt-4o-mini".to_string(),
+            max_tokens: None,
+            temperature: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let tool = ToolDef {
+            name: "add".to_string(),
+            description: "Adds numbers".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "a": { "type": "number" },
+                    "b": { "type": "number" }
+                }
+            }),
+        };
+
+        let resp = provider.complete(&[], &[tool], &opts).await?;
+        assert_eq!(resp.content, "Hello, using tool now.");
+        assert_eq!(resp.role, "assistant");
+        
+        let calls = resp.tool_calls.expect("Should contain tool calls");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_xyz");
+        assert_eq!(calls[0].function.name, "add");
+        assert_eq!(calls[0].function.arguments, "{\"a\": 2, \"b\": 3}");
+
+        let _ = server_task.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_gmn_cli_complete_with_tools_fails() -> anyhow::Result<()> {
+        let config = Config {
+            model_provider: "gmn".to_string(),
+            model_name: "gemini-2.5-pro".to_string(),
+            api_key: "".to_string(),
+            api_base_url: "".to_string(),
+            max_tokens: None,
+            temperature: None,
+            debug_dump: false,
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
+        };
+        let provider = GmnCliProvider::new(config);
+        let opts = CompletionOptions {
+            model: "gemini-2.5-pro".to_string(),
+            max_tokens: None,
+            temperature: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let tool = ToolDef {
+            name: "add".to_string(),
+            description: "Adds numbers".to_string(),
+            parameters: serde_json::json!({}),
+        };
+
+        let result = provider.complete(&[], &[tool], &opts).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ProviderError::ExecutionFailed(msg) => {
+                assert!(msg.contains("does not support tool calling"));
+            }
+            other => panic!("Expected ExecutionFailed error, got: {:?}", other),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_provider_error_reset_after() {
+        let err = ProviderError::RateLimit("Error: Your Quota will reset after 56s. Please try again.".to_string());
+        assert_eq!(err.reset_after(), Some(std::time::Duration::from_secs(56)));
+
+        let err2 = ProviderError::RateLimit("Your Quota will reset after 5s".to_string());
+        assert_eq!(err2.reset_after(), Some(std::time::Duration::from_secs(5)));
+
+        let err3 = ProviderError::RateLimit("Your Quota will reset after 1m 30s.".to_string());
+        assert_eq!(err3.reset_after(), Some(std::time::Duration::from_secs(90)));
+
+        let err4 = ProviderError::RateLimit("Your Quota will reset after 2m".to_string());
+        assert_eq!(err4.reset_after(), Some(std::time::Duration::from_secs(120)));
+
+        let err5 = ProviderError::RateLimit("Your Quota will reset after 3m 5s".to_string());
+        assert_eq!(err5.reset_after(), Some(std::time::Duration::from_secs(185)));
+
+        let err_none = ProviderError::RateLimit("Some other quota error without reset time".to_string());
+        assert_eq!(err_none.reset_after(), None);
+
+        let err_exec = ProviderError::ExecutionFailed("Your Quota will reset after 10s".to_string());
+        assert_eq!(err_exec.reset_after(), None);
     }
 }

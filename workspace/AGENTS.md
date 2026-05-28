@@ -148,6 +148,17 @@ When a message is received, determine whether it is a **simple question or a tas
 - **Always respond in the user's preferred language** — check `USER.md` for `Preferred language`
 - If the user writes in Japanese, reply in Japanese. If English, reply in English.
 
+## Karakeep Operation Scripts
+
+When performing Karakeep maintenance or batch operations, invoke the local scripts under `workspace/scripts/`:
+
+*   **Karakeep Cleanup (deletion of old/unprotected RSS items)**:
+    *   Command: `bash workspace/scripts/karakeep_cleanup.sh`
+    *   Trigger: Periodically or when asked to clean up old bookmarks. Deletes RSS items older than 14 days without favs/protect tags.
+*   **Karakeep Tagging (batch tagging of bookmarks)**:
+    *   Command: `bash workspace/scripts/karakeep_tag_items.sh <tag_name> <id1> <id2> ...`
+    *   Trigger: When asked to apply a specific tag to a list of bookmark IDs.
+
 ## Interactive Mode
 
 - Focus exclusively on the user's request

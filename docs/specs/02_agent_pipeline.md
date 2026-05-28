@@ -104,7 +104,12 @@ pub struct ConversationHistory {
 - **セマフォ制御**: `flush_sem`（容量 1）を取得してから実行し、同時 gmn プロセス数が意図した上限を超えないよう保護（→ `05_gateway_spec.md` §2 参照）。
 
 ### ④ Session Continuation (日またぎの文脈復元)
-日付が変わった後の初回ターンにおいて、前日のサマリー（`summaries/` の TL;DR）および直近5件のやり取りを自動的にシステムコンテキストに注入し、「昨日話していたことの続き」からスムーズに対話を再開させます。
+- 日付が変わった後の初回ターンにおいて、前日のサマリー（`summaries/` 内のセッション単位サマリー `YYYY-MM-DD-safe_session_id.md`、なければ日次サマリー `YYYY-MM-DD-daily-summary.md`）および直近5件のやり取りを自動的にシステムコンテキストに注入し、「昨日話していたことの続き」からスムーズに対話を再開させます。
+- サマリー検索の優先順位:
+  1. 前日セッション固有のサマリー: `summaries/YYYY-MM-DD-{safe_prev_session_id}.md`
+  2. 日次サマリー: `summaries/YYYY-MM-DD-daily-summary.md`
+  3. 日付にマッチするフォールバックファイル: `summaries/YYYY-MM-DD*.md`
+- これにより、並行して異なる会話チャンネルが進行していても、前日の各セッション毎に固有の話題や文脈を100%精緻に復元できます。
 
 ### ⑤ Proactive Posts 注入
 Heartbeatサービス（自発的アクション）によってエージェントから自発的に送信されたメッセージを、単なるシステム通知ではなく「自分が過去に発信した対話」として `ConversationHistory` に適切に挿入します。これにより、エージェント自身の発言内容の忘れ防止を図ります。
@@ -212,6 +217,7 @@ gmn --version
 - `--think` フラグ（拡張思考モード）
 - `--stop` フラグ（ストップシーケンス）
 - stdout への Force-flush
+- 不要なエラーヘルプメッセージの表示抑制（Cobra の `SilenceUsage: true` 適用）
 
 **レートリミット・Quota 保護および非ブロッキング・バックオフリトライ**:
 
@@ -221,7 +227,7 @@ gmn --version
 | `-t <duration>` タイムアウト | バックオフ待機中にコンテキストキャンセルを発火させ早期終了させる暫定手段 |
 | `complete()` quota 検知 | stderr に `quota`・`RESOURCE_EXHAUSTED`・`429` が含まれる場合、`ProviderError::RateLimit` を即座にバブルアップし、プロバイダ内部ではスリープやリトライを行わず制御を呼び出し元へ戻す |
 | `complete_stream()` 終了コード確認 | ストリーム完了後にプロセス終了コードを検証し、異常終了（429エラー等）を確実に `ProviderError::RateLimit` として伝播 |
-| `rustyclaw-gateway` の非ブロッキング・バックオフリトライ | `gmn_sem` のセマフォを取得した状態で LLM 呼び出しを実行し、`ProviderError::RateLimit` を検知した瞬間に **セマフォ許可証（Permit）を即時解放（drop）** する。その後、5秒、10秒、20秒と指数関数バックオフ（Exponential Backoff）で `tokio::time::sleep` を行い、スリープ明けにセマフォを再取得して最大3回まで再試行する。これにより、レートリミット待機中もグローバルセマフォを占有せず、他の独立したレーンやタスクの進行を阻害しない。 |
+| `rustyclaw-gateway` の非ブロッキング・バックオフリトライ | `gmn_sem` のセマフォを取得した状態で LLM 呼び出しを実行し、`ProviderError::RateLimit` を検知した瞬間に **セマフォ許可証（Permit）を即時解放（drop）** する。エラーメッセージにリセット待機時間（`Your Quota will reset after XXs` や `XXm YYs` 等）が含まれる場合はその時間を動的にパースし、安全マージン（2秒）を加えた時間をスリープ時間として採用する（解析不能時は5秒、10秒、20秒の指数関数バックオフにフォールバック）。スリープ明けにセマフォを再取得して最大3回まで再試行する。これにより、レートリミット待機中もグローバルセマフォを占有せず、他の独立したレーンやタスクの進行を阻害しない。 |
 | LaneRegistry セマフォ | 同時起動数を user: 2 / bg: 1（最大 3）に制限（→ `05_gateway_spec.md` §3 参照） |
 
 ```rust

@@ -151,6 +151,95 @@
 
 ---
 
+## Phase 8: Context Management 改善 ✅ 完了
+
+> GeminiClaw のコンテキスト管理アーキテクチャを分析し、RustyClaw への取り込みを完了した（2026-05-28）。
+
+- `[x]` **A. Heartbeat Digest の真の実装（★★★ 最優先）**
+  - **現状**: Phase 7 でステートレス化済みだが、Heartbeat がユーザー活動を全く把握できていない
+  - **改善**: `HeartbeatService` 実行前に `generate_heartbeat_digest()` を呼び、`heartbeat-digest.md` を更新してから Heartbeat プロンプトに含める
+  - **仕様**: 増分スキャン（`lastRunTimestamp` 管理）+ 6回毎 deep scan（24時間分）+ 最大 3000 文字
+  - **影響範囲**: `rustyclaw-gateway/src/lib.rs`（HeartbeatService）+ 新規 `generate_digest()` 関数
+  - **期待効果**: Heartbeat の proactive 投稿精度が向上
+  - **参照**: GeminiClaw `src/agent/session/heartbeat-digest.ts`
+
+- `[x]` **B. Session-level Summary の実装（★★★）**
+  - **現状**: Daily Summary のみ。セッション単位のサマリーなし → Session Continuation の精度が低い
+  - **改善**: 会話がアイドル（5分以上更新なし）になったときにセッション単位サマリーを生成
+  - **出力**: `memory/summaries/<date>-<slug>.md`（TL;DR + topics + decisions）
+  - **影響範囲**: `rustyclaw-gateway/src/lib.rs`（新規 `SummaryService` or `CronService` 拡張）
+  - **期待効果**: 日またぎのコンテキスト継続品質向上
+  - **参照**: GeminiClaw `src/agent/session/summary.ts`
+
+- `[x]` **C. JSONL 削減（truncateBefore）（★★）**
+  - **現状**: Discord セッション JSONL が無制限成長
+  - **改善**: Daily Summary 生成後、30日以上前のエントリを削除
+  - **影響範囲**: `rustyclaw-storage`（`SessionLogger` に削減メソッド追加）
+  - **前提**: B の Session Summary 実装後に着手
+
+- `[x]` **D. Session Summary の増分更新（★★）**
+  - 既存サマリーの `turns` と JSONL 行数を比較し、差分エントリ + 既存 TL;DR のみで更新
+  - **前提**: B の基本実装後に追加
+
+- `[x]` **仕様書の更新**
+  - 実装完了後、`docs/specs/04_heartbeat_spec.md` と `docs/specs/02_agent_pipeline.md` を最新コードに同期
+
+---
+
+---
+
+## Phase 9: 自前 MCP クライアント実装 (rustyclaw-mcp) と外部サーバー統合 ✅ 完了
+
+> 長期課題として残されていた PicoClaw 方式の自前 MCP クライアント (`rustyclaw-mcp`) を新設し、各外部サーバーへの接続とアジェンティックループへの統合を完全に完了した (2026-05-28)。
+
+- `[x]` **1. rustyclaw-tools クレートの新設**
+  - `[x]` 共通 `Tool` トレイト、`ToolResult`、および `ToolRegistry` の実装
+- `[x]` **2. rustyclaw-mcp クレートの新設**
+  - `[x]` JSON-RPC 2.0 に基づく stdio 接続モデル、初期化ハンドシェイク、ツール一覧取得 (`tools/list`)、ツール呼び出し (`tools/call`) を実装
+  - `[x]` 接続診断テスト `test_real_mcp_servers_connectivity` を追加
+- `[x]` **3. Gateway & Agent アジェンティックループへの統合**
+  - `[x]` Gateway の `mcp_manager` 経由で起動時に MCP ツールをロードし、`tool_registry` に自動登録
+  - `[x]` Agent の `execute_with_tools` ループにおいて、LLM からの `tool_calls` 要求をインターセプトし自律実行するマルチターンループを完成
+- `[x]` **4. 外部 MCP サーバー接続設定の反映**
+  - `[x]` **Google Calendar**: `@anthropic-ai/mcp-server-google-calendar` (npx)
+  - `[x]` **Gmail**: `@anthropic-ai/mcp-server-gmail` (npx)
+  - `[x]` **Karakeep**: `@karakeep/mcp` (npx, API キー & サーバーアドレス対応)
+  - `[x]` **Obsidian**: `mcp-obsidian` (uvx, REST API ホスト 192.168.1.2 接続対応)
+  - `[x]` 実機での接続点検テストを実行し、すべてのハンドシェイクと疎通が正常であることを実証
+- `[x]` **5. Karakeep 運用スクリプトの点検と Agent 指示追加**
+  - `[x]` `karakeep_cleanup.sh` / `karakeep_tag_items.sh` の動作点検
+  - `[x]` エージェント行動規範 `AGENTS.md` にスクリプトの使用指示セクションを追記し、Agentが自律的に実行可能な状態に統合
+
+---
+
+## Phase 10: gmn (Gemini CLI) エラーヘルプ表示の抑制（SilenceUsage） ✅ 完了
+
+> API レート制限（429）や不正なフラグ指定などのエラーによる異常終了の際、不要な Usage ヘルプメッセージやオプション説明がログ（`rustyclaw.log` 等）に大量出力されるのを防ぎ、エラー内容のみを出力させる品質改善（2026-05-28）。
+
+- `[x]` **1. gmn のソースコード修正**
+  - `/home/kazuaki/Projects/gmn/master/src/cmd/root.go` の `rootCmd` 定義ブロックに `SilenceUsage: true` を追記。
+- `[x]` **2. gmn バイナリのビルド・デプロイ**
+  - `/home/kazuaki/Projects/gmn/` のビルドスクリプトを実行し、WSL/Linux (x86_64) 向け `gmn` をリビルド。
+  - 新しい `gmn` バイナリを `~/.local/share/go/bin/gmn` に上書き配置（デプロイ）。
+- `[x]` **3. 動作検証**
+  - `gmn --invalid-flag-abc` を実行し、`Usage:` の出力が完全に抑制され、`Error: unknown flag...` のみが出力されることを実証。
+
+---
+
+## Phase 11: 動的レートリミットバックオフ待機（Quota Reset 解析） ✅ 完了
+
+> gmn (Gemini CLI) の 429 エラー発生時、エラーメッセージに含まれる `Your Quota will reset after XXs.` や `XXm YYs` などのリセットまでの待機時間を解析し、Rust 側のバックオフ待機時間として動的に適用する最適化改善（2026-05-28）。
+
+- `[x]` **1. ProviderError の拡張と解析メソッド実装**
+  - `rustyclaw-providers` の `ProviderError` enum に `reset_after(&self) -> Option<Duration>` を追加。
+  - `"Your Quota will reset after XXs"`、`"XXm YYs"`、`"XXm"` などの多様な時間形式を頑健に分・秒単位で自動パースして合算秒数を算出するロジックを実装。
+- `[x]` **2. ユニットテストの拡張と検証**
+  - 単一の秒数表記に加え、分秒混在表記（`1m 30s` 等）、分のみ表記（`2m` 等）の様々なパターンのエラーメッセージから正しく秒数が解析できることを検証するテストケースを追加・実証。
+- `[x]` **3. Gateway 側のリトライバックオフ処理への動的適用**
+  - `rustyclaw-gateway` の3つのリトライループにおいて、解析された待機時間がある場合はそれに安全マージン（2秒）を加えた時間を `backoff` スリープ時間として動的に採用するよう修正。
+
+---
+
 ## 継続検討課題
 
 - `[ ]` **`gmn_sem > 1` の並列化復活（2026-05-28 積み残し）**
@@ -164,16 +253,3 @@
   - Calendar / Gmail MCP ツール統合後、Heartbeat が gmn_sem を 1〜5 分占有する可能性
   - ユーザー対話が最大 5 分待機を強いられる場合がある
   - 詳細は `docs/specs/05_gateway_spec.md` の `[^mcp_heartbeat]` 脚注を参照
-
-- `[ ]` **MCP クライアント自前実装（PicoClaw 方式、長期課題）**
-  - 現状: gmn CLI の `--no-agent` で LLM 呼び出しのみ行い、MCP ツール実行能力を持たない
-  - 目標: PicoClaw の `pkg/mcp` に相当する Rust クレート `rustyclaw-mcp` を実装し、AgentLoop 内で直接 MCP サーバーと JSON-RPC 通信する
-  - 詳細実装計画: `docs/specs/07_mcp_plan.md` を参照
-  - 実装フェーズ（計画書より抜粋）:
-    - Phase 7-1: Tool トレイト + ToolRegistry（`rustyclaw-tools` 実装）
-    - Phase 7-2: Provider 拡張（ToolCall レスポンス対応）
-    - Phase 7-3: Agent アジェンティックループ
-    - Phase 7-4: `rustyclaw-mcp` クレート新設（MCP クライアント）
-    - Phase 7-5: 設定統合 + Gateway への組み込み
-    - Phase 7-6: ツール検索 Discovery（オプション）
-  - 前提条件: `gmn_sem > 1` の並列化（共有ファイル排他制御）と同時に検討すること

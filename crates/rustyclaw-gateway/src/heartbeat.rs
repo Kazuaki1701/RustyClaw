@@ -27,21 +27,51 @@ impl HeartbeatService {
     pub fn generate_digest(&self, db: &DbManager) -> Result<String> {
         let now_dt = Local::now();
 
-
         // 実行回数カウンタの取得・更新 (6回に1回 Deep Scan)
         let run_count_str = db.get_last_patrol_run("heartbeat_run_count")?.unwrap_or_else(|| "0".to_string());
         let run_count = run_count_str.parse::<usize>().unwrap_or(0) + 1;
         let _ = db.set_state_value("heartbeat_run_count", &run_count.to_string());
 
         let is_deep_scan = run_count % 6 == 0;
-        tracing::info!("HeartbeatService: Generating digest. Run count: {} (Deep Scan: {})", run_count, is_deep_scan);
+        
+        // 前回の実行時刻を取得
+        let last_run_at_str = db.get_last_patrol_run("heartbeat_last_run_ts")?;
+        let last_run_at: Option<DateTime<Local>> = last_run_at_str.and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Local))
+        });
+
+        // 状態保存: 今回の実行時刻
+        let _ = db.set_state_value("heartbeat_last_run_ts", &now_dt.to_rfc3339());
+
+        tracing::info!("HeartbeatService: Generating digest. Run count: {} (Deep Scan: {}, Last Run: {:?})", run_count, is_deep_scan, last_run_at);
 
         let sessions_dir = self.workspace_path.join("sessions");
         let _ = fs::create_dir_all(&sessions_dir);
 
-        let mut entries = Vec::new();
+        let digest_path = self.workspace_path.join("memory").join("heartbeat-digest.md");
 
-        // sessions/*.jsonl をスキャン
+        // 既存のダイジェスト行をセッションIDごとにパースしてマップに格納
+        let mut existing_digest_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        if !is_deep_scan && last_run_at.is_some() && digest_path.exists() {
+            if let Ok(content) = fs::read_to_string(&digest_path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if trimmed.starts_with("[--:--] ") {
+                        let body = &trimmed["[--:--] ".len()..];
+                        if let Some(colon_idx) = body.find(": ") {
+                            let session_id = body[..colon_idx].to_string();
+                            existing_digest_map.entry(session_id).or_default().push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // sessions/*.jsonl をスキャンしてアクティブなセッションを収集
+        let mut active_sessions = Vec::new();
         if let Ok(dir_entries) = fs::read_dir(&sessions_dir) {
             for entry in dir_entries.flatten() {
                 let path = entry.path();
@@ -52,60 +82,82 @@ impl HeartbeatService {
                 }
 
                 // ファイル変更時刻チェック
-                let metadata = fs::metadata(&path)?;
-                let modified: DateTime<Local> = metadata.modified()?.into();
+                if let Ok(metadata) = fs::metadata(&path) {
+                    if let Ok(modified_time) = metadata.modified() {
+                        let modified: DateTime<Local> = modified_time.into();
+                        // 過去24時間以内に更新されたアクティブな対話のみ対象
+                        if now_dt.signed_duration_since(modified).num_hours() < 24 {
+                            let session_id = filename.trim_end_matches(".jsonl").to_string();
+                            active_sessions.push((modified, path, session_id));
+                        }
+                    }
+                }
+            }
+        }
 
-                // Always capture sessions active within the last 24 hours:
-                let should_scan = now_dt.signed_duration_since(modified).num_hours() < 24;
+        let mut merged_lines: Vec<(DateTime<Local>, String)> = Vec::new();
 
-                if should_scan {
-                    entries.push((modified, path, filename));
+        for (mod_time, path, session_id) in active_sessions {
+            let is_modified_since_last = match last_run_at {
+                Some(last_ts) => mod_time > last_ts,
+                None => true,
+            };
+
+            if !is_deep_scan && !is_modified_since_last && existing_digest_map.contains_key(&session_id) {
+                // 既存のダイジェスト行をそのまま利用（JSONL ファイルの再読み込みをスキップ）
+                if let Some(lines) = existing_digest_map.get(&session_id) {
+                    for line in lines {
+                        merged_lines.push((mod_time, line.clone()));
+                    }
+                }
+            } else {
+                // 新規または更新されたセッション: ファイルを読み込んでダイジェスト行を生成
+                if let Ok(file) = File::open(&path) {
+                    let reader = BufReader::new(file);
+                    let mut messages = Vec::new();
+
+                    for line_res in reader.lines().flatten() {
+                        if let Ok(msg) = serde_json::from_str::<Message>(&line_res) {
+                            messages.push(msg);
+                        }
+                    }
+
+                    // 最後の対話ペア（User -> Assistant）を取り出す
+                    let mut i = 0;
+                    let mut session_lines = Vec::new();
+                    while i < messages.len() {
+                        if messages[i].role == "user" {
+                            if i + 1 < messages.len() && messages[i + 1].role == "assistant" {
+                                let prompt = &messages[i].content;
+                                let response = &messages[i + 1].content;
+                                
+                                let clean_prompt = prompt.replace('\n', " ").chars().take(100).collect::<String>();
+                                let clean_response = response.replace('\n', " ").chars().take(100).collect::<String>();
+
+                                session_lines.push(format!(
+                                    "[--:--] {}: {} → {}",
+                                    session_id, clean_prompt, clean_response
+                                ));
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+
+                    for line in session_lines {
+                        merged_lines.push((mod_time, line));
+                    }
                 }
             }
         }
 
         // 時間順（昇順）にソート
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        merged_lines.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let mut digest_lines = Vec::new();
-
-        for (_mod_time, path, filename) in entries {
-            let session_id = filename.trim_end_matches(".jsonl").to_string();
-            let file = File::open(&path)?;
-            let reader = BufReader::new(file);
-            let mut messages = Vec::new();
-
-            for line_res in reader.lines().flatten() {
-                if let Ok(msg) = serde_json::from_str::<Message>(&line_res) {
-                    messages.push(msg);
-                }
-            }
-
-            // 最後の対話ペア（User -> Assistant）を取り出す
-            let mut i = 0;
-            while i < messages.len() {
-                if messages[i].role == "user" {
-                    if i + 1 < messages.len() && messages[i + 1].role == "assistant" {
-                        let prompt = &messages[i].content;
-                        let response = &messages[i + 1].content;
-                        
-                        // 1行に収めるため改行と空白を整理し、最大100文字にクリップ
-                        let clean_prompt = prompt.replace('\n', " ").chars().take(100).collect::<String>();
-                        let clean_response = response.replace('\n', " ").chars().take(100).collect::<String>();
-
-                        digest_lines.push(format!(
-                            "[--:--] {}: {} → {}",
-                            session_id, clean_prompt, clean_response
-                        ));
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                } else {
-                    i += 1;
-                }
-            }
-        }
+        let digest_lines: Vec<String> = merged_lines.into_iter().map(|item| item.1).collect();
 
         // 最新エントリを優先して最大3000文字に制限
         let mut final_digest = String::new();
@@ -119,12 +171,12 @@ impl HeartbeatService {
         let final_digest = final_digest.trim().to_string();
         
         // heartbeat-digest.md への原子性書き込み
-        let digest_path = self.workspace_path.join("memory").join("heartbeat-digest.md");
         let _ = fs::create_dir_all(digest_path.parent().unwrap());
         let _ = rustyclaw_storage::atomic_write(&digest_path, final_digest.as_bytes());
 
         Ok(final_digest)
     }
+
 
     /// Heartbeat Step 5: Daytime & 8h 無通信声掛け判定
     pub fn is_step5_allowed(&self, db: &DbManager) -> Result<bool> {
@@ -228,6 +280,7 @@ impl HeartbeatService {
                 role: "assistant".to_string(),
                 content: response_content.to_string(),
                 name: None,
+                ..Default::default()
             };
             let _ = logger.append_message(&target_session_id, &assistant_msg);
 
@@ -303,11 +356,13 @@ mod tests {
             role: "user".to_string(),
             content: "What is the weather today?".to_string(),
             name: None,
+            ..Default::default()
         };
         let msg_assistant = Message {
             role: "assistant".to_string(),
             content: "It is sunny and 22 degrees.".to_string(),
             name: None,
+            ..Default::default()
         };
         
         fs::write(
@@ -335,6 +390,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
         
         let service = HeartbeatService::new(config, ws_path.clone(), bus);

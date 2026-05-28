@@ -194,13 +194,17 @@ impl LaneRegistry {
                                             }
                                             Err(e) => {
                                                 drop(permit); // Release permit immediately so other lanes aren't blocked!
-                                                if let Some(rustyclaw_providers::ProviderError::RateLimit(limit_msg)) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
-                                                    if attempt < max_attempts {
-                                                        let backoff = base_delay * 2u32.pow(attempt);
-                                                        tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
-                                                        tokio::time::sleep(backoff).await;
-                                                        attempt += 1;
-                                                        continue;
+                                                if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
+                                                    if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
+                                                        if attempt < max_attempts {
+                                                            let backoff = err.reset_after()
+                                                                .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
+                                                                .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
+                                                            tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                            tokio::time::sleep(backoff).await;
+                                                            attempt += 1;
+                                                            continue;
+                                                        }
                                                     }
                                                 }
                                                 // Non-rate-limit error or max retries exceeded
@@ -258,13 +262,17 @@ impl LaneRegistry {
                                         }
                                         Err(e) => {
                                             drop(permit); // Release permit immediately so other lanes aren't blocked!
-                                            if let Some(rustyclaw_providers::ProviderError::RateLimit(limit_msg)) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
-                                                if attempt < max_attempts {
-                                                    let backoff = base_delay * 2u32.pow(attempt);
-                                                    tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
-                                                    tokio::time::sleep(backoff).await;
-                                                    attempt += 1;
-                                                    continue;
+                                            if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
+                                                if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
+                                                    if attempt < max_attempts {
+                                                        let backoff = err.reset_after()
+                                                            .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
+                                                            .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
+                                                        tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                        tokio::time::sleep(backoff).await;
+                                                        attempt += 1;
+                                                        continue;
+                                                    }
                                                 }
                                             }
                                             // Non-rate-limit error or max retries exceeded
@@ -339,13 +347,17 @@ impl LaneRegistry {
                                         }
                                         Err(e) => {
                                             drop(permit); // Release permit immediately so other lanes aren't blocked!
-                                            if let Some(rustyclaw_providers::ProviderError::RateLimit(limit_msg)) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
-                                                if attempt < max_attempts {
-                                                    let backoff = base_delay * 2u32.pow(attempt);
-                                                    tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
-                                                    tokio::time::sleep(backoff).await;
-                                                    attempt += 1;
-                                                    continue;
+                                            if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
+                                                if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
+                                                    if attempt < max_attempts {
+                                                        let backoff = err.reset_after()
+                                                            .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
+                                                            .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
+                                                        tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                        tokio::time::sleep(backoff).await;
+                                                        attempt += 1;
+                                                        continue;
+                                                    }
                                                 }
                                             }
                                             // Non-rate-limit error or max retries exceeded
@@ -598,6 +610,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
 
         let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone());

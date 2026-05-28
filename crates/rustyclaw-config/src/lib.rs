@@ -1,8 +1,19 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpServerConfig {
+    pub enabled: bool,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -24,6 +35,9 @@ pub struct Config {
     /// 空リストの場合は @mention のみ応答。
     #[serde(default)]
     pub discord_respond_in_channels: Vec<String>,
+    /// MCP サーバーの設定
+    #[serde(default)]
+    pub mcp: HashMap<String, McpServerConfig>,
 }
 
 impl Config {
@@ -122,6 +136,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: HashMap::new(),
         };
 
         unsafe {

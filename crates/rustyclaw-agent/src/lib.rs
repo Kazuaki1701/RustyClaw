@@ -3,6 +3,7 @@ use futures_util::{Stream, StreamExt};
 use rustyclaw_config::Config;
 use rustyclaw_providers::{LlmProvider, Message, StreamChunk, LlmResponse, CompletionOptions, create_provider};
 use rustyclaw_storage::{SessionLogger, ConversationHistory};
+use rustyclaw_tools::ToolRegistry;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -147,9 +148,24 @@ impl Pipeline {
         }
         let yyyy_mm_dd = format!("{}-{}-{}", &prev_date_str[0..4], &prev_date_str[4..6], &prev_date_str[6..8]);
 
+        let prev_session_id = prev_filename.trim_end_matches(".jsonl");
+        let safe_prev_session_id = prev_session_id.replace(':', "-");
+
         let summaries_dir = workspace_dir.join("memory").join("summaries");
         let mut summary_content = String::new();
-        if let Ok(entries) = std::fs::read_dir(&summaries_dir) {
+        
+        let specific_summary_path = summaries_dir.join(format!("{}-{}.md", yyyy_mm_dd, safe_prev_session_id));
+        let daily_summary_path = summaries_dir.join(format!("{}-daily-summary.md", yyyy_mm_dd));
+
+        if specific_summary_path.exists() {
+            if let Ok(c) = std::fs::read_to_string(&specific_summary_path) {
+                summary_content = c;
+            }
+        } else if daily_summary_path.exists() {
+            if let Ok(c) = std::fs::read_to_string(&daily_summary_path) {
+                summary_content = c;
+            }
+        } else if let Ok(entries) = std::fs::read_dir(&summaries_dir) {
             for entry in entries.flatten() {
                 let filename = entry.file_name().to_string_lossy().to_string();
                 if filename.starts_with(&yyyy_mm_dd) && filename.ends_with(".md") {
@@ -161,8 +177,8 @@ impl Pipeline {
             }
         }
 
+
         let logger = SessionLogger::new(workspace_dir);
-        let prev_session_id = prev_filename.trim_end_matches(".jsonl");
         let mut prev_history = Vec::new();
         if let Ok(msgs) = logger.load_history(prev_session_id) {
             let start = msgs.len().saturating_sub(5);
@@ -335,11 +351,13 @@ Rules:
                 role: "system".to_string(),
                 content: system_prompt.to_string(),
                 name: None,
+                ..Default::default()
             },
             Message {
                 role: "user".to_string(),
                 content: user_message,
                 name: None,
+                ..Default::default()
             },
         ];
 
@@ -438,12 +456,14 @@ Rules:
             role: "system".to_string(),
             content: system_context,
             name: None,
+            ..Default::default()
         });
         messages.extend(history.messages.clone());
         let user_msg = Message {
             role: "user".to_string(),
             content: user_message.to_string(),
             name: None,
+            ..Default::default()
         };
         messages.push(user_msg.clone());
 
@@ -467,6 +487,7 @@ Rules:
             role: response.role.clone(),
             content: response.content.clone(),
             name: None,
+            ..Default::default()
         };
         logger.append_message(session_id, &assistant_msg)
             .context("Failed to save assistant response in session log (fail-closed)")?;
@@ -478,6 +499,308 @@ Rules:
         }
 
         Ok(response)
+    }
+
+    /// セッション単位のサマリーを生成または増分更新する
+    pub async fn generate_session_summary(&self, workspace_dir: &Path, target_session_id: &str) -> Result<String> {
+        let logger = SessionLogger::new(workspace_dir);
+        let history = logger.load_history(target_session_id)
+            .context("Failed to load history for session summary")?;
+
+        if history.is_empty() {
+            return Err(anyhow::anyhow!("Cannot generate summary for empty session history"));
+        }
+
+        let safe_session_id = target_session_id.replace(':', "-");
+        let session_file = workspace_dir.join("sessions").join(format!("{}.jsonl", safe_session_id));
+        let session_date = if let Ok(meta) = std::fs::metadata(&session_file) {
+            if let Ok(modified) = meta.modified() {
+                let dt: chrono::DateTime<chrono::Local> = modified.into();
+                dt.format("%Y-%m-%d").to_string()
+            } else {
+                chrono::Local::now().format("%Y-%m-%d").to_string()
+            }
+        } else {
+            chrono::Local::now().format("%Y-%m-%d").to_string()
+        };
+
+        let summaries_dir = workspace_dir.join("memory").join("summaries");
+        let existing_summary_path = summaries_dir.join(format!("{}-{}.md", session_date, safe_session_id));
+
+        let mut existing_content = String::new();
+        let mut existing_turns = 0;
+
+        if existing_summary_path.exists() {
+            if let Ok(content) = fs::read_to_string(&existing_summary_path) {
+                existing_content = content;
+                if let Some(idx) = existing_content.rfind("<!-- turns: ") {
+                    let sub = &existing_content[idx + "<!-- turns: ".len()..];
+                    if let Some(end_idx) = sub.find(" -->") {
+                        if let Ok(t) = sub[..end_idx].trim().parse::<usize>() {
+                            existing_turns = t;
+                        }
+                    }
+                }
+            }
+        }
+
+        let provider = create_provider(self.config.clone());
+        let opts = CompletionOptions {
+            model: "flash".to_string(),
+            max_tokens: Some(1500),
+            temperature: Some(0.3),
+            timeout: Duration::from_secs(300),
+        };
+
+        let summary_content = if existing_turns > 0 && existing_turns < history.len() {
+            // Incremental Summary
+            let mut new_conversation_text = String::new();
+            for msg in &history[existing_turns..] {
+                new_conversation_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
+            }
+
+            let system_prompt = "\
+You are a context manager. Update the existing Session-level Summary with the new conversation turns.
+
+The summary MUST continue to contain:
+1. A 'TL;DR' section: An updated 1-2 sentence overview of the main topics, goals, and outcomes.
+2. A 'Topics' section: An updated concise bulleted list of topics discussed.
+3. A 'Decisions' section: An updated bulleted list of key decisions made, action items, or preferences identified.
+
+Integrate the new conversation turns seamlessly into the existing summary. Keep it extremely concise, dense, and professional.
+Output ONLY the markdown content. Do not include any introductory or concluding remarks.
+";
+
+            let user_message = format!(
+                "## Existing Summary:\n{}\n\n## New Conversation Turns:\n{}",
+                existing_content,
+                new_conversation_text
+            );
+
+            let messages = vec![
+                Message {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                    name: None,
+                    ..Default::default()
+                },
+                Message {
+                    role: "user".to_string(),
+                    content: user_message,
+                    name: None,
+                    ..Default::default()
+                },
+            ];
+
+            let response = provider.complete(&messages, &[], &opts).await
+                .context("LLM call failed for incremental session summary generation")?;
+            
+            response.content
+        } else if existing_turns > 0 && existing_turns >= history.len() {
+            existing_content
+        } else {
+            // Full Summary from scratch
+            let mut conversation_text = String::new();
+            for msg in &history {
+                conversation_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
+            }
+
+            let system_prompt = "\
+You are a context manager. Analyze the provided conversation history and produce a concise Session-level Summary in markdown format.
+
+The summary MUST contain:
+1. A 'TL;DR' section: A 1-2 sentence overview of the main topics, goals, and outcomes.
+2. A 'Topics' section: A concise bulleted list of topics discussed.
+3. A 'Decisions' section: A bulleted list of key decisions made, action items, or preferences identified.
+
+Keep the summary extremely concise, dense, and professional. Write in the same language as the conversation (typically Japanese or English).
+Output ONLY the markdown content. Do not include any introductory or concluding remarks.
+";
+
+            let user_message = format!(
+                "## Session ID: {}\n\n## Conversation History:\n{}",
+                target_session_id,
+                conversation_text
+            );
+
+            let messages = vec![
+                Message {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                    name: None,
+                    ..Default::default()
+                },
+                Message {
+                    role: "user".to_string(),
+                    content: user_message,
+                    name: None,
+                    ..Default::default()
+                },
+            ];
+
+            let response = provider.complete(&messages, &[], &opts).await
+                .context("LLM call failed for full session summary generation")?;
+            
+            response.content
+        };
+
+        // Append comment for tracking turns (strip any existing footer comment first)
+        let base_summary = if let Some(idx) = summary_content.rfind("<!-- turns: ") {
+            summary_content[..idx].trim().to_string()
+        } else {
+            summary_content.trim().to_string()
+        };
+
+        let final_summary = format!("{}\n\n<!-- turns: {} -->\n", base_summary, history.len());
+
+        Ok(final_summary)
+    }
+
+
+    /// 対話実行（ツール対応のマルチターンアジェンティックループ）
+    pub async fn execute_with_tools(
+        &self,
+        workspace_dir: &Path,
+        session_id: &str,
+        user_message: &str,
+        tool_registry: &ToolRegistry,
+    ) -> Result<LlmResponse> {
+        let logger = SessionLogger::new(workspace_dir);
+
+        // 1. システムプロンプトとコンテキストの構築
+        let mut system_context = self.build_system_context(workspace_dir)?;
+        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id) {
+            system_context.push_str(&continuation);
+        }
+
+        // 過去履歴のロードとトークン圧縮処理の適用
+        let history_messages = if session_id.starts_with("cron:") {
+            Vec::new()
+        } else {
+            logger.load_history(session_id)
+                .context("Failed to load session history messages")?
+        };
+
+        let mut history = ConversationHistory::new(history_messages);
+        history.compact_if_needed(4000);
+
+        // 送信用メッセージリストの構築 (System + History)
+        let mut active_messages = Vec::new();
+        active_messages.push(Message {
+            role: "system".to_string(),
+            content: system_context,
+            name: None,
+            ..Default::default()
+        });
+        active_messages.extend(history.messages.clone());
+
+        // ユーザー入力をメッセージに追加
+        let user_msg = Message {
+            role: "user".to_string(),
+            content: user_message.to_string(),
+            name: None,
+            ..Default::default()
+        };
+        active_messages.push(user_msg.clone());
+
+        // ユーザーメッセージを fail-closed で保存
+        logger.append_message(session_id, &user_msg)
+            .context("Failed to save user message in session log (fail-closed)")?;
+
+        // ツール定義の変換 (rustyclaw-tools::Tool -> rustyclaw-providers::ToolDef)
+        let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
+            .to_llm_schemas()
+            .iter()
+            .map(|schema| rustyclaw_providers::ToolDef {
+                name: schema["name"].as_str().unwrap().to_string(),
+                description: schema["description"].as_str().unwrap().to_string(),
+                parameters: schema["input_schema"].clone(),
+            })
+            .collect();
+
+        let opts = CompletionOptions {
+            model: self.config.model_name.clone(),
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
+            timeout: Duration::from_secs(900),
+        };
+
+        let mut loop_count = 0;
+        let max_loops = 10;
+
+        loop {
+            loop_count += 1;
+            if loop_count > max_loops {
+                return Err(anyhow::anyhow!("Agent loop exceeded maximum step limit of {}", max_loops));
+            }
+
+            self.dump_request(workspace_dir, &active_messages);
+
+            // 3. LLMプロバイダ呼び出し
+            let mut response = self.provider.complete(&active_messages, &provider_tools, &opts).await?;
+            response.content = filter_json_leaks(&response.content);
+
+            // アシスタント返答をMessage形式にして active_messages / logger に保存
+            let assistant_msg = Message {
+                role: response.role.clone(),
+                content: response.content.clone(),
+                tool_calls: response.tool_calls.clone(),
+                name: None,
+                ..Default::default()
+            };
+            active_messages.push(assistant_msg.clone());
+            logger.append_message(session_id, &assistant_msg)
+                .context("Failed to save assistant response in session log (fail-closed)")?;
+
+            self.dump_response(workspace_dir, &response.content, &response.role);
+
+            // 4. ツール要求があるかどうか確認
+            if let Some(ref calls) = response.tool_calls {
+                if !calls.is_empty() {
+                    // LLMがツール実行を要求したため、ツールを実行する
+                    for call in calls {
+                        tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
+
+                        // 引数を Value にパース
+                        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+
+                        let tool_result = if let Some(tool) = tool_registry.get(&call.function.name) {
+                            tool.execute(args).await
+                        } else {
+                            rustyclaw_tools::ToolResult {
+                                content: format!("Error: Tool '{}' not found in registry", call.function.name),
+                                is_error: true,
+                            }
+                        };
+
+                        // ツール実行結果のメッセージ作成
+                        let tool_msg = Message {
+                            role: "tool".to_string(),
+                            content: tool_result.content,
+                            tool_call_id: Some(call.id.clone()),
+                            name: Some(call.function.name.clone()),
+                            ..Default::default()
+                        };
+
+                        // 会話履歴に追記して保存
+                        active_messages.push(tool_msg.clone());
+                        logger.append_message(session_id, &tool_msg)
+                            .context("Failed to save tool result message in session log (fail-closed)")?;
+                    }
+
+                    // ツール実行後にループを続行して、LLMに結果を提示する
+                    continue;
+                }
+            }
+
+            // ツール要求がなければループ終了
+            if !session_id.starts_with("cron") {
+                self.trigger_memory_flush_async(workspace_dir, session_id);
+            }
+
+            return Ok(response);
+        }
     }
 
     /// ストリーミングでの対話実行
@@ -510,12 +833,14 @@ Rules:
             role: "system".to_string(),
             content: system_context,
             name: None,
+            ..Default::default()
         });
         messages.extend(history.messages.clone());
         let user_msg = Message {
             role: "user".to_string(),
             content: user_message.to_string(),
             name: None,
+            ..Default::default()
         };
         messages.push(user_msg.clone());
 
@@ -605,6 +930,7 @@ Rules:
                 role: "assistant".to_string(),
                 content: cleaned_buffer.clone(),
                 name: None,
+                ..Default::default()
             };
             let logger_inner = SessionLogger::new(&workspace_dir_clone);
             logger_inner.append_message(&session_id_clone, &assistant_msg)
@@ -725,6 +1051,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
@@ -809,6 +1136,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
 
         let flush_sem = Arc::new(Semaphore::new(1));
@@ -846,11 +1174,13 @@ mod tests {
             role: "user".to_string(),
             content: "old dummy history".to_string(),
             name: None,
+            ..Default::default()
         })?;
         logger.append_message("cron:heartbeat", &Message {
             role: "assistant".to_string(),
             content: "old robot reply".to_string(),
             name: None,
+            ..Default::default()
         })?;
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -881,6 +1211,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
 
         let flush_sem = Arc::new(Semaphore::new(1));
@@ -960,6 +1291,7 @@ mod tests {
             discord_token: None,
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
         };
 
         let flush_sem = Arc::new(Semaphore::new(1));
@@ -978,6 +1310,133 @@ mod tests {
         let history = logger.load_history("session-stream-test")?;
         assert_eq!(history.len(), 2);
         assert_eq!(history[1].content, "Hello Done.");
+
+        let _ = server_task.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_execute_with_tools() -> Result<()> {
+        let ws_dir = tempdir()?;
+        fs::write(ws_dir.path().join("SOUL.md"), "Soul Content")?;
+        fs::write(ws_dir.path().join("AGENTS.md"), "Agents Content")?;
+        fs::write(ws_dir.path().join("MEMORY.md"), "Memory Content")?;
+        fs::write(ws_dir.path().join("USER.md"), "User Content")?;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+
+        let server_task = tokio::spawn(async move {
+            // First LLM call: requests tool execution
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
+                    \"choices\": [{\
+                        \"message\": {\
+                            \"role\": \"assistant\",\
+                            \"content\": \"I need to calculate 5 + 10 first.\",\
+                            \"tool_calls\": [{\
+                                \"id\": \"call_calc\",\
+                                \"type\": \"function\",\
+                                \"function\": {\
+                                    \"name\": \"add\",\
+                                    \"arguments\": \"{\\\"a\\\": 5, \\\"b\\\": 10}\"\
+                                }\
+                            }]\
+                        }\
+                    }]\
+                }";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+            // Second LLM call: receives tool output and returns final answer
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
+                    \"choices\": [{\
+                        \"message\": {\
+                            \"role\": \"assistant\",\
+                            \"content\": \"The calculation result is 15.\"\
+                        }\
+                    }]\
+                }";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let config = Config {
+            model_provider: "openai".to_string(),
+            model_name: "gpt-4o-mini".to_string(),
+            api_key: "dummy".to_string(),
+            api_base_url: format!("http://{}", addr),
+            max_tokens: None,
+            temperature: None,
+            debug_dump: true,
+            discord_token: None,
+            discord_home_channel_id: None,
+            discord_respond_in_channels: vec![],
+            mcp: std::collections::HashMap::new(),
+        };
+
+        let flush_sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, flush_sem);
+
+        use async_trait::async_trait;
+
+        struct MockAddTool;
+        #[async_trait]
+        impl rustyclaw_tools::Tool for MockAddTool {
+            fn name(&self) -> &str {
+                "add"
+            }
+            fn description(&self) -> &str {
+                "Adds two numbers"
+            }
+            fn parameters(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "a": { "type": "number" },
+                        "b": { "type": "number" }
+                    }
+                })
+            }
+            async fn execute(&self, args: serde_json::Value) -> rustyclaw_tools::ToolResult {
+                let a = args["a"].as_f64().unwrap_or(0.0);
+                let b = args["b"].as_f64().unwrap_or(0.0);
+                rustyclaw_tools::ToolResult {
+                    content: format!("{}", a + b),
+                    is_error: false,
+                }
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(MockAddTool));
+
+        let resp = pipeline.execute_with_tools(ws_dir.path(), "session-tool-test", "calculate 5+10", &registry).await?;
+        assert_eq!(resp.content, "The calculation result is 15.");
+
+        let logger = SessionLogger::new(ws_dir.path());
+        let history = logger.load_history("session-tool-test")?;
+        
+        // Let's verify history contains 4 entries:
+        // 0: User input
+        // 1: Assistant tool call
+        // 2: Tool result
+        // 3: Assistant final answer
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].content, "calculate 5+10");
+        
+        assert_eq!(history[1].role, "assistant");
+        assert_eq!(history[1].content, "I need to calculate 5 + 10 first.");
+        assert_eq!(history[1].tool_calls.as_ref().unwrap()[0].id, "call_calc");
+        
+        assert_eq!(history[2].role, "tool");
+        assert_eq!(history[2].content, "15");
+        assert_eq!(history[2].tool_call_id.as_ref().unwrap(), "call_calc");
+        assert_eq!(history[2].name.as_ref().unwrap(), "add");
+        
+        assert_eq!(history[3].role, "assistant");
+        assert_eq!(history[3].content, "The calculation result is 15.");
 
         let _ = server_task.await;
         Ok(())

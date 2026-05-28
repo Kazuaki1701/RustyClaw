@@ -9,6 +9,7 @@ members = [
     "crates/rustyclaw-tools",
     "crates/rustyclaw-config",
     "crates/rustyclaw-storage",
+    "crates/rustyclaw-mcp",
 ]
 
 [profile.release]
