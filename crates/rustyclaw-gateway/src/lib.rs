@@ -189,6 +189,16 @@ impl LaneRegistry {
                                 let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                                 match permit_res {
                                     Ok(Ok(permit)) => {
+                                        // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
+                                        if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                            drop(permit);
+                                            tracing::warn!(
+                                                "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
+                                                cooldown_dur.as_secs_f64()
+                                            );
+                                            tokio::time::sleep(cooldown_dur).await;
+                                            continue;
+                                        }
                                         tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                         let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                         match pipeline.execute(&workspace_path, &session_id, &heartbeat_prompt).await {
@@ -261,6 +271,16 @@ impl LaneRegistry {
                             let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                             match permit_res {
                                 Ok(Ok(permit)) => {
+                                    // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
+                                    if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                        drop(permit);
+                                        tracing::warn!(
+                                            "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
+                                            cooldown_dur.as_secs_f64()
+                                        );
+                                        tokio::time::sleep(cooldown_dur).await;
+                                        continue;
+                                    }
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                     match pipeline.execute(&workspace_path, &session_id, &prompt).await {
@@ -337,6 +357,16 @@ impl LaneRegistry {
                             let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                             match permit_res {
                                 Ok(Ok(permit)) => {
+                                    // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
+                                    if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                        drop(permit);
+                                        tracing::warn!(
+                                            "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
+                                            cooldown_dur.as_secs_f64()
+                                        );
+                                        tokio::time::sleep(cooldown_dur).await;
+                                        continue;
+                                    }
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                     match pipeline.execute(&workspace_path, &session_id, &content).await {

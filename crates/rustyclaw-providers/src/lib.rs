@@ -517,10 +517,9 @@ impl LlmProvider for GmnCliProvider {
         if !output.status.success() || combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
             if combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
                 let err = ProviderError::RateLimit(combined_err);
-                if let Some(dur) = err.reset_after() {
-                    let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
-                    *lock = Some(std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
-                }
+                let dur = err.reset_after().unwrap_or(std::time::Duration::from_secs(5));
+                let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
+                *lock = Some(std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
                 return Err(err);
             }
             if !output.status.success() {
@@ -695,7 +694,8 @@ impl LlmProvider for GmnCliProvider {
             if (!status.success() || is_rate_limit) && !has_yielded {
                 if is_rate_limit {
                     let err = ProviderError::RateLimit(combined_err);
-                    if let Some(dur) = err.reset_after() {
+                    {
+                        let dur = err.reset_after().unwrap_or(std::time::Duration::from_secs(5));
                         let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
                         *lock = Some(std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
                     }
