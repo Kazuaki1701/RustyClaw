@@ -411,6 +411,8 @@ impl LlmProvider for OpenAiCompatProvider {
     }
 }
 
+static GLOBAL_COOLDOWN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
 pub struct GmnCliProvider {
     #[allow(dead_code)]
     config: Config,
@@ -445,6 +447,25 @@ impl LlmProvider for GmnCliProvider {
         tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<LlmResponse, ProviderError> {
+        // グローバルなクールダウン（レート制限の解除待ち）をチェック
+        {
+            let cooldown = {
+                let lock = GLOBAL_COOLDOWN.lock().unwrap();
+                *lock
+            };
+            if let Some(reset_instant) = cooldown {
+                let now = std::time::Instant::now();
+                if now < reset_instant {
+                    let wait_dur = reset_instant - now;
+                    tracing::warn!(
+                        "Global rate limit active. Waiting {:?} before spawning gmn...",
+                        wait_dur
+                    );
+                    tokio::time::sleep(wait_dur).await;
+                }
+            }
+        }
+
         if !tools.is_empty() {
             return Err(ProviderError::ExecutionFailed("GmnCliProvider does not support tool calling".to_string()));
         }
@@ -498,7 +519,12 @@ impl LlmProvider for GmnCliProvider {
 
         if !output.status.success() || combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
             if combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
-                return Err(ProviderError::RateLimit(combined_err));
+                let err = ProviderError::RateLimit(combined_err);
+                if let Some(dur) = err.reset_after() {
+                    let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
+                    *lock = Some(std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
+                }
+                return Err(err);
             }
             if !output.status.success() {
                 return Err(ProviderError::ExecutionFailed(combined_err));
@@ -545,6 +571,25 @@ impl LlmProvider for GmnCliProvider {
         _tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
+        // グローバルなクールダウン（レート制限の解除待ち）をチェック
+        {
+            let cooldown = {
+                let lock = GLOBAL_COOLDOWN.lock().unwrap();
+                *lock
+            };
+            if let Some(reset_instant) = cooldown {
+                let now = std::time::Instant::now();
+                if now < reset_instant {
+                    let wait_dur = reset_instant - now;
+                    tracing::warn!(
+                        "Global rate limit active. Waiting {:?} before spawning gmn (stream)...",
+                        wait_dur
+                    );
+                    tokio::time::sleep(wait_dur).await;
+                }
+            }
+        }
+
         let prompt = self.build_prompt(messages);
         let model = opts.model.clone();
         let timeout_secs = opts.timeout.as_secs();
@@ -671,7 +716,12 @@ impl LlmProvider for GmnCliProvider {
 
             if (!status.success() || is_rate_limit) && !has_yielded {
                 if is_rate_limit {
-                    Err(ProviderError::RateLimit(combined_err))?;
+                    let err = ProviderError::RateLimit(combined_err);
+                    if let Some(dur) = err.reset_after() {
+                        let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
+                        *lock = Some(std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
+                    }
+                    Err(err)?;
                 } else {
                     Err(ProviderError::ExecutionFailed(format!("gmn CLI process exited with non-zero status: {:?}", status.code())))?;
                 }
