@@ -11,6 +11,7 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser)]
 #[command(name = "rustyclaw")]
 #[command(about = "RustyClaw - AI Agent Runtime in Rust", long_about = None)]
+#[command(version = concat!(env!("CARGO_PKG_VERSION"), "\nbuilt at ", env!("BUILD_TIME")))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -83,12 +84,13 @@ fn setup_logging() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // 先に引数をパースすることで、--version や --help の場合に余計なログ初期化メッセージが出ないようにする
+    let cli = Cli::parse();
+
     // ログのセットアップ
     if let Err(e) = setup_logging() {
         eprintln!("Warning: Failed to initialize logging: {}", e);
     }
-
-    let cli = Cli::parse();
 
     match cli.command {
         Commands::Agent { message } => {

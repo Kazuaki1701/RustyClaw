@@ -26,12 +26,20 @@ impl ProviderError {
                     let start = pos + "your quota will reset after ".len();
                     let sub = &msg[start..];
 
+                    // リセット時間文の直後の区切り（ピリオド、改行、ダブルクォーテーション等）で切り出し、
+                    // メッセージ後半に含まれる "model" 等の 'm' に誤反応するのを防ぐ
+                    let limit_part = if let Some(end_pos) = sub.find(|c| c == '.' || c == '\n' || c == '"' || c == '\\') {
+                        &sub[..end_pos]
+                    } else {
+                        sub
+                    };
+
                     let mut total_secs = 0;
                     let mut has_parsed = false;
 
-                    if let Some(m_pos) = sub.find('m') {
+                    if let Some(m_pos) = limit_part.find('m') {
                         // 'm' の前の数字をパース (分)
-                        let m_str = sub[..m_pos].trim();
+                        let m_str = limit_part[..m_pos].trim();
                         let m_num_str: String = m_str.chars().rev().take_while(|c| c.is_numeric()).collect();
                         let m_num_str: String = m_num_str.chars().rev().collect();
                         if let Ok(mins) = m_num_str.parse::<u64>() {
@@ -40,7 +48,7 @@ impl ProviderError {
                         }
 
                         // 'm' の後ろから 's' の間の数字をパース (秒)
-                        let remaining = &sub[m_pos + 1..];
+                        let remaining = &limit_part[m_pos + 1..];
                         if let Some(s_pos) = remaining.find('s') {
                             let s_str = remaining[..s_pos].trim();
                             let s_num_str: String = s_str.chars().take_while(|c| c.is_numeric()).collect();
@@ -48,9 +56,9 @@ impl ProviderError {
                                 total_secs += secs;
                             }
                         }
-                    } else if let Some(s_pos) = sub.find('s') {
+                    } else if let Some(s_pos) = limit_part.find('s') {
                         // 's' の前の数字をパース (秒のみ)
-                        let s_str = sub[..s_pos].trim();
+                        let s_str = limit_part[..s_pos].trim();
                         let s_num_str: String = s_str.chars().rev().take_while(|c| c.is_numeric()).collect();
                         let s_num_str: String = s_num_str.chars().rev().collect();
                         if let Ok(secs) = s_num_str.parse::<u64>() {
@@ -991,6 +999,11 @@ mod tests {
         // 小文字 "quota" パターン (実際のログで検出されたもの)
         let err_real = ProviderError::RateLimit("You have exhausted your capacity on this model. Your quota will reset after 2s.".to_string());
         assert_eq!(err_real.reset_after(), Some(std::time::Duration::from_secs(2)));
+
+        // メッセージ後半に "model" や "gemini-3-flash-preview" 等の 'm' が含まれるが、
+        // 秒数のみ表記であるため誤認識せずに正確に 48 秒とパースできるか検証するテストケース
+        let err_with_model_word = ProviderError::RateLimit("You have exhausted your capacity on this model. Your quota will reset after 48s. details: model: gemini-3-flash-preview".to_string());
+        assert_eq!(err_with_model_word.reset_after(), Some(std::time::Duration::from_secs(48)));
 
         let err3 = ProviderError::RateLimit("Your Quota will reset after 1m 30s.".to_string());
         assert_eq!(err3.reset_after(), Some(std::time::Duration::from_secs(90)));
