@@ -15,6 +15,53 @@ pub mod cron;
 pub mod heartbeat;
 
 
+
+// ==============================================================================
+// 待ち行列キューの追跡用データ構造
+// ==============================================================================
+use serde::Serialize;
+use std::sync::Mutex;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QueueItem {
+    pub session_id: String,
+    pub status: String,            // "Waiting" | "Executing" | "Cooldown"
+    pub enqueued_at_ms: u64,       // Unix Epoch Milliseconds
+    pub cooldown_left_secs: f64,   // クールダウン中の残り時間
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct QueueState {
+    pub items: Vec<QueueItem>,
+}
+
+pub static QUEUE_STATE: Mutex<QueueState> = Mutex::new(QueueState { items: Vec::new() });
+
+pub fn queue_update_or_insert(session_id: &str, status: &str, cooldown_left_secs: f64) {
+    let mut state = QUEUE_STATE.lock().unwrap();
+    let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+    
+    if let Some(item) = state.items.iter_mut().find(|i| i.session_id == session_id) {
+        item.status = status.to_string();
+        item.cooldown_left_secs = cooldown_left_secs;
+        if status == "Waiting" {
+            item.enqueued_at_ms = now_ms;
+        }
+    } else {
+        state.items.push(QueueItem {
+            session_id: session_id.to_string(),
+            status: status.to_string(),
+            enqueued_at_ms: now_ms,
+            cooldown_left_secs,
+        });
+    }
+}
+
+pub fn queue_remove(session_id: &str) {
+    let mut state = QUEUE_STATE.lock().unwrap();
+    state.items.retain(|i| i.session_id != session_id);
+}
+
 // ==============================================================================
 // 1. システムイベントと優先度定義
 // ==============================================================================
@@ -179,12 +226,14 @@ impl LaneRegistry {
 
                             loop {
                                 if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                    crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
                                     tracing::warn!(
                                         "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
                                         cooldown_dur.as_secs_f64()
                                     );
                                     tokio::time::sleep(cooldown_dur).await;
                                 }
+                                crate::queue_update_or_insert(&session_id, "Waiting", 0.0);
                                 tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                                 let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                                 match permit_res {
@@ -192,6 +241,7 @@ impl LaneRegistry {
                                         // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
                                         if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
                                             drop(permit);
+                                            crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
                                             tracing::warn!(
                                                 "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
                                                 cooldown_dur.as_secs_f64()
@@ -199,6 +249,7 @@ impl LaneRegistry {
                                             tokio::time::sleep(cooldown_dur).await;
                                             continue;
                                         }
+                                        crate::queue_update_or_insert(&session_id, "Executing", 0.0);
                                         tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                         let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                         match pipeline.execute(&workspace_path, &session_id, &heartbeat_prompt).await {
@@ -207,6 +258,7 @@ impl LaneRegistry {
                                                 if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
                                                     let _ = heartbeat_svc.process_heartbeat_response(&response.content, &db);
                                                 }
+                                                crate::queue_remove(&session_id);
                                                 break; // Exit the retry loop!
                                             }
                                             Err(e) => {
@@ -218,6 +270,7 @@ impl LaneRegistry {
                                                             let backoff = parsed_reset
                                                                 .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                                 .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
+                                                            crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64());
                                                             if let Some(reset_duration) = parsed_reset {
                                                                 tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                             } else {
@@ -231,12 +284,14 @@ impl LaneRegistry {
                                                 }
                                                 // Non-rate-limit error or max retries exceeded
                                                 tracing::error!("Heartbeat LLM execution failed: {:#}", e);
+                                                crate::queue_remove(&session_id);
                                                 break;
                                             }
                                         }
                                     }
                                     Ok(Err(_)) => {
                                         tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                        crate::queue_remove(&session_id);
                                         break;
                                     }
                                     Err(_) => {
@@ -244,6 +299,7 @@ impl LaneRegistry {
                                         let _ = bus.publish(SystemEvent::SystemError {
                                             message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
                                         });
+                                        crate::queue_remove(&session_id);
                                         break;
                                     }
                                 }
@@ -261,12 +317,14 @@ impl LaneRegistry {
 
                         loop {
                             if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
                                 tracing::warn!(
                                     "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
                                     cooldown_dur.as_secs_f64()
                                 );
                                 tokio::time::sleep(cooldown_dur).await;
                             }
+                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0);
                             tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                             let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                             match permit_res {
@@ -274,6 +332,7 @@ impl LaneRegistry {
                                     // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
                                     if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
                                         drop(permit);
+                                        crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
                                         tracing::warn!(
                                             "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
                                             cooldown_dur.as_secs_f64()
@@ -281,6 +340,7 @@ impl LaneRegistry {
                                         tokio::time::sleep(cooldown_dur).await;
                                         continue;
                                     }
+                                    crate::queue_update_or_insert(&session_id, "Executing", 0.0);
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                     match pipeline.execute(&workspace_path, &session_id, &prompt).await {
@@ -297,6 +357,7 @@ impl LaneRegistry {
                                             if let Ok(search_mgr) = rustyclaw_storage::SearchIndexManager::new(&index_dir) {
                                                 let _ = search_mgr.index_file(&file_path, &response.content, &today);
                                             }
+                                            crate::queue_remove(&session_id);
                                             break; // Exit the retry loop!
                                         }
                                         Err(e) => {
@@ -308,6 +369,7 @@ impl LaneRegistry {
                                                         let backoff = parsed_reset
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                             .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
+                                                        crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64());
                                                         if let Some(reset_duration) = parsed_reset {
                                                             tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                         } else {
@@ -321,12 +383,14 @@ impl LaneRegistry {
                                             }
                                             // Non-rate-limit error or max retries exceeded
                                             tracing::error!("Failed to generate Daily Summary: {:#}", e);
+                                            crate::queue_remove(&session_id);
                                             break;
                                         }
                                     }
                                 }
                                 Ok(Err(_)) => {
                                     tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                    crate::queue_remove(&session_id);
                                     break;
                                 }
                                 Err(_) => {
@@ -334,6 +398,7 @@ impl LaneRegistry {
                                     let _ = bus.publish(SystemEvent::SystemError {
                                         message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
                                     });
+                                    crate::queue_remove(&session_id);
                                     break;
                                 }
                             }
@@ -347,12 +412,14 @@ impl LaneRegistry {
 
                         loop {
                             if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
                                 tracing::warn!(
                                     "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
                                     cooldown_dur.as_secs_f64()
                                 );
                                 tokio::time::sleep(cooldown_dur).await;
                             }
+                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0);
                             tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                             let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                             match permit_res {
@@ -360,6 +427,7 @@ impl LaneRegistry {
                                     // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
                                     if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
                                         drop(permit);
+                                        crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
                                         tracing::warn!(
                                             "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
                                             cooldown_dur.as_secs_f64()
@@ -367,6 +435,7 @@ impl LaneRegistry {
                                         tokio::time::sleep(cooldown_dur).await;
                                         continue;
                                     }
+                                    crate::queue_update_or_insert(&session_id, "Executing", 0.0);
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                     match pipeline.execute(&workspace_path, &session_id, &content).await {
@@ -404,6 +473,7 @@ impl LaneRegistry {
                                                     let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes());
                                                 }
                                             }
+                                            crate::queue_remove(&session_id);
                                             break; // Exit the retry loop!
                                         }
                                         Err(e) => {
@@ -415,6 +485,7 @@ impl LaneRegistry {
                                                         let backoff = parsed_reset
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                             .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
+                                                        crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64());
                                                         if let Some(reset_duration) = parsed_reset {
                                                             tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                         } else {
@@ -431,12 +502,14 @@ impl LaneRegistry {
                                             let _ = bus.publish(SystemEvent::SystemError {
                                                 message: format!("Agent execution failed for session {}: {}", session_id, e),
                                             });
+                                            crate::queue_remove(&session_id);
                                             break;
                                         }
                                     }
                                 }
                                 Ok(Err(_)) => {
                                     tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                    crate::queue_remove(&session_id);
                                     break;
                                 }
                                 Err(_) => {
@@ -444,6 +517,7 @@ impl LaneRegistry {
                                     let _ = bus.publish(SystemEvent::SystemError {
                                         message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
                                     });
+                                    crate::queue_remove(&session_id);
                                     break;
                                 }
                             }

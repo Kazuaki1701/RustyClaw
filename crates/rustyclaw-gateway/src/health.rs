@@ -82,6 +82,29 @@ impl HealthServer {
                                     };
                                     ("200 OK".to_string(), logs, "text/plain; charset=utf-8")
 
+                                } else if request.starts_with("GET /api/queue") {
+                                    let mut state = crate::QUEUE_STATE.lock().unwrap().clone();
+                                    
+                                    // 最新のクールダウン情報も動的に更新する
+                                    if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                        for item in state.items.iter_mut() {
+                                            if item.status == "Cooldown" {
+                                                item.cooldown_left_secs = cooldown_dur.as_secs_f64();
+                                            }
+                                        }
+                                    } else {
+                                        // 全体のグローバルクールダウンが無い場合、Cooldown状態のアイテムはWaiting等に修正する
+                                        for item in state.items.iter_mut() {
+                                            if item.status == "Cooldown" {
+                                                item.status = "Waiting".to_string();
+                                                item.cooldown_left_secs = 0.0;
+                                            }
+                                        }
+                                    }
+                                    
+                                    let json = serde_json::to_string(&state.items).unwrap_or_else(|_| "[]".to_string());
+                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
+
                                 // ── ダッシュボード & チャット ────────────────────
                                 } else if request.starts_with("GET /dashboard")
                                     || request.starts_with("GET / ")
@@ -363,6 +386,7 @@ fn get_dashboard_html() -> String {
                                 border: none; box-shadow: none; overflow: hidden; }
         .panel.digest         { border-color: rgba(52,211,153,.18); flex: 6; }
         .panel.hb-state       { border-color: rgba(251,191,36,.18);  flex: 4; }
+        .panel.queue          { border-color: rgba(244,114,182,.18);  flex: 3; }
         .panel.applog         { border-color: rgba(34,211,238,.18);  flex: 4; }
 
         .panel-header {
@@ -378,6 +402,7 @@ fn get_dashboard_html() -> String {
         .panel.memory   .panel-title { color: var(--purple); }
         .panel.digest   .panel-title { color: var(--green);  }
         .panel.hb-state .panel-title { color: var(--amber);  }
+        .panel.queue    .panel-title { color: var(--pink);   }
         .panel.applog   .panel-title { color: var(--cyan);   }
 
         .panel-dots { display: flex; gap: 5px; }
@@ -393,6 +418,7 @@ fn get_dashboard_html() -> String {
         .panel.memory   .panel-body { color: #d8b4fe; }
         .panel.digest   .panel-body { color: #a7f3d0; }
         .panel.hb-state .panel-body { color: #fde68a; }
+        .panel.queue    .panel-body { color: #fbcfe8; }
         .panel.applog   .panel-body { color: #bae6fd; }
 
         /* ── SCROLLBAR ──────────────────────────────── */
@@ -477,6 +503,15 @@ fn get_dashboard_html() -> String {
                 </div>
                 <div class="panel-body" id="hbState">読み込み中...</div>
             </div>
+        </div>
+
+        <!-- QUEUE STATE -->
+        <div class="panel queue">
+            <div class="panel-header">
+                <div class="panel-title"><span>🔄</span> gmn API Pipeline Queue</div>
+                <div class="panel-dots"><span class="pd"></span><span class="pd"></span><span class="pd"></span></div>
+            </div>
+            <div class="panel-body" id="queueState" style="overflow-y: auto;">読み込み中...</div>
         </div>
 
         <!-- APP LOG -->
@@ -587,10 +622,81 @@ fn get_dashboard_html() -> String {
         } catch { /* 無視 */ }
     }
 
+    async function updateQueue() {
+        try {
+            const res = await fetch('/api/queue');
+            if (!res.ok) return;
+            const items = await res.json();
+            
+            const container = document.getElementById('queueState');
+            if (items.length === 0) {
+                container.innerHTML = '<div style="color: var(--muted); text-align: center; padding: 12px; font-family: Outfit, sans-serif;">キューは空です（稼働タスクなし）</div>';
+                return;
+            }
+            
+            let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
+            items.forEach((item, index) => {
+                let badgeColor = 'var(--muted)';
+                let pulseStyle = '';
+                let progressHtml = '';
+                
+                if (item.status === 'Executing') {
+                    badgeColor = 'var(--green)';
+                    pulseStyle = 'background: var(--green); box-shadow: 0 0 8px var(--green);';
+                } else if (item.status === 'Waiting') {
+                    badgeColor = 'var(--blue)';
+                    pulseStyle = 'background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: pulse 1.5s infinite;';
+                } else if (item.status === 'Cooldown') {
+                    badgeColor = 'var(--amber)';
+                    pulseStyle = 'background: var(--amber); box-shadow: 0 0 8px var(--amber);';
+                    
+                    // プログレスバー
+                    const totalDur = 47.0;
+                    const pct = Math.min(100, Math.max(0, (item.cooldown_left_secs / totalDur) * 100));
+                    progressHtml = `
+                        <div style="background: rgba(255,255,255,0.05); border-radius: 4px; height: 5px; width: 100%; margin-top: 6px; overflow: hidden; border: 1px solid rgba(251,191,36,0.15);">
+                            <div style="background: var(--amber); height: 100%; width: ${pct}%; transition: width 0.5s ease;"></div>
+                        </div>
+                    `;
+                }
+                
+                const elapsedSecs = Math.floor((Date.now() - item.enqueued_at_ms) / 1000);
+                const elapsedText = elapsedSecs >= 0 ? `${elapsedSecs}s` : '0s';
+                
+                const subText = item.status === 'Cooldown'
+                    ? `解除まで: ${item.cooldown_left_secs.toFixed(1)}s`
+                    : `待機時間: ${elapsedText}`;
+                
+                html += `
+                    <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 4px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <div style="display: flex; align-items: center; font-weight: 600;">
+                                <span style="width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; ${pulseStyle}"></span>
+                                <span style="font-size: 13px; font-family: 'Fira Code', monospace; color: var(--text);">${item.session_id}</span>
+                            </div>
+                            <span style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: ${badgeColor}; background: rgba(255,255,255,0.03); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border);">
+                                ${item.status}
+                            </span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px;">
+                            <span>順位: #${index + 1}</span>
+                            <span>${subText}</span>
+                        </div>
+                        ${progressHtml}
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        } catch { /* 無視 */ }
+    }
+
     fetchSlowLogs();
     fetchAppLog();
+    updateQueue();
     setInterval(fetchSlowLogs, 5000);
     setInterval(fetchAppLog,   2000);
+    setInterval(updateQueue,   2000);
 </script>
 </body>
 </html>
