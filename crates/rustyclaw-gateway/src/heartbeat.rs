@@ -391,6 +391,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
         
         let service = HeartbeatService::new(config, ws_path.clone(), bus);

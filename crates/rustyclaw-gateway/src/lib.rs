@@ -28,6 +28,7 @@ pub struct QueueItem {
     pub status: String,            // "Waiting" | "Executing" | "Cooldown"
     pub enqueued_at_ms: u64,       // Unix Epoch Milliseconds
     pub cooldown_left_secs: f64,   // クールダウン中の残り時間
+    pub description: String,       // 要約やプロンプト内容のプレビュー
 }
 
 #[derive(Debug, Clone, Default)]
@@ -37,13 +38,16 @@ pub struct QueueState {
 
 pub static QUEUE_STATE: Mutex<QueueState> = Mutex::new(QueueState { items: Vec::new() });
 
-pub fn queue_update_or_insert(session_id: &str, status: &str, cooldown_left_secs: f64) {
+pub fn queue_update_or_insert(session_id: &str, status: &str, cooldown_left_secs: f64, description: &str) {
     let mut state = QUEUE_STATE.lock().unwrap();
     let now_ms = chrono::Utc::now().timestamp_millis() as u64;
     
     if let Some(item) = state.items.iter_mut().find(|i| i.session_id == session_id) {
         item.status = status.to_string();
         item.cooldown_left_secs = cooldown_left_secs;
+        if !description.is_empty() {
+            item.description = description.to_string();
+        }
         if status == "Waiting" {
             item.enqueued_at_ms = now_ms;
         }
@@ -53,6 +57,7 @@ pub fn queue_update_or_insert(session_id: &str, status: &str, cooldown_left_secs
             status: status.to_string(),
             enqueued_at_ms: now_ms,
             cooldown_left_secs,
+            description: description.to_string(),
         });
     }
 }
@@ -224,16 +229,17 @@ impl LaneRegistry {
                             let max_attempts = 3;
                             let base_delay = Duration::from_secs(5);
 
+                            let desc = "Heartbeat Patrol / Activity Scan";
                             loop {
                                 if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
-                                    crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
+                                    crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64(), desc);
                                     tracing::warn!(
                                         "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
                                         cooldown_dur.as_secs_f64()
                                     );
                                     tokio::time::sleep(cooldown_dur).await;
                                 }
-                                crate::queue_update_or_insert(&session_id, "Waiting", 0.0);
+                                crate::queue_update_or_insert(&session_id, "Waiting", 0.0, desc);
                                 tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                                 let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                                 match permit_res {
@@ -241,7 +247,7 @@ impl LaneRegistry {
                                         // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
                                         if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
                                             drop(permit);
-                                            crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
+                                            crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64(), desc);
                                             tracing::warn!(
                                                 "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
                                                 cooldown_dur.as_secs_f64()
@@ -249,7 +255,7 @@ impl LaneRegistry {
                                             tokio::time::sleep(cooldown_dur).await;
                                             continue;
                                         }
-                                        crate::queue_update_or_insert(&session_id, "Executing", 0.0);
+                                        crate::queue_update_or_insert(&session_id, "Executing", 0.0, desc);
                                         tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                         let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                         match pipeline.execute(&workspace_path, &session_id, &heartbeat_prompt).await {
@@ -270,7 +276,7 @@ impl LaneRegistry {
                                                             let backoff = parsed_reset
                                                                 .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                                 .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                            crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64());
+                                                            crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64(), desc);
                                                             if let Some(reset_duration) = parsed_reset {
                                                                 tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                             } else {
@@ -315,16 +321,17 @@ impl LaneRegistry {
                         let max_attempts = 3;
                         let base_delay = Duration::from_secs(5);
 
+                        let desc = "Daily Activity Summary";
                         loop {
                             if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
-                                crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
+                                crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64(), desc);
                                 tracing::warn!(
                                     "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
                                     cooldown_dur.as_secs_f64()
                                 );
                                 tokio::time::sleep(cooldown_dur).await;
                             }
-                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0);
+                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0, desc);
                             tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                             let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                             match permit_res {
@@ -332,7 +339,7 @@ impl LaneRegistry {
                                     // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
                                     if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
                                         drop(permit);
-                                        crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
+                                        crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64(), desc);
                                         tracing::warn!(
                                             "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
                                             cooldown_dur.as_secs_f64()
@@ -340,7 +347,7 @@ impl LaneRegistry {
                                         tokio::time::sleep(cooldown_dur).await;
                                         continue;
                                     }
-                                    crate::queue_update_or_insert(&session_id, "Executing", 0.0);
+                                    crate::queue_update_or_insert(&session_id, "Executing", 0.0, desc);
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                     match pipeline.execute(&workspace_path, &session_id, &prompt).await {
@@ -369,7 +376,7 @@ impl LaneRegistry {
                                                         let backoff = parsed_reset
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                             .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                        crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64());
+                                                        crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64(), desc);
                                                         if let Some(reset_duration) = parsed_reset {
                                                             tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                         } else {
@@ -406,20 +413,30 @@ impl LaneRegistry {
                     }
                     // 3. 通常ユーザーセッション実行処理
                     else {
+                        let desc = if session_id.starts_with("cron:session-summary:") {
+                            format!("Auto-Summary for Session '{}'", &session_id["cron:session-summary:".len()..])
+                        } else {
+                            let char_limit = 40;
+                            let mut truncated = content.chars().take(char_limit).collect::<String>();
+                            if content.chars().count() > char_limit {
+                                truncated.push_str("...");
+                            }
+                            format!("User Prompt: \"{}\"", truncated.replace('\n', " "))
+                        };
                         let mut attempt = 0;
                         let max_attempts = 3;
                         let base_delay = Duration::from_secs(5);
 
                         loop {
                             if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
-                                crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
+                                crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64(), &desc);
                                 tracing::warn!(
                                     "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
                                     cooldown_dur.as_secs_f64()
                                 );
                                 tokio::time::sleep(cooldown_dur).await;
                             }
-                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0);
+                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &desc);
                             tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                             let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                             match permit_res {
@@ -427,7 +444,7 @@ impl LaneRegistry {
                                     // セマフォ取得直後のダブルチェック（待機サスペンド中に他のスレッドが制限を検知した可能性があるため）
                                     if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
                                         drop(permit);
-                                        crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64());
+                                        crate::queue_update_or_insert(&session_id, "Cooldown", cooldown_dur.as_secs_f64(), &desc);
                                         tracing::warn!(
                                             "Global rate limit active just after acquiring gmn_sem. Releasing permit and waiting {:.1}s...",
                                             cooldown_dur.as_secs_f64()
@@ -435,10 +452,22 @@ impl LaneRegistry {
                                         tokio::time::sleep(cooldown_dur).await;
                                         continue;
                                     }
-                                    crate::queue_update_or_insert(&session_id, "Executing", 0.0);
+                                    crate::queue_update_or_insert(&session_id, "Executing", 0.0, &desc);
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
-                                    match pipeline.execute(&workspace_path, &session_id, &content).await {
+                                    let exec_res = if session_id.starts_with("cron:session-summary:") {
+                                        let target_session_id = &session_id["cron:session-summary:".len()..];
+                                        pipeline.generate_session_summary(&workspace_path, target_session_id)
+                                            .await
+                                            .map(|summary| rustyclaw_providers::LlmResponse {
+                                                role: "assistant".to_string(),
+                                                content: summary,
+                                                tool_calls: None,
+                                            })
+                                    } else {
+                                        pipeline.execute(&workspace_path, &session_id, &content).await
+                                    };
+                                    match exec_res {
                                         Ok(response) => {
                                             tracing::info!("Agent response generated successfully for Session {}", session_id);
                                             let _ = bus.publish(SystemEvent::AgentResponse {
@@ -485,7 +514,7 @@ impl LaneRegistry {
                                                         let backoff = parsed_reset
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                             .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                        crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64());
+                                                        crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64(), &desc);
                                                         if let Some(reset_duration) = parsed_reset {
                                                             tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                         } else {
@@ -751,6 +780,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
 
         let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone());

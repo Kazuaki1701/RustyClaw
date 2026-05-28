@@ -345,7 +345,14 @@ Rules:
             conversation_text,
         );
 
-        let provider = create_provider(config);
+        let memory_model = config.get_model("memory");
+        let mut model_config = config.clone();
+        model_config.model_provider = memory_model.model_provider.clone();
+        model_config.model_name = memory_model.model_name.clone();
+        model_config.api_key = memory_model.api_key.clone();
+        model_config.api_base_url = memory_model.api_base_url.clone();
+
+        let provider = create_provider(model_config);
         let messages = vec![
             Message {
                 role: "system".to_string(),
@@ -362,9 +369,9 @@ Rules:
         ];
 
         let opts = CompletionOptions {
-            model: "flash".to_string(),
-            max_tokens: Some(1500), // MEMORY.md ≦ 1250 tok + daily log ≒ 100 tok
-            temperature: Some(0.3),
+            model: memory_model.model_name,
+            max_tokens: memory_model.max_tokens.or(Some(1500)), // MEMORY.md ≦ 1250 tok + daily log ≒ 100 tok
+            temperature: memory_model.temperature.or(Some(0.3)),
             timeout: Duration::from_secs(300),
         };
 
@@ -543,12 +550,18 @@ Rules:
                 }
             }
         }
-
-        let provider = create_provider(self.config.clone());
+        let summary_model = self.config.get_model("summary");
+        let mut model_config = self.config.clone();
+        model_config.model_provider = summary_model.model_provider.clone();
+        model_config.model_name = summary_model.model_name.clone();
+        model_config.api_key = summary_model.api_key.clone();
+        model_config.api_base_url = summary_model.api_base_url.clone();
+        
+        let provider = create_provider(model_config);
         let opts = CompletionOptions {
-            model: "flash".to_string(),
-            max_tokens: Some(1500),
-            temperature: Some(0.3),
+            model: summary_model.model_name,
+            max_tokens: summary_model.max_tokens.or(Some(1500)),
+            temperature: summary_model.temperature.or(Some(0.3)),
             timeout: Duration::from_secs(300),
         };
 
@@ -652,6 +665,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let final_summary = format!("{}\n\n<!-- turns: {} -->\n", base_summary, history.len());
+
+        let _ = fs::create_dir_all(&summaries_dir);
+        let _ = fs::write(&existing_summary_path, &final_summary);
 
         Ok(final_summary)
     }
@@ -1052,6 +1068,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
@@ -1137,6 +1154,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
 
         let flush_sem = Arc::new(Semaphore::new(1));
@@ -1212,6 +1230,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
 
         let flush_sem = Arc::new(Semaphore::new(1));
@@ -1292,6 +1311,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
 
         let flush_sem = Arc::new(Semaphore::new(1));
@@ -1373,6 +1393,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
 
         let flush_sem = Arc::new(Semaphore::new(1));

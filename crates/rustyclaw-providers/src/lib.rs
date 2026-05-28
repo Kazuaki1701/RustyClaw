@@ -22,6 +22,25 @@ impl ProviderError {
         match self {
             ProviderError::RateLimit(msg) => {
                 let lower = msg.to_lowercase();
+                
+                // Cloudflare 10,000 neurons daily limit check
+                if lower.contains("used up your daily free allocation") || lower.contains("10,000 neurons") {
+                    let now = chrono::Local::now();
+                    let mut next_reset = chrono::Local::now()
+                        .date_naive()
+                        .and_hms_opt(9, 0, 0)
+                        .unwrap()
+                        .and_local_timezone(chrono::Local)
+                        .unwrap();
+                    if now >= next_reset {
+                        next_reset = next_reset + chrono::Duration::days(1);
+                    }
+                    let remaining_secs = next_reset.signed_duration_since(now).num_seconds();
+                    if remaining_secs > 0 {
+                        return Some(Duration::from_secs(remaining_secs as u64));
+                    }
+                }
+
                 if let Some(pos) = lower.find("your quota will reset after ") {
                     let start = pos + "your quota will reset after ".len();
                     let sub = &msg[start..];
@@ -160,6 +179,21 @@ impl OpenAiCompatProvider {
         
         Self { client, config }
     }
+
+    fn resolve_model(&self, model: &str) -> String {
+        if model == "flash" {
+            if let Ok(env_val) = std::env::var("RUSTYCLAW_FLASH_MODEL_NAME") {
+                return env_val;
+            }
+            if self.config.api_base_url.contains("cloudflare") || self.config.api_base_url.contains("workers-ai") {
+                "@cf/meta/llama-3.2-3b-instruct".to_string()
+            } else {
+                self.config.model_name.clone()
+            }
+        } else {
+            model.to_string()
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -277,8 +311,9 @@ impl LlmProvider for OpenAiCompatProvider {
             )
         };
 
+        let resolved_model = self.resolve_model(&opts.model);
         let request_body = OpenAiRequest {
-            model: &opts.model,
+            model: &resolved_model,
             messages: openai_messages,
             max_tokens: opts.max_tokens.or(self.config.max_tokens),
             temperature: opts.temperature.or(self.config.temperature),
@@ -302,6 +337,14 @@ impl LlmProvider for OpenAiCompatProvider {
                 return Err(ProviderError::RateLimit(error_text));
             }
             return Err(ProviderError::ExecutionFailed(format!("LLM API returned error status {}: {}", status, error_text)));
+        }
+
+        if let Some(neurons_header) = response.headers().get("cf-ai-neurons") {
+            if let Ok(neurons_str) = neurons_header.to_str() {
+                if let Ok(neurons) = neurons_str.parse::<f64>() {
+                    record_neuron_usage(neurons);
+                }
+            }
         }
 
         let resp_data: OpenAiResponse = response.json()
@@ -341,8 +384,9 @@ impl LlmProvider for OpenAiCompatProvider {
             })
             .collect();
 
+        let resolved_model = self.resolve_model(&opts.model);
         let request_body = OpenAiRequest {
-            model: &opts.model,
+            model: &resolved_model,
             messages: openai_messages,
             max_tokens: opts.max_tokens.or(self.config.max_tokens),
             temperature: opts.temperature.or(self.config.temperature),
@@ -366,6 +410,14 @@ impl LlmProvider for OpenAiCompatProvider {
                 return Err(ProviderError::RateLimit(error_text));
             }
             return Err(ProviderError::ExecutionFailed(format!("LLM Stream API returned error status {}: {}", status, error_text)));
+        }
+
+        if let Some(neurons_header) = response.headers().get("cf-ai-neurons") {
+            if let Ok(neurons_str) = neurons_header.to_str() {
+                if let Ok(neurons) = neurons_str.parse::<f64>() {
+                    record_neuron_usage(neurons);
+                }
+            }
         }
 
         let mut stream = response.bytes_stream();
@@ -756,6 +808,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
 
         let provider = OpenAiCompatProvider::new(config);
@@ -813,6 +866,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
 
         let provider = OpenAiCompatProvider::new(config);
@@ -877,6 +931,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
         let provider = GmnCliProvider::new(config);
         let opts = CompletionOptions {
@@ -939,6 +994,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
 
         let provider = OpenAiCompatProvider::new(config);
@@ -989,6 +1045,7 @@ mod tests {
             discord_home_channel_id: None,
             discord_respond_in_channels: vec![],
             mcp: std::collections::HashMap::new(),
+            models: vec![],
         };
         let provider = GmnCliProvider::new(config);
         let opts = CompletionOptions {
@@ -1047,5 +1104,88 @@ mod tests {
 
         let err_exec = ProviderError::ExecutionFailed("Your Quota will reset after 10s".to_string());
         assert_eq!(err_exec.reset_after(), None);
+
+        // Cloudflare daily limit parsing test
+        let err_cf = ProviderError::RateLimit("you have used up your daily free allocation of 10,000 neurons".to_string());
+        assert!(err_cf.reset_after().is_some());
+        assert!(err_cf.reset_after().unwrap().as_secs() > 0);
     }
+}
+
+fn record_neuron_usage(neurons: f64) {
+    if let Ok(home) = std::env::var("HOME") {
+        let neuron_path = std::path::PathBuf::from(home).join(".rustyclaw").join("neuron_usage.json");
+        let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        
+        let mut neurons_used = 0.0;
+        let mut last_reset_date = today_utc.clone();
+        
+        if neuron_path.exists() {
+            if let Ok(file) = std::fs::File::open(&neuron_path) {
+                if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
+                    if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
+                        if date_str == today_utc {
+                            neurons_used = json.get("neurons_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            last_reset_date = date_str.to_string();
+                        }
+                    }
+                }
+            }
+        }
+        
+        neurons_used += neurons;
+        
+        let updated_json = serde_json::json!({
+            "last_reset_date": last_reset_date,
+            "neurons_used": neurons_used
+        });
+        if let Ok(serialized) = serde_json::to_string_pretty(&updated_json) {
+            let _ = std::fs::create_dir_all(neuron_path.parent().unwrap());
+            let _ = std::fs::write(&neuron_path, serialized);
+        }
+    }
+}
+
+pub fn get_neuron_stats() -> serde_json::Value {
+    let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let mut neurons_used = 0.0;
+    
+    if let Ok(home) = std::env::var("HOME") {
+        let neuron_path = std::path::PathBuf::from(home).join(".rustyclaw").join("neuron_usage.json");
+        if neuron_path.exists() {
+            if let Ok(file) = std::fs::File::open(&neuron_path) {
+                if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
+                    if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
+                        if date_str == today_utc {
+                            neurons_used = json.get("neurons_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    let now = chrono::Local::now();
+    let mut next_reset = chrono::Local::now()
+        .date_naive()
+        .and_hms_opt(9, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap();
+    if now >= next_reset {
+        next_reset = next_reset + chrono::Duration::days(1);
+    }
+    
+    let remaining_secs = next_reset.signed_duration_since(now).num_seconds();
+    let hours = remaining_secs / 3600;
+    let minutes = (remaining_secs % 3600) / 60;
+    let reset_in = format!("{}h {}m", hours, minutes);
+
+    serde_json::json!({
+        "neurons_used": neurons_used,
+        "quota_limit": 10000.0,
+        "remaining": (10000.0 - neurons_used).max(0.0),
+        "reset_in": reset_in,
+        "next_reset_jst": next_reset.format("%Y-%m-%d %H:%M:%S").to_string()
+    })
 }

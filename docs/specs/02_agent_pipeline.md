@@ -192,6 +192,53 @@ pub fn create_provider(config: Config) -> Box<dyn LlmProvider> {
 | `"gemini"` | 🔲 Phase 2+ | Gemini REST API |
 | `"ollama"` | 🔲 Phase 2+ | ローカル LLM (Ollama) |
 
+### 複数モデルの用途別使い分け (Multiple Models & Purposes)
+
+RustyClaw では、`config.json` 内の `models` 配列を用いることで、動作するエージェントの各主要な用途（フェーズ・処理）ごとに異なる LLM やハイパーパラメータを割り当てて動的に使い分けることができます。
+
+#### 1. 設定可能な `model_purpose` の値と用途
+
+| `model_purpose` | デフォルトモデルの推奨 | 主な用途・説明 |
+|---|---|---|
+| `"default"` | `llama-3.3-70b-instruct` | **一般対話・エージェントプランニング用**: ユーザーとの対話、複雑なツール呼出し（MCP）のプランニングや高度な推論など、エージェントループの核心的な処理に利用されます。 |
+| `"summary"` | `gemini-2.5-flash` / `llama-3-8b` | **セッションサマリー生成用**: セッション終了後、または一定時間のアイドル判定時に、会話履歴からセッション単位の要約マークダウン (`workspace/memory/summaries/`) を作成・更新する用途に利用されます。 |
+| `"memory"` | `llama-3-8b` / `llama-3.3-70b` | **中期記憶（MEMORY.md）の書き換え用**: 会話の節目（デルタ閾値および時間ゲート超過時）に、これまでの会話履歴の要点や決定事項を短期・中期記憶ファイル (`MEMORY.md` / `logs/`) へ統合・同期するための書き換え処理に利用されます。 |
+
+#### 2. スマート継承（省略時のデフォルトフォールバック）仕様
+
+`models` 配列内の各要素（`ParsedLlmModelConfig`）では、フィールドの一部または全部を省略することができます。
+要素内で省略されたフィールドは、**ルート階層（第1レベル）で設定されている値（デフォルト値）が自動的に継承**されます。
+
+```json
+{
+  "model_provider": "openai",
+  "model_name": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  "api_key": "$vault:cf-token",
+  "api_base_url": "$vault:cf-base-url",
+  "max_tokens": 2048,
+  "temperature": 0.7,
+  "models": [
+    {
+      "model_purpose": "default"
+      // すべて省略 ➡️ ルートの Llama 3.3 (70B) の接続先とパラメータをそのまま継承！
+    },
+    {
+      "model_purpose": "summary",
+      "model_provider": "gmn",
+      "model_name": "gemini-2.5-flash",
+      "temperature": 0.3
+      // api_key, api_base_url は省略 ➡️ gmn プロバイダ側のローカル認証を活用しつつサマリーを作成！
+    },
+    {
+      "model_purpose": "memory",
+      "model_name": "@cf/meta/llama-3-8b-instruct",
+      "temperature": 0.3
+      // provider, api_key, api_base_url は省略 ➡️ ルートの Cloudflare 接続先を継承し、8B 軽量モデルで高速要約！
+    }
+  ]
+}
+```
+
 ### `GmnCliProvider`（デバッグ用 gmn CLI プロバイダ）
 開発・デバッグ時に gmn コマンドラインツール（Google Code Assist API の非インタラクティブ CLI）を LLM バックエンドとして使用するための実装です。`config.json` の `model_provider` を `"gmn"` に設定することで有効化されます。
 

@@ -105,6 +105,11 @@ impl HealthServer {
                                     let json = serde_json::to_string(&state.items).unwrap_or_else(|_| "[]".to_string());
                                     ("200 OK".to_string(), json, "application/json; charset=utf-8")
 
+                                } else if request.starts_with("GET /api/neurons") {
+                                    let stats = rustyclaw_providers::get_neuron_stats();
+                                    let json = serde_json::to_string(&stats).unwrap_or_else(|_| "{}".to_string());
+                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
+
                                 // ── ダッシュボード & チャット ────────────────────
                                 } else if request.starts_with("GET /dashboard")
                                     || request.starts_with("GET / ")
@@ -505,6 +510,31 @@ fn get_dashboard_html() -> String {
             </div>
         </div>
 
+        <!-- CLOUDFLARE NEURONS QUOTA -->
+        <div class="panel neurons" style="background: rgba(251,191,36,0.02); border: 1px solid rgba(251,191,36,0.15); border-radius: 12px; margin-bottom: 16px; padding: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+            <div class="panel-header" style="border-bottom: 1px solid rgba(251,191,36,0.1); padding-bottom: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <div class="panel-title" style="color: #fbbf24; font-weight: bold; font-family: Outfit, sans-serif; font-size: 14px; display: flex; align-items: center; gap: 6px;">
+                    <span>⚡</span> Cloudflare Workers AI Quota
+                </div>
+                <div style="font-size: 10px; color: rgba(251,191,36,0.7); background: rgba(251,191,36,0.1); padding: 2px 6px; border-radius: 4px; font-weight: bold; border: 1px solid rgba(251,191,36,0.2);">
+                    FREE TIER
+                </div>
+            </div>
+            <div class="panel-body" id="neuronQuota" style="display: flex; flex-direction: column; gap: 10px; font-family: Outfit, sans-serif;">
+                <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--text);">
+                    <span>本日使用済み:</span>
+                    <strong style="color: #fbbf24; font-size: 14px;" id="neuronsUsed">0.00 / 10,000.0 Neurons</strong>
+                </div>
+                <div style="background: rgba(255,255,255,0.05); border-radius: 6px; height: 10px; width: 100%; overflow: hidden; border: 1px solid rgba(251,191,36,0.1);">
+                    <div id="neuronsProgress" style="background: linear-gradient(90deg, #fbbf24, #f59e0b); height: 100%; width: 0%; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px;">
+                    <span id="neuronsRemaining">残り: 10,000.0 Neurons</span>
+                    <span id="neuronsReset">次回リセットまで: 0h 0m</span>
+                </div>
+            </div>
+        </div>
+
         <!-- QUEUE STATE -->
         <div class="panel queue">
             <div class="panel-header">
@@ -678,6 +708,9 @@ fn get_dashboard_html() -> String {
                                 ${item.status}
                             </span>
                         </div>
+                        <div style="font-size: 11px; color: #fbbf24; background: rgba(251,191,36,0.03); padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(251,191,36,0.1); margin-top: 4px; word-break: break-all; font-family: Outfit, sans-serif;">
+                            ${item.description || '処理タスクを分析中...'}
+                        </div>
                         <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px;">
                             <span>順位: #${index + 1}</span>
                             <span>${subText}</span>
@@ -691,12 +724,34 @@ fn get_dashboard_html() -> String {
         } catch { /* 無視 */ }
     }
 
+    async function updateNeurons() {
+        try {
+            const res = await fetch('/api/neurons');
+            if (!res.ok) return;
+            const data = await res.json();
+            
+            const used = data.neurons_used || 0.0;
+            const limit = data.quota_limit || 10000.0;
+            const remaining = data.remaining || 10000.0;
+            const resetIn = data.reset_in || '0h 0m';
+            
+            document.getElementById('neuronsUsed').innerText = `${used.toFixed(2)} / ${limit.toLocaleString()} Neurons`;
+            document.getElementById('neuronsRemaining').innerText = `残り: ${remaining.toFixed(2)} Neurons`;
+            document.getElementById('neuronsReset').innerText = `次回リセットまで: ${resetIn}`;
+            
+            const pct = Math.min(100, Math.max(0, (used / limit) * 100));
+            document.getElementById('neuronsProgress').style.width = `${pct}%`;
+        } catch { /* 無視 */ }
+    }
+
     fetchSlowLogs();
     fetchAppLog();
     updateQueue();
+    updateNeurons();
     setInterval(fetchSlowLogs, 5000);
     setInterval(fetchAppLog,   2000);
     setInterval(updateQueue,   2000);
+    setInterval(updateNeurons, 5000);
 </script>
 </body>
 </html>
