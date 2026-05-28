@@ -413,6 +413,22 @@ impl LlmProvider for OpenAiCompatProvider {
 
 static GLOBAL_COOLDOWN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 
+/// グローバルなクールダウンの残り時間を取得する。
+/// レート制限の解除待ち時間がある場合は `Some(Duration)` を返す。
+pub fn global_cooldown_remaining() -> Option<std::time::Duration> {
+    let cooldown = {
+        let lock = GLOBAL_COOLDOWN.lock().unwrap();
+        *lock
+    };
+    if let Some(reset_instant) = cooldown {
+        let now = std::time::Instant::now();
+        if now < reset_instant {
+            return Some(reset_instant - now);
+        }
+    }
+    None
+}
+
 pub struct GmnCliProvider {
     #[allow(dead_code)]
     config: Config,
@@ -447,25 +463,6 @@ impl LlmProvider for GmnCliProvider {
         tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<LlmResponse, ProviderError> {
-        // グローバルなクールダウン（レート制限の解除待ち）をチェック
-        {
-            let cooldown = {
-                let lock = GLOBAL_COOLDOWN.lock().unwrap();
-                *lock
-            };
-            if let Some(reset_instant) = cooldown {
-                let now = std::time::Instant::now();
-                if now < reset_instant {
-                    let wait_dur = reset_instant - now;
-                    tracing::warn!(
-                        "Global rate limit active. Waiting {:.1}s before spawning gmn...",
-                        wait_dur.as_secs_f64()
-                    );
-                    tokio::time::sleep(wait_dur).await;
-                }
-            }
-        }
-
         if !tools.is_empty() {
             return Err(ProviderError::ExecutionFailed("GmnCliProvider does not support tool calling".to_string()));
         }
@@ -571,25 +568,6 @@ impl LlmProvider for GmnCliProvider {
         _tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
-        // グローバルなクールダウン（レート制限の解除待ち）をチェック
-        {
-            let cooldown = {
-                let lock = GLOBAL_COOLDOWN.lock().unwrap();
-                *lock
-            };
-            if let Some(reset_instant) = cooldown {
-                let now = std::time::Instant::now();
-                if now < reset_instant {
-                    let wait_dur = reset_instant - now;
-                    tracing::warn!(
-                        "Global rate limit active. Waiting {:.1}s before spawning gmn (stream)...",
-                        wait_dur.as_secs_f64()
-                    );
-                    tokio::time::sleep(wait_dur).await;
-                }
-            }
-        }
-
         let prompt = self.build_prompt(messages);
         let model = opts.model.clone();
         let timeout_secs = opts.timeout.as_secs();

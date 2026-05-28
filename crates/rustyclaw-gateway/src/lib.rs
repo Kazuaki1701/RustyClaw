@@ -178,6 +178,13 @@ impl LaneRegistry {
                             let base_delay = Duration::from_secs(5);
 
                             loop {
+                                if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                    tracing::warn!(
+                                        "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
+                                        cooldown_dur.as_secs_f64()
+                                    );
+                                    tokio::time::sleep(cooldown_dur).await;
+                                }
                                 tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                                 let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                                 match permit_res {
@@ -243,6 +250,13 @@ impl LaneRegistry {
                         let base_delay = Duration::from_secs(5);
 
                         loop {
+                            if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                tracing::warn!(
+                                    "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
+                                    cooldown_dur.as_secs_f64()
+                                );
+                                tokio::time::sleep(cooldown_dur).await;
+                            }
                             tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                             let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                             match permit_res {
@@ -312,6 +326,13 @@ impl LaneRegistry {
                         let base_delay = Duration::from_secs(5);
 
                         loop {
+                            if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                tracing::warn!(
+                                    "Global rate limit active. Waiting {:.1}s before acquiring gmn_sem...",
+                                    cooldown_dur.as_secs_f64()
+                                );
+                                tokio::time::sleep(cooldown_dur).await;
+                            }
                             tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
                             let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
                             match permit_res {
