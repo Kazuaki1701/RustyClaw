@@ -267,3 +267,29 @@
   - Calendar / Gmail MCP ツール統合後、Heartbeat が gmn_sem を 1〜5 分占有する可能性
   - ユーザー対話が最大 5 分待機を強いられる場合がある
   - 詳細は `docs/specs/05_gateway_spec.md` の `[^mcp_heartbeat]` 脚注を参照
+
+---
+
+## RPi4 本番移行前チェックリスト（2026-05-28）
+
+> 本番環境 Raspberry Pi 4（aarch64）への移行前に対処が必要な課題。
+
+- `[ ]` **【重大】`gmn` バイナリの aarch64 向け再ビルド**
+  - 現状の `~/.local/share/go/bin/gmn` は x86-64 バイナリ（ELF 64-bit, x86-64）
+  - `summary` purpose が `model_provider: "gmn"` を使用しているため、RPi4 ではセッションサマリー生成が動かない
+  - 対処A: Go のクロスコンパイルで aarch64 向けバイナリをビルド (`GOOS=linux GOARCH=arm64 go build`)
+  - 対処B: `config.json` の `summary` purpose を `openai`（Cloudflare）プロバイダに変更し gmn 依存を除去
+
+- `[ ]` **【要確認】RPi4 への Node.js インストール**
+  - MCP サーバー 4本（gmail, google-calendar, karakeep, obsidian）がすべて `npx` 経由で起動
+  - RPi4（aarch64）に Node.js LTS のインストールが必要（公式バイナリあり）
+  - 動作確認: `npx @anthropic-ai/mcp-server-gmail` が起動できることを確認
+
+- `[ ]` **【要確認】MCP サーバー同時起動時のメモリ使用量計測**
+  - 推定ピーク: RustyClaw(~200MB) + Node.js MCP × 4(~200–600MB) + gmn(~50MB) = 最大 ~850MB
+  - `MemoryMax=2G` 制限内の想定だが、実機で `systemctl status` + `free -h` で計測して確認
+  - Node.js MCP サーバーが常駐する場合は起動タイミング（on-demand vs 常駐）の見直しも検討
+
+- `[ ]` **【軽微】`Cargo.toml` のコメント誤記修正**
+  - `opt-level = 3  # 速度優先（8GB あるのでサイズ不問）` → 正しくは 4GB
+  - 実害なし、`cross build` 前に修正推奨

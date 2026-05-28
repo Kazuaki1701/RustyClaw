@@ -59,20 +59,25 @@
 | `/logs/heartbeat-digest` | GET | `workspace/memory/heartbeat-digest.md` 全文 |
 | `/logs/heartbeat-state` | GET | `workspace/memory/heartbeat-state.json`（pretty-print） |
 | `/logs/app` | GET | `~/.rustyclaw/rustyclaw.log` 末尾 100 行 |
+| `/api/queue` | GET | gmn API Pipeline Queue の現在状態（JSON） |
+| `/api/neurons` | GET | Cloudflare Neurons クォータ使用状況 JSON（`neurons_used`, `quota_limit`, `remaining`, `reset_at`） |
 
 **ダッシュボードレイアウト（`/dashboard`）**:
 ```
-┌────────────────────┬──────────────────────────────────┐
-│                    │  🟣 MEMORY.md         (flex: 3)  │
-│  Chat パネル       ├──────────────┬───────────────────┤
-│  (flex: 4)         │ 🟢 hb-digest │ 🟡 hb-state.json │
-│                    │  (flex: 6)   │  (flex: 4)        │
-│                    ├──────────────┴───────────────────┤
-│                    │  🔵 rustyclaw.log     (flex: 4)  │
-└────────────────────┴──────────────────────────────────┘
+┌────────────────────┬──────────────────────────────────────┐
+│                    │  🟡 Neurons クォータ（Cloudflare）    │
+│  Chat パネル       │  🔄 gmn API Pipeline Queue           │
+│  (flex: 4)         ├────────────────────────────────────  │
+│                    │  🟣 MEMORY.md                        │
+│                    ├──────────────┬───────────────────────┤
+│                    │ 🟢 hb-digest │ 🟡 hb-state.json     │
+│                    ├──────────────┴───────────────────────┤
+│                    │  🔵 rustyclaw.log                    │
+└────────────────────┴──────────────────────────────────────┘
 ```
 - MEMORY.md / heartbeat 系: 5 秒ポーリング
 - App ログ: 2 秒ポーリング
+- Neurons / Queue パネル: 5 秒ポーリング（`/api/neurons`・`/api/queue`）
 - `/chat` セッション ID は `"http-dashboard"` 固定（履歴が蓄積される）
 
 ---

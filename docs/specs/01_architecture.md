@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (最新の真実 - コードと同期中)  
-> **最終更新日**: 2026-05-27  
+> **最終更新日**: 2026-05-28  
 > **対象コード**: 全クレートの最新実装
 
 ## 1. プロジェクト概要
@@ -46,15 +46,14 @@ rustyclaw-agent (lib) (Pipeline)
     │   ├── SessionContinuation (日またぎ文脈)
     │   └── ProactivePosts 注入
     ├── CallLLM (FallbackChain + streaming SSE)
-    ├── ExecuteTools (ToolRegistry in-process)
+    ├── ExecuteTools (ToolRegistry in-process + MCP プロキシ)
+    │   ├── rustyclaw-tools (Tool トレイト・ToolRegistry)
+    │   └── rustyclaw-mcp (McpManager → 外部 MCP サーバー stdio 接続)
     └── PublishResponse
         ↓
 rustyclaw-providers (lib) (LlmProvider trait)
-    ├── OpenAiCompatProvider (reqwest + SSE)
-    ├── AnthropicProvider
-    ├── GeminiProvider
-    ├── OllamaProvider (ローカル LLM)
-    └── GmnCliProvider (デバッグ用: gmn CLI サブプロセス経由)
+    ├── OpenAiCompatProvider (reqwest + SSE、ToolCall 対応)
+    └── GmnCliProvider (gmn CLI サブプロセス経由、ToolCall 非対応)
         ↓
 rustyclaw-storage (lib)
     ├── SessionStore (JSONL append-only, fail-closed)
@@ -81,7 +80,8 @@ rustyclaw/
 │   ├── rustyclaw-agent/        # lib: Pipeline・AgentLoop・AgentInstance
 │   ├── rustyclaw-providers/    # lib: LLM HTTP クライアント群
 │   ├── rustyclaw-channels/     # lib: Telegram・Discord 等の実装
-│   ├── rustyclaw-tools/        # lib: built-in tools・MCP クライアント
+│   ├── rustyclaw-tools/        # lib: Tool トレイト・ToolRegistry 定義
+│   ├── rustyclaw-mcp/          # lib: MCP クライアント（JSON-RPC 2.0 over stdio）
 │   ├── rustyclaw-config/       # lib: 設定ファイル型定義・migration
 │   └── rustyclaw-storage/      # lib: SQLite・JSONL セッション永続化
 └── workspace/                  # デフォルトワークスペース（開発用）
@@ -105,7 +105,7 @@ rustyclaw/
 | SQLite | `rusqlite` + `deadpool-sqlite` | 接続プール、WAL モード |
 | 非同期トレイト | `async-trait` | trait に async fn を定義 |
 | 全文検索 | `tantivy` | 純 Rust BM25、外部プロセス不要 |
-| MCP クライアント | `rmcp` | Rust 公式 MCP SDK |
+| MCP クライアント | 自前実装（`rustyclaw-mcp`） | JSON-RPC 2.0 over stdio（`rmcp` クレートは不採用） |
 | 安全な書き込み | `tempfile` | 原子性書き込み（電源断対策） |
 | systemd連携 | `sd-notify` | WatchdogSec 連携用 |
 | 設定暗号化 | `age` | `.security.yml` 暗号化 |

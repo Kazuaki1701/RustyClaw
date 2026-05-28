@@ -1,9 +1,20 @@
 # 07. rustyclaw-mcp 実装計画
 
 > [!NOTE]
-> **ステータス**: `[PLAN]` (未実装・長期課題)  
+> **ステータス**: `[HISTORICAL]` (Phase 9 で実装完了済み・設計記録として保存)  
 > **作成日**: 2026-05-28  
+> **完了日**: 2026-05-28（Phase 9 にて全項目実装済み）  
 > **参照 upstream**: PicoClaw `pkg/mcp`, `pkg/tools` (`/home/kazuaki/Projects/PicoClaw/master/upstream/`)
+
+> [!IMPORTANT]
+> このドキュメントは実装時の設計計画書です。最新の実装状態は `docs/specs/01_architecture.md` および `docs/specs/02_agent_pipeline.md` を参照してください。
+>
+> **計画と実際の主な差異**:
+> - `rmcp` クレートは採用せず、自前の JSON-RPC 2.0 over stdio を実装（`rustyclaw-mcp/src/lib.rs`）
+> - `LlmResponse` は enum ではなくフラットな struct `{ content: String, tool_calls: Option<Vec<ToolCall>> }`
+> - `rustyclaw-mcp` は `rustyclaw-tools` と `rustyclaw-config` のみに依存（rmcp 不使用）
+> - `McpManager::load_from_config()` ではなく `connect_all(&servers)` インターフェースで実装
+> - Phase 7-6（ツール検索 Discovery）は未実装のまま
 
 ---
 

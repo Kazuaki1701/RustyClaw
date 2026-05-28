@@ -142,6 +142,18 @@ pub enum ProviderError {
 ```
 
 ```rust
+/// LLM レスポンス（テキスト応答とツール呼び出し要求の両方を含む）
+pub struct LlmResponse {
+    pub content:    String,                 // テキスト応答（空文字の場合あり）
+    pub tool_calls: Option<Vec<ToolCall>>,  // ツール呼び出し要求（None なら最終応答）
+}
+
+pub struct ToolCall {
+    pub id:        String,   // ツール呼び出し識別子
+    pub name:      String,   // ツール名
+    pub arguments: String,   // JSON 文字列形式の引数
+}
+
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
     /// テキスト・ツールの一括補完
@@ -186,11 +198,11 @@ pub fn create_provider(config: Config) -> Box<dyn LlmProvider> {
 
 | `model_provider` | 実装状態 | 用途 |
 |---|---|---|
-| `"openai"` | ✅ 実装済み | OpenAI 互換 API（reqwest + SSE） |
-| `"gmn"` | ✅ 実装済み | デバッグ用 gmn CLI サブプロセス |
-| `"anthropic"` | 🔲 Phase 2+ | Anthropic Claude API |
-| `"gemini"` | 🔲 Phase 2+ | Gemini REST API |
-| `"ollama"` | 🔲 Phase 2+ | ローカル LLM (Ollama) |
+| `"openai"` | ✅ 実装済み | OpenAI 互換 API（reqwest + SSE、`ToolCall` 対応） |
+| `"gmn"` | ✅ 実装済み | gmn CLI サブプロセス（`ToolCall` 非対応・`Err(unsupported)` を返す） |
+| `"anthropic"` | 🔲 未実装 | Anthropic Claude API |
+| `"gemini"` | 🔲 未実装 | Gemini REST API |
+| `"ollama"` | 🔲 未実装 | ローカル LLM (Ollama) |
 
 ### 複数モデルの用途別使い分け (Multiple Models & Purposes)
 
