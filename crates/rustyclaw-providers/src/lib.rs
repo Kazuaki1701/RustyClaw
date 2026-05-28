@@ -21,8 +21,9 @@ impl ProviderError {
     pub fn reset_after(&self) -> Option<Duration> {
         match self {
             ProviderError::RateLimit(msg) => {
-                if let Some(pos) = msg.find("Your Quota will reset after ") {
-                    let start = pos + "Your Quota will reset after ".len();
+                let lower = msg.to_lowercase();
+                if let Some(pos) = lower.find("your quota will reset after ") {
+                    let start = pos + "your quota will reset after ".len();
                     let sub = &msg[start..];
 
                     let mut total_secs = 0;
@@ -986,6 +987,10 @@ mod tests {
 
         let err2 = ProviderError::RateLimit("Your Quota will reset after 5s".to_string());
         assert_eq!(err2.reset_after(), Some(std::time::Duration::from_secs(5)));
+
+        // 小文字 "quota" パターン (実際のログで検出されたもの)
+        let err_real = ProviderError::RateLimit("You have exhausted your capacity on this model. Your quota will reset after 2s.".to_string());
+        assert_eq!(err_real.reset_after(), Some(std::time::Duration::from_secs(2)));
 
         let err3 = ProviderError::RateLimit("Your Quota will reset after 1m 30s.".to_string());
         assert_eq!(err3.reset_after(), Some(std::time::Duration::from_secs(90)));
