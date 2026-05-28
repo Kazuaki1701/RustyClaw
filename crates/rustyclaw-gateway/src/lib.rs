@@ -197,10 +197,15 @@ impl LaneRegistry {
                                                 if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
                                                     if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
                                                         if attempt < max_attempts {
-                                                            let backoff = err.reset_after()
+                                                            let parsed_reset = err.reset_after();
+                                                            let backoff = parsed_reset
                                                                 .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                                 .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                            tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                            if let Some(reset_duration) = parsed_reset {
+                                                                tracing::warn!("Rate limit exceeded. Detected quota reset time: {:?}. Dynamic backoff applied: {:?} (including 2s safety buffer). Error: {}", reset_duration, backoff, limit_msg);
+                                                            } else {
+                                                                tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:?}. Error: {}", backoff, limit_msg);
+                                                            }
                                                             tokio::time::sleep(backoff).await;
                                                             attempt += 1;
                                                             continue;
@@ -265,10 +270,15 @@ impl LaneRegistry {
                                             if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
                                                 if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
                                                     if attempt < max_attempts {
-                                                        let backoff = err.reset_after()
+                                                        let parsed_reset = err.reset_after();
+                                                        let backoff = parsed_reset
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                             .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                        tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                        if let Some(reset_duration) = parsed_reset {
+                                                            tracing::warn!("Rate limit exceeded. Detected quota reset time: {:?}. Dynamic backoff applied: {:?} (including 2s safety buffer). Error: {}", reset_duration, backoff, limit_msg);
+                                                        } else {
+                                                            tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:?}. Error: {}", backoff, limit_msg);
+                                                        }
                                                         tokio::time::sleep(backoff).await;
                                                         attempt += 1;
                                                         continue;
@@ -350,10 +360,15 @@ impl LaneRegistry {
                                             if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
                                                 if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
                                                     if attempt < max_attempts {
-                                                        let backoff = err.reset_after()
+                                                        let parsed_reset = err.reset_after();
+                                                        let backoff = parsed_reset
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                             .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                        tracing::warn!("Rate limit exceeded. Retrying in {:?}... Error: {}", backoff, limit_msg);
+                                                        if let Some(reset_duration) = parsed_reset {
+                                                            tracing::warn!("Rate limit exceeded. Detected quota reset time: {:?}. Dynamic backoff applied: {:?} (including 2s safety buffer). Error: {}", reset_duration, backoff, limit_msg);
+                                                        } else {
+                                                            tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:?}. Error: {}", backoff, limit_msg);
+                                                        }
                                                         tokio::time::sleep(backoff).await;
                                                         attempt += 1;
                                                         continue;
