@@ -274,10 +274,10 @@
 
 > 本番環境 Raspberry Pi 4（aarch64）への移行前に対処が必要な課題。
 
-- `[ ]` **【重大】`gmn` バイナリの aarch64 向け再ビルド**
+- `[x]` **【重大】`gmn` バイナリの aarch64 向け再ビルド (ユーザー様により実施済み)**
   - 現状の `~/.local/share/go/bin/gmn` は x86-64 バイナリ（ELF 64-bit, x86-64）
   - `summary` purpose が `model_provider: "gmn"` を使用しているため、RPi4 ではセッションサマリー生成が動かない
-  - 対処A: Go のクロスコンパイルで aarch64 向けバイナリをビルド (`GOOS=linux GOARCH=arm64 go build`)
+  - 対処A: Go のクロスコンパイルで aarch64 向けバイナリをビルド (`GOOS=linux GOARCH=arm64 go build`) -> 実施完了
   - 対処B: `config.json` の `summary` purpose を `openai`（Cloudflare）プロバイダに変更し gmn 依存を除去
 
 - `[ ]` **【不要へ】RPi4 への Node.js インストール**
