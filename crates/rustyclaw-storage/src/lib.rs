@@ -220,14 +220,14 @@ impl ConversationHistory {
         Self { messages }
     }
 
-    /// 簡易的なトークン数推定（日本語の文字数 + 英語の単語数ベースなど）
-    /// ここでは、1文字 = 大体 1.0 トークンとして単純かつ厳密に計算します
+    /// トークン数推定（LLaMA 系トークナイザー補正済み）
+    /// 日本語は1文字あたり約1.5 BPEトークンになるため、chars数に×1.5の補正係数を適用する
     pub fn estimate_tokens(&self) -> usize {
         let mut total = 0;
         for msg in &self.messages {
             total += msg.content.chars().count();
         }
-        total
+        (total * 3) / 2
     }
 
     /// 会話履歴の圧縮 (70/20/10 戦略)

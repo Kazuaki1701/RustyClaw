@@ -90,11 +90,26 @@ impl ProviderError {
                         return Some(Duration::from_secs(total_secs));
                     }
                 }
+
+                // Cloudflare RPM 429 ("Too Many Requests" 形式、リセット時刻なし) → デフォルト 60s
+                if lower.contains("too many requests") {
+                    return Some(Duration::from_secs(60));
+                }
+
                 None
             }
             _ => None,
         }
     }
+}
+
+/// RateLimit エラーから GLOBAL_COOLDOWN を設定する共通ヘルパー。
+/// `GmnCliProvider` と `OpenAiCompatProvider` の両方から呼ぶことで、
+/// プロバイダーに関わらずグローバルクールダウンゲートが有効になる。
+pub fn set_global_cooldown_from_error(err: &ProviderError) {
+    let dur = err.reset_after().unwrap_or(Duration::from_secs(60));
+    let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
+    *lock = Some(std::time::Instant::now() + dur + Duration::from_secs(2));
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -334,7 +349,9 @@ impl LlmProvider for OpenAiCompatProvider {
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS || error_text.contains("insufficient_quota") {
-                return Err(ProviderError::RateLimit(error_text));
+                let err = ProviderError::RateLimit(error_text);
+                set_global_cooldown_from_error(&err);
+                return Err(err);
             }
             return Err(ProviderError::ExecutionFailed(format!("LLM API returned error status {}: {}", status, error_text)));
         }
@@ -407,7 +424,9 @@ impl LlmProvider for OpenAiCompatProvider {
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS || error_text.contains("insufficient_quota") {
-                return Err(ProviderError::RateLimit(error_text));
+                let err = ProviderError::RateLimit(error_text);
+                set_global_cooldown_from_error(&err);
+                return Err(err);
             }
             return Err(ProviderError::ExecutionFailed(format!("LLM Stream API returned error status {}: {}", status, error_text)));
         }
@@ -569,9 +588,7 @@ impl LlmProvider for GmnCliProvider {
         if !output.status.success() || combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
             if combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
                 let err = ProviderError::RateLimit(combined_err);
-                let dur = err.reset_after().unwrap_or(std::time::Duration::from_secs(5));
-                let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
-                *lock = Some(std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
+                set_global_cooldown_from_error(&err);
                 return Err(err);
             }
             if !output.status.success() {
@@ -746,11 +763,7 @@ impl LlmProvider for GmnCliProvider {
             if (!status.success() || is_rate_limit) && !has_yielded {
                 if is_rate_limit {
                     let err = ProviderError::RateLimit(combined_err);
-                    {
-                        let dur = err.reset_after().unwrap_or(std::time::Duration::from_secs(5));
-                        let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
-                        *lock = Some(std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
-                    }
+                    set_global_cooldown_from_error(&err);
                     Err(err)?;
                 } else {
                     Err(ProviderError::ExecutionFailed(format!("gmn CLI process exited with non-zero status: {:?}", status.code())))?;
@@ -1105,10 +1118,37 @@ mod tests {
         let err_exec = ProviderError::ExecutionFailed("Your Quota will reset after 10s".to_string());
         assert_eq!(err_exec.reset_after(), None);
 
-        // Cloudflare daily limit parsing test
+        // Cloudflare daily limit parsing test (簡易文字列)
         let err_cf = ProviderError::RateLimit("you have used up your daily free allocation of 10,000 neurons".to_string());
         assert!(err_cf.reset_after().is_some());
         assert!(err_cf.reset_after().unwrap().as_secs() > 0);
+
+        // Cloudflare 実際の HTTP レスポンスボディ (internalCode: 4006 の JSON 全文)
+        let err_cf_real = ProviderError::RateLimit(r#"{"name":"AiError","internalCode":4006,"httpCode":429,"message":"AiError: AiError: you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage. (35c8551a-c0e6-4dd5-8f67-2ce2f9a112d6)","description":"you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage.","requestId":"35c8551a-c0e6-4dd5-8f67-2ce2f9a112d6"}"#.to_string());
+        assert!(err_cf_real.reset_after().is_some(), "CF JSON body must be parseable");
+        // 翌 9:00 JST リセット想定なので最低 1 秒以上の待機時間が返ること
+        assert!(err_cf_real.reset_after().unwrap().as_secs() >= 1, "CF daily limit must return meaningful wait duration");
+
+        // set_global_cooldown_from_error がクールダウンをセットする
+        {
+            let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
+            *lock = None;
+        }
+        assert!(global_cooldown_remaining().is_none());
+        set_global_cooldown_from_error(&ProviderError::RateLimit("Too Many Requests".to_string()));
+        assert!(global_cooldown_remaining().is_some(), "GLOBAL_COOLDOWN must be set after rate limit");
+
+        // Cloudflare RPM 429 (JSON body, no reset time) → default 60s
+        let err_cf_rpm = ProviderError::RateLimit(r#"{"errors":[{"code":10014,"message":"Too Many Requests"}]}"#.to_string());
+        assert_eq!(err_cf_rpm.reset_after(), Some(std::time::Duration::from_secs(60)));
+
+        // Cloudflare RPM 429 (plain string)
+        let err_cf_rpm2 = ProviderError::RateLimit("Too Many Requests".to_string());
+        assert_eq!(err_cf_rpm2.reset_after(), Some(std::time::Duration::from_secs(60)));
+
+        // Cloudflare RPM 429 (lowercase)
+        let err_cf_rpm3 = ProviderError::RateLimit("too many requests".to_string());
+        assert_eq!(err_cf_rpm3.reset_after(), Some(std::time::Duration::from_secs(60)));
     }
 }
 
