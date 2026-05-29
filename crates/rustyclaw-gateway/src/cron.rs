@@ -4,6 +4,41 @@ use tokio::time;
 use serde::Deserialize;
 use crate::{MessageBus, SystemEvent, Priority};
 
+/// sessions/ ディレクトリ内でサマリーが必要な最初の1セッションを返す（1tick につき最大1件）。
+pub(crate) fn find_next_session_needing_summary(sessions_dir: &std::path::Path, ws_path: &std::path::Path) -> Option<String> {
+    let now = std::time::SystemTime::now();
+    let entries = std::fs::read_dir(sessions_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let filename = path.file_name()?.to_string_lossy().to_string();
+        if !filename.ends_with(".jsonl") || filename.starts_with("cron") {
+            continue;
+        }
+        let safe_session_id = filename.trim_end_matches(".jsonl").to_string();
+        let metadata = std::fs::metadata(&path).ok()?;
+        let modified = metadata.modified().ok()?;
+        let elapsed = now.duration_since(modified).unwrap_or_default().as_secs();
+        if elapsed < 300 {
+            continue;
+        }
+        let local_modified: chrono::DateTime<chrono::Local> = modified.into();
+        let session_date = local_modified.format("%Y-%m-%d").to_string();
+        let summary_path = ws_path.join("memory").join("summaries").join(format!("{}-{}.md", session_date, safe_session_id));
+        let needs_summary = if !summary_path.exists() {
+            true
+        } else {
+            summary_path.metadata().ok()
+                .and_then(|m| m.modified().ok())
+                .map(|sm| sm < modified)
+                .unwrap_or(false)
+        };
+        if needs_summary {
+            return Some(safe_session_id);
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct Trigger {
     #[serde(rename = "type")]
@@ -132,73 +167,21 @@ impl CronService {
                     continue;
                 }
                 
-                let now = std::time::SystemTime::now();
-                
-                if let Ok(dir_entries) = std::fs::read_dir(&sessions_dir) {
-                    for entry in dir_entries.flatten() {
-                        let path = entry.path();
-                        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        
-                        if !filename.ends_with(".jsonl") || filename.starts_with("cron") {
-                            continue; // Skip self/cron/daily-summary logs
-                        }
-                        
-                        // Parse session ID from filename
-                        let safe_session_id = filename.trim_end_matches(".jsonl").to_string();
-                        
-                        // Check file modification time
-                        let metadata = match std::fs::metadata(&path) {
-                            Ok(m) => m,
-                            Err(_) => continue,
-                        };
-                        
-                        let modified = match metadata.modified() {
-                            Ok(t) => t,
-                            Err(_) => continue,
-                        };
-                        
-                        let elapsed = match now.duration_since(modified) {
-                            Ok(d) => d.as_secs(),
-                            Err(_) => 0,
-                        };
-                        
-                        // Check if idle for at least 5 minutes (300 seconds)
-                        if elapsed >= 300 {
-                            // Determine session date
-                            let local_modified: chrono::DateTime<chrono::Local> = modified.into();
-                            let session_date = local_modified.format("%Y-%m-%d").to_string();
-                            
-                            let summary_path = ws_path.join("memory").join("summaries").join(format!("{}-{}.md", session_date, safe_session_id));
-                            
-                            let mut needs_summary = false;
-                            if !summary_path.exists() {
-                                needs_summary = true;
-                            } else if let Ok(summary_meta) = std::fs::metadata(&summary_path) {
-                                if let Ok(summary_modified) = summary_meta.modified() {
-                                    if summary_modified < modified {
-                                        needs_summary = true; // Session was updated after summary was generated
-                                    }
-                                }
-                            }
-                            
-                            if needs_summary {
-                                // Load history and ensure it has messages
-                                let logger = rustyclaw_storage::SessionLogger::new(&ws_path);
-                                if let Ok(history) = logger.load_history(&safe_session_id) {
-                                    if !history.is_empty() {
-                                        tracing::info!("CronService: Session {} has been idle for 5+ mins and needs summary. Triggering...", safe_session_id);
-                                        let event = SystemEvent::IncomingMessage {
-                                            session_id: format!("cron:session-summary:{}", safe_session_id),
-                                            user_id: "cron".to_string(),
-                                            channel_id: "cron".to_string(),
-                                            content: "session-summary".to_string(),
-                                            priority: Priority::Background,
-                                        };
-                                        if let Err(e) = bus_summary.publish(event) {
-                                            tracing::error!("CronService: Failed to publish Session Summary event: {:#}", e);
-                                        }
-                                    }
-                                }
+                // 1tick につき最大1セッションのみ発火（CF rate limit 連続突破を防ぐ）
+                if let Some(safe_session_id) = find_next_session_needing_summary(&sessions_dir, &ws_path) {
+                    let logger = rustyclaw_storage::SessionLogger::new(&ws_path);
+                    if let Ok(history) = logger.load_history(&safe_session_id) {
+                        if !history.is_empty() {
+                            tracing::info!("CronService: Session {} has been idle for 5+ mins and needs summary. Triggering...", safe_session_id);
+                            let event = SystemEvent::IncomingMessage {
+                                session_id: format!("cron:session-summary:{}", safe_session_id),
+                                user_id: "cron".to_string(),
+                                channel_id: "cron".to_string(),
+                                content: "session-summary".to_string(),
+                                priority: Priority::Background,
+                            };
+                            if let Err(e) = bus_summary.publish(event) {
+                                tracing::error!("CronService: Failed to publish Session Summary event: {:#}", e);
                             }
                         }
                     }
@@ -328,5 +311,73 @@ impl CronService {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn make_old_jsonl(dir: &std::path::Path, name: &str) {
+        let path = dir.join(format!("{}.jsonl", name));
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, r#"{{"role":"user","content":"hi"}}"#).unwrap();
+        // mtime を 10 分前に設定
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        let ft = filetime::FileTime::from_system_time(old);
+        filetime::set_file_mtime(&path, ft).unwrap();
+    }
+
+    #[test]
+    fn test_find_next_session_returns_at_most_one() {
+        let ws = tempfile::tempdir().unwrap();
+        let sessions_dir = ws.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(ws.path().join("memory").join("summaries")).unwrap();
+
+        // 複数のアイドルセッションを作成
+        make_old_jsonl(&sessions_dir, "discord-A");
+        make_old_jsonl(&sessions_dir, "discord-B");
+        make_old_jsonl(&sessions_dir, "discord-C");
+
+        let result = find_next_session_needing_summary(&sessions_dir, ws.path());
+        assert!(result.is_some(), "should find at least one session");
+
+        // 2回呼んでも同じセッションか別の1件が返る（複数まとめて返さない）
+        let result2 = find_next_session_needing_summary(&sessions_dir, ws.path());
+        assert!(result2.is_some());
+        // 1回の呼び出しで返るのは必ず1件
+        assert_eq!(result.unwrap().len() > 0, true);
+    }
+
+    #[test]
+    fn test_cron_sessions_are_excluded() {
+        let ws = tempfile::tempdir().unwrap();
+        let sessions_dir = ws.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(ws.path().join("memory").join("summaries")).unwrap();
+
+        // cron プレフィックスのセッションは除外される
+        make_old_jsonl(&sessions_dir, "cron-heartbeat");
+        make_old_jsonl(&sessions_dir, "cron-daily-summary");
+
+        let result = find_next_session_needing_summary(&sessions_dir, ws.path());
+        assert!(result.is_none(), "cron sessions must be excluded");
+    }
+
+    #[test]
+    fn test_recent_sessions_are_excluded() {
+        let ws = tempfile::tempdir().unwrap();
+        let sessions_dir = ws.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(ws.path().join("memory").join("summaries")).unwrap();
+
+        // 直近（アイドル5分未満）のセッションは対象外
+        let path = sessions_dir.join("discord-recent.jsonl");
+        std::fs::write(&path, r#"{"role":"user","content":"hi"}"#).unwrap();
+
+        let result = find_next_session_needing_summary(&sessions_dir, ws.path());
+        assert!(result.is_none(), "recent sessions (< 5 min idle) must be excluded");
     }
 }
