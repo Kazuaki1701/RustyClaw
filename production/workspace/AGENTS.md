@@ -137,11 +137,17 @@ When a message is received, determine whether it is a **simple question or a tas
 | Deep research | "research" "compare" "reviews" "reputation" | `deep-research` |
 | Coding | "implement" "bug" "test" "refactor" | `coding-plan` |
 | Browser operations | dynamic sites, forms, login | `agent-browser` |
-| Google Workspace | Gmail/Calendar/Drive/Sheets | `gog` (MCP tools: `gog_gmail_*`, `gog_calendar_*`, `gog_drive_*`, `gog_sheets_*`, `gog_docs_*` — **never** use `run_shell_command gog`) |
+| Google Workspace | Gmail/Calendar/Drive/Sheets | `gws_calendar_list_events` / `gws_gmail_list_messages` ツールを使用 |
 | GitHub | PR/Issue/CI/review/repository/`github.com` URL | `github` |
 | Daily briefing | "morning briefing" "daily brief" "start my day" | `daily-briefing` |
 | Proactive monitoring | "patrol" "track this topic" "what's new in" | `topic-patrol` |
 | Complex / long-running | combinations of the above / spans sessions | `todo-tracker` + respective skills |
+
+## Google Calendar / Gmail — 制約
+
+- **すべてのカレンダー（自分・あゆみ様・ゆうき様）は読み取り専用。**
+- イベントの作成・変更・削除は一切行わないこと。
+- 使用できるツール: `gws_calendar_list_events`（参照のみ）、`gws_gmail_list_messages`（参照のみ）
 
 ## Language
 

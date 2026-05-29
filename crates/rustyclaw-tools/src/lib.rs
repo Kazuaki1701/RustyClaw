@@ -401,7 +401,7 @@ impl Tool for GwsCalendarTool {
     fn name(&self) -> &str { "gws_calendar_list_events" }
 
     fn description(&self) -> &str {
-        "List upcoming events from Google Calendar. Returns event title, start/end time, attendees, and location."
+        "List upcoming events from Google Calendar. Returns event title, start/end time, attendees, and location. READ-ONLY — do not attempt to create, update, or delete events. This applies to all calendars including shared ones (Ayumi, Yuki)."
     }
 
     fn parameters(&self) -> Value {
