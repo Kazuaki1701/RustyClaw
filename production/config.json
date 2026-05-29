@@ -46,7 +46,10 @@
         "-y",
         "@anthropic-ai/mcp-server-google-calendar"
       ],
-      "env": {}
+      "env": {
+        "GWS_WRITABLE_CALENDAR_ID": "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com",
+        "GWS_WRITABLE_CALENDAR_NAME": "AI AGENT"
+      }
     },
     "gmail": {
       "enabled": false,

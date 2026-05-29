@@ -462,27 +462,31 @@ impl Tool for GwsCalendarTool {
     }
 }
 
-/// AI AGENT カレンダー専用の書き込みツール（gws CLI subprocess 経由）
-/// このツールは "AI AGENT" カレンダー以外には一切書き込まない
+/// 書き込み許可カレンダー専用の書き込みツール（gws CLI subprocess 経由）
+/// calendar_id / calendar_name は config.json の GWS_WRITABLE_CALENDAR_ID / GWS_WRITABLE_CALENDAR_NAME で設定
 pub struct GwsCalendarWriteTool {
     gws_path: String,
+    calendar_id: String,
+    calendar_name: String,
+    description_cache: String,
 }
 
-const AI_AGENT_CALENDAR_ID: &str =
-    "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com";
-
 impl GwsCalendarWriteTool {
-    pub fn new(gws_path: String) -> Self {
-        Self { gws_path }
+    pub fn new(gws_path: String, calendar_id: String, calendar_name: String) -> Self {
+        let description_cache = format!(
+            "Create an event in the '{}' calendar ONLY (ID: {}). Do NOT use this for any other calendar. Use for scheduling agent tasks, reminders, or logging autonomous activities.",
+            calendar_name, calendar_id
+        );
+        Self { gws_path, calendar_id, calendar_name, description_cache }
     }
 }
 
 #[async_trait]
 impl Tool for GwsCalendarWriteTool {
-    fn name(&self) -> &str { "gws_ai_agent_calendar_insert" }
+    fn name(&self) -> &str { "gws_writable_calendar_insert" }
 
     fn description(&self) -> &str {
-        "Create an event in the 'AI AGENT' calendar ONLY. Do NOT use this for any other calendar. Use for scheduling agent tasks, reminders, or logging autonomous activities."
+        &self.description_cache
     }
 
     fn parameters(&self) -> Value {
@@ -531,7 +535,7 @@ impl Tool for GwsCalendarWriteTool {
             "start": { "dateTime": start },
             "end": { "dateTime": end }
         });
-        let params = serde_json::json!({ "calendarId": AI_AGENT_CALENDAR_ID });
+        let params = serde_json::json!({ "calendarId": self.calendar_id });
 
         let output = tokio::process::Command::new(&self.gws_path)
             .args(["calendar", "events", "insert",

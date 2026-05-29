@@ -663,9 +663,25 @@ impl Gateway {
             });
         if !gws_path.is_empty() {
             tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
-            tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarWriteTool::new(gws_path.clone())));
+
+            // 書き込み許可カレンダーが設定されている場合のみ登録
+            let writable_cal_id = config.mcp.get("google-calendar")
+                .and_then(|c| c.env.get("GWS_WRITABLE_CALENDAR_ID"))
+                .cloned()
+                .unwrap_or_default();
+            let writable_cal_name = config.mcp.get("google-calendar")
+                .and_then(|c| c.env.get("GWS_WRITABLE_CALENDAR_NAME"))
+                .cloned()
+                .unwrap_or_else(|| "writable".to_string());
+            if !writable_cal_id.is_empty() {
+                tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarWriteTool::new(
+                    gws_path.clone(), writable_cal_id, writable_cal_name,
+                )));
+                tracing::info!("Registered gws writable calendar tool.");
+            }
+
             tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path)));
-            tracing::info!("Registered native gws Google Workspace tools (calendar read/AI AGENT write/gmail read).");
+            tracing::info!("Registered native gws Google Workspace tools.");
         }
 
         let tool_registry = Arc::new(tool_registry);
