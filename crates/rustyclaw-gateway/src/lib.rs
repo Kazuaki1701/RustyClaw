@@ -133,16 +133,23 @@ pub struct LaneRegistry {
     config: Arc<StdMutex<Config>>,
     workspace_path: PathBuf,
     bus: Arc<MessageBus>,
+    tool_registry: Arc<rustyclaw_tools::ToolRegistry>,
 }
 
 impl LaneRegistry {
-    pub fn new(config: Config, workspace_path: PathBuf, bus: Arc<MessageBus>) -> Self {
+    pub fn new(
+        config: Config,
+        workspace_path: PathBuf,
+        bus: Arc<MessageBus>,
+        tool_registry: Arc<rustyclaw_tools::ToolRegistry>,
+    ) -> Self {
         Self {
             lanes: Arc::new(TokioMutex::new(HashMap::new())),
             gmn_sem: Arc::new(Semaphore::new(1)), // 全 gmn プロセス統合枠 (user + bg + flush を一本化)
             config: Arc::new(StdMutex::new(config)),
             workspace_path,
             bus,
+            tool_registry,
         }
     }
 
@@ -180,6 +187,7 @@ impl LaneRegistry {
         let config = self.config.clone();
         let workspace_path = self.workspace_path.clone();
         let bus = self.bus.clone();
+        let tool_registry = self.tool_registry.clone();
 
         tokio::spawn(async move {
             let mut rx = rx;
@@ -455,6 +463,7 @@ impl LaneRegistry {
                                     crate::queue_update_or_insert(&session_id, "Executing", 0.0, &desc);
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                    let tool_reg = tool_registry.clone();
                                     let exec_res = if session_id.starts_with("cron:session-summary:") {
                                         let target_session_id = &session_id["cron:session-summary:".len()..];
                                         pipeline.generate_session_summary(&workspace_path, target_session_id)
@@ -465,7 +474,7 @@ impl LaneRegistry {
                                                 tool_calls: None,
                                             })
                                     } else {
-                                        pipeline.execute(&workspace_path, &session_id, &content).await
+                                        pipeline.execute_with_tools(&workspace_path, &session_id, &content, &tool_reg).await
                                     };
                                     match exec_res {
                                         Ok(response) => {
@@ -590,11 +599,31 @@ impl Gateway {
             config.model_name
         );
 
-        // 2. MessageBus および LaneRegistry の初期化
-        let bus = Arc::new(MessageBus::new());
-        let registry = Arc::new(LaneRegistry::new(config.clone(), self.workspace_path.clone(), bus.clone()));
+        // 2. MCP Manager 初期化 (enabled な MCP サーバーに接続)
+        let mcp_manager = Arc::new(rustyclaw_mcp::McpManager::new());
+        if !config.mcp.is_empty() {
+            if let Err(e) = mcp_manager.connect_all(&config.mcp).await {
+                tracing::warn!("Some MCP servers failed to connect: {:#}", e);
+            }
+        }
+        // MCP ツールを ToolRegistry に登録
+        let mut tool_registry = rustyclaw_tools::ToolRegistry::new();
+        for mcp_tool in mcp_manager.get_tools().await {
+            tool_registry.register(mcp_tool);
+        }
+        let tool_registry = Arc::new(tool_registry);
+        tracing::info!("Tool registry initialized with {} tools.", tool_registry.tool_count());
 
-        // 3. DiscordConnector コネクタの起動
+        // 3. MessageBus および LaneRegistry の初期化
+        let bus = Arc::new(MessageBus::new());
+        let registry = Arc::new(LaneRegistry::new(
+            config.clone(),
+            self.workspace_path.clone(),
+            bus.clone(),
+            tool_registry.clone(),
+        ));
+
+        // 4. DiscordConnector コネクタの起動
         // トークンは config.discord_token を優先、次に環境変数 DISCORD_TOKEN、なければ dummy
         let discord_token = config.discord_token.clone()
             .or_else(|| std::env::var("DISCORD_TOKEN").ok())
@@ -618,7 +647,7 @@ impl Gateway {
         discord.start().await.context("Failed to start DiscordConnector")?;
         let discord_client = Arc::new(discord);
 
-        // 4. MessageBus イベント監視ループ (MessageBus -> LaneRegistry)
+        // 5. MessageBus イベント監視ループ (MessageBus -> LaneRegistry)
         let registry_clone = registry.clone();
         let mut rx_bus = bus.subscribe();
         tokio::spawn(async move {
@@ -631,7 +660,7 @@ impl Gateway {
             }
         });
 
-        // 5. Agent応答の配信監視ループ (LaneRegistry / MessageBus -> Discord)
+        // 6. Agent応答の配信監視ループ (LaneRegistry / MessageBus -> Discord)
         let mut rx_responses = bus.subscribe();
         let discord_sender = discord_client.clone();
         tokio::spawn(async move {
@@ -647,7 +676,7 @@ impl Gateway {
             }
         });
 
-        // 6. 各種バックグラウンドサービスの初期化・起動
+        // 7. 各種バックグラウンドサービスの初期化・起動
         
         // ① Systemd Watchdog の起動
         watchdog::WatchdogService::start();
@@ -662,7 +691,7 @@ impl Gateway {
         let health_server = health::HealthServer::new(8080, reload_tx, bus.clone(), self.workspace_path.clone());
         health_server.start().await.context("Failed to start HealthServer")?;
 
-        // 7. シグナルおよび HTTP リロードハンドリングループ
+        // 8. シグナルおよび HTTP リロードハンドリングループ
         let mut sig_hup = signal(SignalKind::hangup())
             .context("Failed to register SIGHUP listener")?;
         let mut sig_int = signal(SignalKind::interrupt())
@@ -783,7 +812,8 @@ mod tests {
             models: vec![],
         };
 
-        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone());
+        let tool_registry = Arc::new(rustyclaw_tools::ToolRegistry::new());
+        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry);
 
         // メッセージを投入
         registry.dispatch(SystemEvent::IncomingMessage {

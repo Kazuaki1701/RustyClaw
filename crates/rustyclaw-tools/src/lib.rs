@@ -53,6 +53,11 @@ impl ToolRegistry {
         self.tools.get(name)
     }
 
+    /// Returns the number of registered tools.
+    pub fn tool_count(&self) -> usize {
+        self.tools.len()
+    }
+
     /// Compiles all registered tools into LLM-compatible schemas.
     /// Returns a list of tool definitions compatible with the Anthropic/OpenAI tools parameter structure.
     pub fn to_llm_schemas(&self) -> Vec<Value> {
