@@ -664,25 +664,54 @@ impl Gateway {
         if !gws_path.is_empty() {
             tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
 
-            // 書き込み許可カレンダーリストを JSON 配列からパース
-            // config 形式: "GWS_WRITABLE_CALENDARS": "[{\"id\":\"...\",\"name\":\"...\"},...]"
-            let writable_calendars: Vec<(String, String)> = config.mcp
+            // 書き込み許可カレンダー ID リストをパース
+            // config 形式: "GWS_WRITABLE_CALENDAR_IDS": "id1,id2,..."
+            let writable_ids: Vec<String> = config.mcp
                 .get("google-calendar")
-                .and_then(|c| c.env.get("GWS_WRITABLE_CALENDARS"))
-                .and_then(|json_str| serde_json::from_str::<Vec<serde_json::Value>>(json_str).ok())
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|v| {
-                    let id   = v["id"].as_str()?.to_string();
-                    let name = v["name"].as_str().unwrap_or("").to_string();
-                    if id.is_empty() { None } else { Some((id, name)) }
-                })
-                .collect();
-            if !writable_calendars.is_empty() {
-                tracing::info!("Registering gws writable calendar tool ({} calendars).", writable_calendars.len());
-                tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarWriteTool::new(
-                    gws_path.clone(), writable_calendars,
-                )));
+                .and_then(|c| c.env.get("GWS_WRITABLE_CALENDAR_IDS"))
+                .map(|s| s.split(',').map(|id| id.trim().to_string()).filter(|id| !id.is_empty()).collect())
+                .unwrap_or_default();
+            if !writable_ids.is_empty() {
+                // 起動時に gws API からカレンダー名・説明を取得
+                let mut writable_calendars: Vec<(String, String, String)> = Vec::new();
+                for cal_id in &writable_ids {
+                    let params = serde_json::json!({ "calendarId": cal_id }).to_string();
+                    match tokio::process::Command::new(&gws_path)
+                        .args(["calendar", "calendarList", "get", "--params", &params, "--format", "json"])
+                        .output()
+                        .await
+                    {
+                        Ok(out) if out.status.success() => {
+                            let body = String::from_utf8_lossy(&out.stdout);
+                            if let Ok(d) = serde_json::from_str::<serde_json::Value>(&body) {
+                                let name = d["summary"].as_str().unwrap_or(cal_id).to_string();
+                                let desc = d["description"].as_str().unwrap_or("").to_string();
+                                tracing::info!("Calendar resolved: '{}' ({})", name, cal_id);
+                                writable_calendars.push((cal_id.clone(), name, desc));
+                            }
+                        }
+                        _ => {
+                            tracing::warn!("Failed to fetch calendar info for {}. Using ID as name.", cal_id);
+                            writable_calendars.push((cal_id.clone(), cal_id.clone(), String::new()));
+                        }
+                    }
+                }
+                if !writable_calendars.is_empty() {
+                    let allowed: Vec<(String, String)> = writable_calendars.iter()
+                        .map(|(id, name, desc)| {
+                            let label = if desc.is_empty() {
+                                name.clone()
+                            } else {
+                                format!("{} — {}", name, desc)
+                            };
+                            (id.clone(), label)
+                        })
+                        .collect();
+                    tracing::info!("Registering gws writable calendar tool ({} calendars).", allowed.len());
+                    tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarWriteTool::new(
+                        gws_path.clone(), allowed,
+                    )));
+                }
             }
 
             tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path)));
