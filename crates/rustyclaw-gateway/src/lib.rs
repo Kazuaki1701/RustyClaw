@@ -602,9 +602,7 @@ impl Gateway {
         // 2. MCP Manager 初期化 (enabled な MCP サーバーに接続)
         let mcp_manager = Arc::new(rustyclaw_mcp::McpManager::new());
         if !config.mcp.is_empty() {
-            if let Err(e) = mcp_manager.connect_all(&config.mcp).await {
-                tracing::warn!("Some MCP servers failed to connect: {:#}", e);
-            }
+            mcp_manager.connect_all(&config.mcp).await.ok();
         }
         // MCP ツールを ToolRegistry に登録
         let mut tool_registry = rustyclaw_tools::ToolRegistry::new();
@@ -740,12 +738,14 @@ impl Gateway {
                 // SIGINT: Graceful Shutdown
                 _ = sig_int.recv() => {
                     tracing::info!("Received SIGINT. Initiating graceful shutdown...");
+                    mcp_manager.close_all().await;
                     discord_client.shutdown().await;
                     break;
                 }
                 // SIGTERM: Graceful Shutdown
                 _ = sig_term.recv() => {
                     tracing::info!("Received SIGTERM. Initiating graceful shutdown...");
+                    mcp_manager.close_all().await;
                     discord_client.shutdown().await;
                     break;
                 }

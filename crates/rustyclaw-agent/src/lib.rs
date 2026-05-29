@@ -455,7 +455,7 @@ Rules:
         };
 
         let mut history = ConversationHistory::new(history_messages);
-        history.compact_if_needed(4000);
+        history.compact_if_needed(1500);
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
         let mut messages = Vec::new();
@@ -698,7 +698,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let mut history = ConversationHistory::new(history_messages);
-        history.compact_if_needed(4000);
+        history.compact_if_needed(1500);
 
         // 送信用メッセージリストの構築 (System + History)
         let mut active_messages = Vec::new();
@@ -728,8 +728,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             .to_llm_schemas()
             .iter()
             .map(|schema| rustyclaw_providers::ToolDef {
-                name: schema["name"].as_str().unwrap().to_string(),
-                description: schema["description"].as_str().unwrap().to_string(),
+                name: schema["name"].as_str().unwrap_or("").to_string(),
+                description: schema["description"].as_str().unwrap_or("").to_string(),
                 parameters: schema["input_schema"].clone(),
             })
             .collect();
@@ -841,7 +841,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let mut history = ConversationHistory::new(history_messages);
-        history.compact_if_needed(4000);
+        history.compact_if_needed(1500);
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
         let mut messages = Vec::new();
