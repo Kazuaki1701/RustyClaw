@@ -1,0 +1,82 @@
+{
+  "model_provider": "openai",
+  "model_name": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  "api_key": "$vault:cf-token",
+  "api_base_url": "$vault:cf-base-url",
+  "max_tokens": 2048,
+  "temperature": 0.7,
+  "models": [
+    {
+      "model_purpose": "default",
+      "model_provider": "openai",
+      "model_name": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "api_key": "$vault:cf-token",
+      "api_base_url": "$vault:cf-base-url",
+      "max_tokens": 2048,
+      "temperature": 0.7
+    },
+    {
+      "model_purpose": "summary",
+      "model_provider": "gmn",
+      "model_name": "gemini-2.5-flash",
+      "max_tokens": 1500,
+      "temperature": 0.3
+    },
+    {
+      "model_purpose": "memory",
+      "model_provider": "openai",
+      "model_name": "@cf/meta/llama-3-8b-instruct",
+      "api_key": "$vault:cf-token",
+      "api_base_url": "$vault:cf-base-url",
+      "max_tokens": 1500,
+      "temperature": 0.3
+    }
+  ],
+  "debug_dump": true,
+  "timezone" : "Asia/Tokyo",
+  "discord_token": "$vault:discord-token",
+  "discord_home_channel_id": "1485590891489005749",
+  "mcp": {
+    "google-calendar": {
+      "enabled": true,
+      "command": "npx",
+      "args": [
+        "-y",
+        "@anthropic-ai/mcp-server-google-calendar"
+      ],
+      "env": {}
+    },
+    "gmail": {
+      "enabled": true,
+      "command": "npx",
+      "args": [
+        "-y",
+        "@anthropic-ai/mcp-server-gmail"
+      ],
+      "env": {}
+    },
+    "karakeep": {
+      "enabled": true,
+      "command": "npx",
+      "args": [
+        "-y",
+        "@karakeep/mcp"
+      ],
+      "env": {
+        "KARAKEEP_API_KEY": "$vault:karakeep-api-key",
+        "KARAKEEP_SERVER_ADDR": "http://192.168.1.2:33000"
+      }
+    },
+    "obsidian": {
+      "enabled": true,
+      "command": "uvx",
+      "args": [
+        "mcp-obsidian"
+      ],
+      "env": {
+        "OBSIDIAN_API_KEY": "$vault:obsidian-api-key",
+        "OBSIDIAN_HOST": "192.168.1.2"
+      }
+    }
+  }
+}

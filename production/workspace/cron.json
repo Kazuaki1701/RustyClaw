@@ -1,0 +1,79 @@
+[
+  {
+    "id": "daily-briefing",
+    "name": "Daily Briefing",
+    "enabled": true,
+    "trigger": {
+      "type": "cron",
+      "expression": "05:00"
+    },
+    "prompt": "daily-briefing skill to execute. Aggregate yesterday's session summaries, today's calendar, email, and tasks into a prioritized briefing. Additionally, please include the schedules for あゆみ様 (ayabe.ayumi@gmail.com) and ゆうき様 (28hs0ibka0oa84810dupunrskk@group.calendar.google.com) from their shared calendars.🌸",
+    "channel_id": "1491909716945928392"
+  },
+  {
+    "id": "topic-patrol",
+    "name": "Topic Patrol",
+    "enabled": true,
+    "trigger": {
+      "type": "interval",
+      "minutes": 360
+    },
+    "prompt": "Run the topic-patrol skill.",
+    "channel_id": "1485590981251432560"
+  },
+  {
+    "id": "vitals-morning",
+    "name": "Vital Check Morning (06:00)",
+    "enabled": true,
+    "trigger": {
+      "type": "cron",
+      "expression": "06:00"
+    },
+    "prompt": "Run the vitals-coach skill to analyze Garmin data and provide a morning health summary and advice for K-sama. Focus on sleep quality and readiness for the day. Report to #daily-briefing (1491909716945928392).🌸",
+    "channel_id": "1491909716945928392"
+  },
+  {
+    "id": "vitals-evening",
+    "name": "Vital Check Evening (18:00)",
+    "enabled": true,
+    "trigger": {
+      "type": "cron",
+      "expression": "18:00"
+    },
+    "prompt": "Run the vitals-coach skill to analyze Garmin data and provide an evening activity summary and recovery advice for K-sama. Focus on today's stress levels and activity. Report to #daily-briefing (1491909716945928392).🌙",
+    "channel_id": "1491909716945928392"
+  },
+  {
+    "id": "vitals-night",
+    "name": "Vital Check Night (23:00)",
+    "enabled": true,
+    "trigger": {
+      "type": "cron",
+      "expression": "23:00"
+    },
+    "prompt": "Run the vitals-coach skill to analyze Garmin data and provide a night-time rest check and sleep advice for K-sama. Focus on Body Battery and winding down. Report to #daily-briefing (1491909716945928392).🛌",
+    "channel_id": "1491909716945928392"
+  },
+  {
+    "id": "karakeep-recommendation",
+    "name": "Karakeep Daily Recommendation",
+    "enabled": true,
+    "trigger": {
+      "type": "cron",
+      "expression": "04:45"
+    },
+    "prompt": "Daily Karakeep recommendation:\n1. Fetch recent bookmarks (last 3 days) from $KARAKEEP_SERVER_ADDR/api/v1/bookmarks.\n2. Select items matching user interests (AI, LLM, CLI, Cloudflare, Obsidian, etc.) from USER.md.\n3. Apply '_recommended' tag to selected IDs using 'bash scripts/502_karakeep-tag-items.sh _recommended <ids...>'.\n4. Log results to memory/logs/YYYY-MM-DD.md.",
+    "channel_id": "1491909716945928392"
+  },
+  {
+    "id": "karakeep-cleanup",
+    "name": "Karakeep Auto Cleanup (2 weeks stale RSS)",
+    "enabled": true,
+    "trigger": {
+      "type": "cron",
+      "expression": "04:00"
+    },
+    "prompt": "Run Karakeep auto-cleanup:\n1. Execute 'bash scripts/501_karakeep-cleanup.sh'.\n2. Log the output and summary to memory/logs/YYYY-MM-DD.md.",
+    "channel_id": "cron"
+  }
+]

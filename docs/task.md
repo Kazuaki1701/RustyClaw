@@ -280,16 +280,67 @@
   - 対処A: Go のクロスコンパイルで aarch64 向けバイナリをビルド (`GOOS=linux GOARCH=arm64 go build`)
   - 対処B: `config.json` の `summary` purpose を `openai`（Cloudflare）プロバイダに変更し gmn 依存を除去
 
-- `[ ]` **【要確認】RPi4 への Node.js インストール**
-  - MCP サーバー 4本（gmail, google-calendar, karakeep, obsidian）がすべて `npx` 経由で起動
-  - RPi4（aarch64）に Node.js LTS のインストールが必要（公式バイナリあり）
-  - 動作確認: `npx @anthropic-ai/mcp-server-gmail` が起動できることを確認
-
-- `[ ]` **【要確認】MCP サーバー同時起動時のメモリ使用量計測**
-  - 推定ピーク: RustyClaw(~200MB) + Node.js MCP × 4(~200–600MB) + gmn(~50MB) = 最大 ~850MB
-  - `MemoryMax=2G` 制限内の想定だが、実機で `systemctl status` + `free -h` で計測して確認
-  - Node.js MCP サーバーが常駐する場合は起動タイミング（on-demand vs 常駐）の見直しも検討
-
+- `[ ]` **【不要へ】RPi4 への Node.js インストール**
+  - **変更**: `gws` (Go製) への移行および Karakeep/Obsidian の Rust インプロセス直実装により、RPi4 での Node.js の稼働が完全に不要になります。
+- `[ ]` **【不要へ】MCP サーバー同時起動時のメモリ使用量計測**
+  - **変更**: 常駐外部プロセスが激減するため、メモリ上限 (2G) の圧迫懸念は完全に解消されます。
 - `[ ]` **【軽微】`Cargo.toml` のコメント誤記修正**
   - `opt-level = 3  # 速度優先（8GB あるのでサイズ不問）` → 正しくは 4GB
   - 実害なし、`cross build` 前に修正推奨
+
+---
+
+## Phase 13: Lightweight RPi4 Optimization (Go gws + Rust In-process Tools) 🚀 進行予定
+
+> 外部プロセス (Node.js/Python) を全廃し、シングル Go 常駐プロセス ＋ インプロセス Rust 呼び出しに移行する軽量化フェーズ。
+
+- `[ ]` **1. `gws` (Go製) による Google Workspace 連携への一本化**
+  - `[ ]` RPi4 向けに `gws` (aarch64) バイナリをクロスコンパイル
+  - `[ ]` `config.json` の `google-calendar` / `gmail` (npx) を削除し、単一 `google-workspace` (`gws mcp`) に統合
+  - `[ ]` Google Cloud Console から取得した `credentials.json` による認証の動作点検
+- `[ ]` **2. Karakeep の Rust インプロセス (直実装) 化**
+  - `[ ]` `rustyclaw-tools` に `reqwest` ベースの Karakeep ネイティブツールを追加
+  - `[ ]` `config.json` から `npx @karakeep/mcp` の定義を削除
+- `[ ]` **3. Obsidian の Rust インプロセス (直実装) 化**
+  - `[ ]` `rustyclaw-tools` に Local REST API (HTTP) を叩く `ObsidianTool` を追加
+  - `[ ]` `config.json` から `uvx mcp-obsidian` の定義を削除
+- `[ ]` **4. 【拡張】stn/rqmd によるローカル知識ベース RAG 構築**
+  - `[ ]` RPi4 向けに `rqmd` バイナリのビルドと配置
+  - `[ ]` `rustyclaw-tools` に `rqmd` CLI 経由で Vault を意味検索する `ObsidianSearch` ネイティブツールを追加
+  - `[ ]` `AGENTS.md` に ObsidianSearch を自律使用する指示を追加
+
+---
+
+## Phase 14: スクリプト本番移行と動的 cron.json スケジューラー実装 ✅ 完了 (2026-05-29)
+
+- `[x]` **本番環境用 scripts/ のマージと整理**
+  - `[x]` 旧環境の scripts ディレクトリから実用的な Garmin・Karakeep 連携スクリプトを本番環境 `production/workspace/scripts/` へ移行
+  - `[x]` スクリプトへの実行権限 (`+x`) 付与
+  - `[x]` 旧 `gog` 関連の不要な `setup-gog.sh` の削除と旧ビルド補助 `embed-templates.ts` の除外
+  - `[x]` スクリプトのファイル名をインデックス番号付きのハイフン区切り（`500_`〜`502_`）へ整理・リネーム
+- `[x]` **旧 patrol/ データの新環境移行**
+  - `[x]` 旧環境の `patrol/` 内に蓄積されていた `findings.md` およびローテーション管理ファイル `state.json` を本番用 `production/workspace/patrol/` と開発用 `workspace/patrol/` に完全マージ
+- `[x]` **動的 cron.json ホットリロード式スケジューラーの構築**
+  - `[x]` 定期ジョブのスケジュールとプロンプト・返信Discordチャンネルを記述した `cron.json` の新設（開発・本番）
+  - `[x]` `rustyclaw-gateway` の `CronService` 内に `cron.json` の毎分動的ロード・実行判定ロジックを実装
+  - `[x]` SQLite (`memory.db`) を用いた日付制限・インターバル最終実行日時の重複防止制御を実装
+- `[x]` **ドキュメントの整合性更新**
+  - `[x]` `AGENTS.md`（開発・本番）内の Karakeep スクリプトの参照コマンド例を、インデックス付きリネーム後の新ファイル名（`501_karakeep-cleanup.sh` 等）へ更新
+- `[x]` **品質検証**
+  - `[x]` `cargo check` および `cargo test` （全46テスト）がオールグリーンで成功することを確認
+
+---
+
+## 今後の保留・未完了課題
+
+### 1. RPi4 本番環境での新環境常駐化と稼働疎通確認
+- `[ ]` RPi4 側で `rustyclaw-gateway` デーモンを常駐起動させ、今回新設した動的 `cron.json` による定期ジョブ（特に Daily Briefing や Topic Patrol）が実際に発火して Discord へ正常に通知されることを確認・モニタリングする。
+
+### 2. Google Workspace (gws) への移行
+- `[ ]` Phase 13 の計画に基づき、Go 製の `gws` への完全移行を行い、MCP コネクタと認証・スケジュール連携テストを完了させる。
+
+### 3. 本番環境の自動バックアップ体制の確立 【現在保留中】
+- `[ ]` `production/workspace/` 内のデータベース（`memory.db`）や会話履歴（`sessions/*.jsonl`）、知識ベース（`patrol/findings.md`等）を保護するため、QNAP 等の NAS へ定時で自動バックアップを保存する仕組み（rsync やバックアップスクリプト等）を設計・導入する。
+
+### 4. MEMORY.md および知識構造の更なる整理
+- `[ ]` 稼働が蓄積される中で肥大化するナレッジファイルを整理するためのクリーンアップまたはスリム化自動トリガーの検討。

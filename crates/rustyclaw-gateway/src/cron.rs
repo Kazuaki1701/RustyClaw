@@ -1,7 +1,26 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
+use serde::Deserialize;
 use crate::{MessageBus, SystemEvent, Priority};
+
+#[derive(Debug, Clone, Deserialize)]
+struct Trigger {
+    #[serde(rename = "type")]
+    trigger_type: String,
+    expression: Option<String>,
+    minutes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Job {
+    id: String,
+    name: String,
+    enabled: bool,
+    trigger: Trigger,
+    prompt: String,
+    channel_id: String,
+}
 
 pub struct CronService {
     bus: Arc<MessageBus>,
@@ -181,6 +200,129 @@ impl CronService {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        });
+
+        // 4. Dynamic cron.json loader loop (every 60 seconds)
+        let bus_dynamic = self.bus.clone();
+        let db_path_dynamic = self.db_path.clone();
+        let ws_path_dynamic = self.db_path.parent().unwrap().to_path_buf();
+
+        tokio::spawn(async move {
+            tracing::info!("CronService: Starting 60-second Dynamic Cron settings loader...");
+            let mut interval = time::interval(Duration::from_secs(60));
+            
+            loop {
+                interval.tick().await;
+                
+                let cron_json_path = ws_path_dynamic.join("cron.json");
+                if !cron_json_path.exists() {
+                    continue;
+                }
+
+                let content = match std::fs::read_to_string(&cron_json_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("CronService: Failed to read cron.json: {:#}", e);
+                        continue;
+                    }
+                };
+
+                let jobs: Vec<Job> = match serde_json::from_str(&content) {
+                    Ok(j) => j,
+                    Err(e) => {
+                        tracing::error!("CronService: Failed to parse cron.json: {:#}", e);
+                        continue;
+                    }
+                };
+
+                let db = match rustyclaw_storage::DbManager::new(&db_path_dynamic) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::error!("CronService: Failed to open db in dynamic cron loop: {:#}", e);
+                        continue;
+                    }
+                };
+
+                for job in jobs {
+                    if !job.enabled {
+                        continue;
+                    }
+
+                    match job.trigger.trigger_type.as_str() {
+                        "cron" => {
+                            if let Some(expr) = &job.trigger.expression {
+                                let now_time = chrono::Local::now().format("%H:%M").to_string();
+                                if now_time == *expr {
+                                    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                                    let state_key = format!("cron_run_date:{}", job.id);
+                                    
+                                    let last_run = db.get_last_patrol_run(&state_key).unwrap_or(None);
+                                    if last_run.is_none() || last_run.unwrap() != today {
+                                        if let Err(e) = db.set_state_value(&state_key, &today) {
+                                            tracing::error!("CronService: Failed to set cron date state for {}: {:#}", job.id, e);
+                                        }
+
+                                        tracing::info!("CronService: Triggering dynamic cron job ({})...", job.name);
+                                        let event = SystemEvent::IncomingMessage {
+                                            session_id: format!("cron:{}", job.id),
+                                            user_id: "cron".to_string(),
+                                            channel_id: job.channel_id.clone(),
+                                            content: job.prompt.clone(),
+                                            priority: Priority::Background,
+                                        };
+                                        if let Err(e) = bus_dynamic.publish(event) {
+                                            tracing::error!("CronService: Failed to publish dynamic cron event for {}: {:#}", job.id, e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "interval" => {
+                            if let Some(minutes) = job.trigger.minutes {
+                                let state_key = format!("cron_last_run:{}", job.id);
+                                let now_sec = chrono::Local::now().timestamp();
+                                
+                                let last_run_str = db.get_last_patrol_run(&state_key).unwrap_or(None);
+                                let mut should_run = false;
+                                
+                                if let Some(last_str) = last_run_str {
+                                    if let Ok(last_sec) = last_str.parse::<i64>() {
+                                        let elapsed_min = (now_sec - last_sec) / 60;
+                                        if elapsed_min >= minutes as i64 {
+                                            should_run = true;
+                                        }
+                                    } else {
+                                        should_run = true;
+                                    }
+                                } else {
+                                    should_run = true;
+                                }
+
+                                if should_run {
+                                    if let Err(e) = db.set_state_value(&state_key, &now_sec.to_string()) {
+                                        tracing::error!("CronService: Failed to set cron last run time for {}: {:#}", job.id, e);
+                                    }
+
+                                    tracing::info!("CronService: Triggering dynamic interval job ({})...", job.name);
+                                    let event = SystemEvent::IncomingMessage {
+                                        session_id: format!("cron:{}", job.id),
+                                        user_id: "cron".to_string(),
+                                        channel_id: job.channel_id.clone(),
+                                        content: job.prompt.clone(),
+                                        priority: Priority::Background,
+                                    };
+                                    if let Err(e) = bus_dynamic.publish(event) {
+                                        tracing::error!("CronService: Failed to publish dynamic interval event for {}: {:#}", job.id, e);
+                                    }
+                                }
+                            }
+                        }
+                        other => {
+                            tracing::warn!("CronService: Unknown trigger type {} for job {}", other, job.id);
                         }
                     }
                 }

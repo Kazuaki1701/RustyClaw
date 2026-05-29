@@ -1,0 +1,27 @@
+{
+  "title": "Topic Patrol リンク切れ修正",
+  "slug": "topic-patrol-link-fix",
+  "tldr": "Topic Patrolスキルが報告するURLにリンク切れが含まれる問題を調査し、スキルの指示書（SKILL.md）にリンクの有効性チェックを義務付ける修正を検討しました。原因として、AIによるURLの推測や検索結果のデッドリンクが考えられるため、死活監視の徹底をルール化します。",
+  "topics": [
+    {
+      "topic": "リンク切れ報告の指摘",
+      "summary": "ユーザーから、Topic Patrolが報告したObsidian関連のURLがリンク切れ（404）であるとの指摘を受け、調査を開始しました。"
+    },
+    {
+      "topic": "原因調査とログ確認",
+      "summary": "2026-04-01の活動ログやpatrol/findings.mdを確認し、問題のURLが「Obsidian: Mobile 2.0」のトピックで共有されたことを特定しました。"
+    },
+    {
+      "topic": "SKILL.mdの改善案",
+      "summary": "スキルの指示書に「web_fetchによる内容確認」と「デッドリンクの報告禁止」を明示し、ハルシネーションによるURL生成を防ぐ対策を検討しました。"
+    }
+  ],
+  "decisions": [
+    "Topic PatrolのSKILL.mdにリンクの有効性確認を必須とするルールを追加する方針を決定。"
+  ],
+  "tags": [
+    "topic/patrol",
+    "topic/bug-fix",
+    "topic/obsidian"
+  ]
+}
