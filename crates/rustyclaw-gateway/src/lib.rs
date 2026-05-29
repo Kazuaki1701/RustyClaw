@@ -609,6 +609,45 @@ impl Gateway {
         for mcp_tool in mcp_manager.get_tools().await {
             tool_registry.register(mcp_tool);
         }
+
+        // Karakeep ネイティブツール登録（MCP 無効化後の代替）
+        let karakeep_addr = config.mcp.get("karakeep")
+            .and_then(|c| c.env.get("KARAKEEP_SERVER_ADDR"))
+            .cloned()
+            .unwrap_or_default();
+        let karakeep_key = config.mcp.get("karakeep")
+            .and_then(|c| c.env.get("KARAKEEP_API_KEY"))
+            .cloned()
+            .unwrap_or_default();
+        if !karakeep_addr.is_empty() && !karakeep_key.is_empty() {
+            tool_registry.register(Arc::new(rustyclaw_tools::KarakeepListTool::new(
+                karakeep_addr.clone(), karakeep_key.clone(),
+            )));
+            tool_registry.register(Arc::new(rustyclaw_tools::KarakeepTagTool::new(
+                karakeep_addr, karakeep_key,
+            )));
+            tracing::info!("Registered native Karakeep tools.");
+        }
+
+        // Obsidian ネイティブツール登録（MCP 無効化後の代替）
+        let obsidian_host = config.mcp.get("obsidian")
+            .and_then(|c| c.env.get("OBSIDIAN_HOST"))
+            .cloned()
+            .unwrap_or_default();
+        let obsidian_key = config.mcp.get("obsidian")
+            .and_then(|c| c.env.get("OBSIDIAN_API_KEY"))
+            .cloned()
+            .unwrap_or_default();
+        if !obsidian_host.is_empty() && !obsidian_key.is_empty() {
+            tool_registry.register(Arc::new(rustyclaw_tools::ObsidianSearchTool::new(
+                obsidian_host.clone(), obsidian_key.clone(),
+            )));
+            tool_registry.register(Arc::new(rustyclaw_tools::ObsidianReadTool::new(
+                obsidian_host, obsidian_key,
+            )));
+            tracing::info!("Registered native Obsidian tools.");
+        }
+
         let tool_registry = Arc::new(tool_registry);
         tracing::info!("Tool registry initialized with {} tools.", tool_registry.tool_count());
 
@@ -827,11 +866,25 @@ mod tests {
         // テスト環境で gmn CLI プロバイダを実行するとエラーになる（gmn がないため）か、
         // または mock プロバイダとして動く。
         // ここでは、dispatch が正常に完了しキューに入れられること自体を確認する。
-        
+
         // セッションごとの mpsc が登録されていることを確認
         let lanes = registry.lanes.lock().await;
         assert!(lanes.contains_key("session-abc"));
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_counts_native_tools() {
+        use rustyclaw_tools::ToolRegistry;
+        // KarakeepListTool + KarakeepTagTool registered when addr+key provided
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(
+            rustyclaw_tools::KarakeepListTool::new("http://localhost:33000".to_string(), "k".to_string())
+        ));
+        registry.register(Arc::new(
+            rustyclaw_tools::KarakeepTagTool::new("http://localhost:33000".to_string(), "k".to_string())
+        ));
+        assert_eq!(registry.tool_count(), 2);
     }
 }
