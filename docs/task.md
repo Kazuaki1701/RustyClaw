@@ -256,7 +256,7 @@
 
 ## 継続検討課題
 
-- `[ ]` **`gmn_sem > 1` の並列化復活（2026-05-28 積み残し）**
+- `[ ]` **`gmn_sem > 1` の並列化復活（2026-05-28 積み残し）【保留中】**
   - 現状 `gmn_sem=1` で全 gmn プロセスを直列化中（共有ファイル競合防止のため）
   - 並列化を再導入するには以下のいずれかが前提条件：
     - B案: `run-progress.json` によるソフト保護（TOCTOU 問題が残るため部分的対策）
@@ -331,20 +331,49 @@
 
 ---
 
-## 今後の保留・未完了課題
+## 今後の未完了課題（優先順）
 
-### 1. RPi4 本番環境での新環境常駐化と稼働疎通確認
+### 1. Google Workspace (gws) への移行（Phase 13 先行）
+- `[ ]` Phase 13 の計画に基づき、Go 製の `gws` への完全移行を行い、MCP コネクタと認証・スケジュール連携テストを完了させる。
+- `[ ]` Karakeep / Obsidian の Rust インプロセス (直実装) 化を完了し、外部常駐プロセス（Node.js/Python）を全廃する。
+
+### 2. RPi4 本番環境での新環境常駐化と稼働疎通確認
 - `[ ]` RPi4 側で `rustyclaw-gateway` デーモンを常駐起動させ、今回新設した動的 `cron.json` による定期ジョブ（特に Daily Briefing や Topic Patrol）が実際に発火して Discord へ正常に通知されることを確認・モニタリングする。
 
-### 2. Google Workspace (gws) への移行
-- `[ ]` Phase 13 の計画に基づき、Go 製の `gws` への完全移行を行い、MCP コネクタと認証・スケジュール連携テストを完了させる。
-
-### 3. 本番環境の自動バックアップ体制の確立 【現在保留中】
-- `[ ]` `production/workspace/` 内のデータベース（`memory.db`）や会話履歴（`sessions/*.jsonl`）、知識ベース（`patrol/findings.md`等）を保護するため、QNAP 等の NAS へ定時で自動バックアップを保存する仕組み（rsync やバックアップスクリプト等）を設計・導入する。
+### 3. Karakeep / Obsidian の本番 RPi4 安定稼働
+- `[ ]` 新環境の MCP クライアント (`rustyclaw-mcp`) において、Obsidian (REST APIベースのMCP) および Karakeep (セルフホストAPIベースのMCP) との接続・動作を本番環境（RPi4）で完全に安定稼働させる。
+- `[ ]` RPi4 側のメモリおよび CPU リソースの最適化（超軽量化）を完了させる。
 
 ### 4. MEMORY.md および知識構造の更なる整理
 - `[ ]` 稼働が蓄積される中で肥大化するナレッジファイルを整理するためのクリーンアップまたはスリム化自動トリガーの検討。
 
-### 5. Obsidian MCP および Karakeep MCP への対応と最適化
-- `[ ]` 新環境の MCP クライアント (`rustyclaw-mcp`) において、Obsidian (REST APIベースのMCP) および Karakeep (セルフホストAPIベースのMCP) との接続・動作を本番環境（RPi4）で完全に安定稼働させる。
-- `[ ]` Phase 13 の計画にある「Karakeep / Obsidian の Rust インプロセス (直実装) 化」の設計検討を進め、外部常駐プロセスの完全廃止による RPi4 側のメモリおよび CPU リソースの極限までの最適化（超軽量化）を完了させる。
+### 5. Cloudflare レートリミット対策の完全化（バースト再発防止）
+
+> 2026-05-29 稼働中に全 RATE LIMIT を突破するバーストが発生。調査の結果、以下3点のギャップが判明。
+
+- `[ ]` **【最重要】`OpenAiCompatProvider` の 429 で `GLOBAL_COOLDOWN` を設定する**
+  - 現状: `GLOBAL_COOLDOWN` の更新は `GmnCliProvider`（gmn/Gemini）にのみ実装されている
+  - 全モデルを Cloudflare (`OpenAiCompatProvider`) に移行した現在、429 を受けてもグローバルクールダウンゲートが一切発動しない
+  - 対策: `OpenAiCompatProvider::complete()` / `complete_stream()` の 429 検知時に `GLOBAL_COOLDOWN` を更新する（`GmnCliProvider` と同じパターンで実装）
+  - 対象: `crates/rustyclaw-providers/src/lib.rs`
+
+- `[ ]` **【重要】`reset_after()` に Cloudflare RPM 429 のパースを追加し、デフォルト待機時間を引き上げる**
+  - 現状: `reset_after()` が解析できる形式は Gemini 形式（`"Your Quota will reset after XXs"`）と CF neurons 日次制限のみ
+  - CF の RPM 制限 429（`{"errors":[{"code":10014,"message":"Too Many Requests"}]}` 等）は `None` を返し、フォールバックの指数バックオフ（5s→10s→20s）が適用される
+  - 動的バックオフの仕組み自体はゲートウェイの retry loop に存在するが、CF 形式が未パースのため `reset_after()` が機能しない
+  - 対策A: CF RPM 429 のエラーボディをパースしてリセット秒数を返す
+  - 対策B: CF 用デフォルト待機時間を 60s（RPM リセット想定）に引き上げる
+  - 対象: `crates/rustyclaw-providers/src/lib.rs`（`reset_after()`）
+
+- `[ ]` **【軽微】Session Summary の複数セッション同時発火を抑制する**
+  - 現状: 60s ごとにアイドル5分超の全 `.jsonl` を一括スキャンし、該当セッションを**全件いっぺんに**バスへ投入する
+  - 複数セッションが同時に条件を満たすと多数の BG イベントが積まれ、`gmn_sem(1)` 直列化でも連続 API 呼び出しが増大する
+  - 対策: 1回のスキャンにつき最大1件のみ発火し、次の発火は次の 60s チックまで待機する
+  - 対象: `crates/rustyclaw-gateway/src/cron.rs`（Session Summary ループ）
+
+---
+
+## 保留中課題
+
+### 本番環境の自動バックアップ体制の確立 【保留中】
+- `[ ]` `production/workspace/` 内のデータベース（`memory.db`）や会話履歴（`sessions/*.jsonl`）、知識ベース（`patrol/findings.md`等）を保護するため、QNAP 等の NAS へ定時で自動バックアップを保存する仕組み（rsync やバックアップスクリプト等）を設計・導入する。
