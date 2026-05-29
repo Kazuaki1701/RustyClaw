@@ -664,20 +664,25 @@ impl Gateway {
         if !gws_path.is_empty() {
             tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
 
-            // 書き込み許可カレンダーが設定されている場合のみ登録
-            let writable_cal_id = config.mcp.get("google-calendar")
-                .and_then(|c| c.env.get("GWS_WRITABLE_CALENDAR_ID"))
-                .cloned()
-                .unwrap_or_default();
-            let writable_cal_name = config.mcp.get("google-calendar")
-                .and_then(|c| c.env.get("GWS_WRITABLE_CALENDAR_NAME"))
-                .cloned()
-                .unwrap_or_else(|| "writable".to_string());
-            if !writable_cal_id.is_empty() {
+            // 書き込み許可カレンダーリストを JSON 配列からパース
+            // config 形式: "GWS_WRITABLE_CALENDARS": "[{\"id\":\"...\",\"name\":\"...\"},...]"
+            let writable_calendars: Vec<(String, String)> = config.mcp
+                .get("google-calendar")
+                .and_then(|c| c.env.get("GWS_WRITABLE_CALENDARS"))
+                .and_then(|json_str| serde_json::from_str::<Vec<serde_json::Value>>(json_str).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|v| {
+                    let id   = v["id"].as_str()?.to_string();
+                    let name = v["name"].as_str().unwrap_or("").to_string();
+                    if id.is_empty() { None } else { Some((id, name)) }
+                })
+                .collect();
+            if !writable_calendars.is_empty() {
+                tracing::info!("Registering gws writable calendar tool ({} calendars).", writable_calendars.len());
                 tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarWriteTool::new(
-                    gws_path.clone(), writable_cal_id, writable_cal_name,
+                    gws_path.clone(), writable_calendars,
                 )));
-                tracing::info!("Registered gws writable calendar tool.");
             }
 
             tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path)));

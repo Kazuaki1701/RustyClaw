@@ -47,8 +47,7 @@
         "@anthropic-ai/mcp-server-google-calendar"
       ],
       "env": {
-        "GWS_WRITABLE_CALENDAR_ID": "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com",
-        "GWS_WRITABLE_CALENDAR_NAME": "AI AGENT"
+        "GWS_WRITABLE_CALENDARS": "[{\"id\":\"6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com\",\"name\":\"AI AGENT\"},{\"id\":\"d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com\",\"name\":\"学習計画カレンダー\"}]"
       }
     },
     "gmail": {

@@ -463,21 +463,25 @@ impl Tool for GwsCalendarTool {
 }
 
 /// 書き込み許可カレンダー専用の書き込みツール（gws CLI subprocess 経由）
-/// calendar_id / calendar_name は config.json の GWS_WRITABLE_CALENDAR_ID / GWS_WRITABLE_CALENDAR_NAME で設定
+/// 許可カレンダーリストは config.json の GWS_WRITABLE_CALENDARS で設定
 pub struct GwsCalendarWriteTool {
     gws_path: String,
-    calendar_id: String,
-    calendar_name: String,
+    /// (calendar_id, calendar_name) の許可リスト
+    allowed: Vec<(String, String)>,
     description_cache: String,
 }
 
 impl GwsCalendarWriteTool {
-    pub fn new(gws_path: String, calendar_id: String, calendar_name: String) -> Self {
+    pub fn new(gws_path: String, allowed: Vec<(String, String)>) -> Self {
+        let names: Vec<String> = allowed.iter()
+            .map(|(id, name)| format!("'{}' ({})", name, id))
+            .collect();
         let description_cache = format!(
-            "Create an event in the '{}' calendar ONLY (ID: {}). Do NOT use this for any other calendar. Use for scheduling agent tasks, reminders, or logging autonomous activities.",
-            calendar_name, calendar_id
+            "Create an event in one of the writable calendars: {}. \
+             Do NOT use this for any other calendar.",
+            names.join(", ")
         );
-        Self { gws_path, calendar_id, calendar_name, description_cache }
+        Self { gws_path, allowed, description_cache }
     }
 }
 
@@ -519,14 +523,19 @@ impl Tool for GwsCalendarWriteTool {
     }
 
     async fn execute(&self, args: Value) -> ToolResult {
-        // 書き込み先 ID を検証 — config に設定された許可 ID と一致しない場合はブロック
+        // 書き込み先 ID を検証 — 許可リストに含まれない場合はブロック
         let requested_id = args["calendar_id"].as_str().unwrap_or("").to_string();
-        if requested_id != self.calendar_id {
+        let is_allowed = self.allowed.iter().any(|(id, _)| id == &requested_id);
+        if !is_allowed {
+            let allowed_list: Vec<String> = self.allowed.iter()
+                .map(|(id, name)| format!("'{}' ({})", name, id))
+                .collect();
             return ToolResult {
                 content: format!(
                     "WRITE BLOCKED: calendar '{}' is not in the writable list. \
-                     Only '{}' ({}) is allowed.",
-                    requested_id, self.calendar_name, self.calendar_id
+                     Allowed: {}",
+                    requested_id,
+                    allowed_list.join(", ")
                 ),
                 is_error: true,
             };
@@ -552,7 +561,7 @@ impl Tool for GwsCalendarWriteTool {
             "start": { "dateTime": start },
             "end": { "dateTime": end }
         });
-        let params = serde_json::json!({ "calendarId": self.calendar_id });
+        let params = serde_json::json!({ "calendarId": requested_id });
 
         let output = tokio::process::Command::new(&self.gws_path)
             .args(["calendar", "events", "insert",
@@ -839,11 +848,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_gws_calendar_write_blocks_unlisted_calendar() {
-        let allowed_id = "allowed-cal-id@group.calendar.google.com";
         let tool = GwsCalendarWriteTool::new(
             "/usr/local/bin/gws".to_string(),
-            allowed_id.to_string(),
-            "AI AGENT".to_string(),
+            vec![("allowed-cal-id@group.calendar.google.com".to_string(), "AI AGENT".to_string())],
         );
         // 許可 ID 以外への書き込みはブロックされる
         let result = tool.execute(serde_json::json!({
@@ -860,8 +867,9 @@ mod tests {
     async fn test_gws_calendar_write_requires_calendar_id() {
         let tool = GwsCalendarWriteTool::new(
             "/usr/local/bin/gws".to_string(),
-            "allowed-cal@group.calendar.google.com".to_string(),
-            "AI AGENT".to_string(),
+            vec![
+                ("allowed-cal@group.calendar.google.com".to_string(), "AI AGENT".to_string()),
+            ],
         );
         // calendar_id なし → ブロック（空文字列は許可 ID と一致しない）
         let result = tool.execute(serde_json::json!({
@@ -871,5 +879,29 @@ mod tests {
         })).await;
         assert!(result.is_error);
         assert!(result.content.contains("WRITE BLOCKED"));
+    }
+
+    #[tokio::test]
+    async fn test_gws_calendar_write_allows_multiple_calendars() {
+        let tool = GwsCalendarWriteTool::new(
+            "/usr/local/bin/gws".to_string(),
+            vec![
+                ("cal-a@group.calendar.google.com".to_string(), "AI AGENT".to_string()),
+                ("cal-b@group.calendar.google.com".to_string(), "学習計画カレンダー".to_string()),
+            ],
+        );
+        // 非許可 ID はブロック
+        let blocked = tool.execute(serde_json::json!({
+            "calendar_id": "personal@gmail.com",
+            "summary": "test",
+            "start_datetime": "2026-06-01T10:00:00+09:00",
+            "end_datetime":   "2026-06-01T11:00:00+09:00"
+        })).await;
+        assert!(blocked.is_error);
+        assert!(blocked.content.contains("WRITE BLOCKED"));
+
+        // description に両カレンダー名が含まれる
+        assert!(tool.description().contains("AI AGENT"));
+        assert!(tool.description().contains("学習計画カレンダー"));
     }
 }
