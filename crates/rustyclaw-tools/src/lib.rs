@@ -401,7 +401,7 @@ impl Tool for GwsCalendarTool {
     fn name(&self) -> &str { "gws_calendar_list_events" }
 
     fn description(&self) -> &str {
-        "List upcoming events from Google Calendar. Returns event title, start/end time, attendees, and location. READ-ONLY — do not attempt to create, update, or delete events. This applies to all calendars including shared ones (Ayumi, Yuki)."
+        "List upcoming events from Google Calendar. Returns event title, start/end time, attendees, and location. READ-ONLY for all calendars EXCEPT 'AI AGENT' (ID: 6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com) which is write-enabled. Do NOT write to any other calendar (かずあき/あゆみ/ゆうき/ファミリー etc)."
     }
 
     fn parameters(&self) -> Value {
@@ -458,6 +458,99 @@ impl Tool for GwsCalendarTool {
                 ToolResult { content: format!("gws calendar error: {}", err), is_error: true }
             }
             Err(e) => ToolResult { content: format!("gws calendar exec failed: {}", e), is_error: true },
+        }
+    }
+}
+
+/// AI AGENT カレンダー専用の書き込みツール（gws CLI subprocess 経由）
+/// このツールは "AI AGENT" カレンダー以外には一切書き込まない
+pub struct GwsCalendarWriteTool {
+    gws_path: String,
+}
+
+const AI_AGENT_CALENDAR_ID: &str =
+    "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com";
+
+impl GwsCalendarWriteTool {
+    pub fn new(gws_path: String) -> Self {
+        Self { gws_path }
+    }
+}
+
+#[async_trait]
+impl Tool for GwsCalendarWriteTool {
+    fn name(&self) -> &str { "gws_ai_agent_calendar_insert" }
+
+    fn description(&self) -> &str {
+        "Create an event in the 'AI AGENT' calendar ONLY. Do NOT use this for any other calendar. Use for scheduling agent tasks, reminders, or logging autonomous activities."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Event title"
+                },
+                "start_datetime": {
+                    "type": "string",
+                    "description": "Start datetime in RFC3339 format (e.g. '2026-06-01T10:00:00+09:00')"
+                },
+                "end_datetime": {
+                    "type": "string",
+                    "description": "End datetime in RFC3339 format"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Event description (optional)"
+                }
+            },
+            "required": ["summary", "start_datetime", "end_datetime"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let summary = match args["summary"].as_str() {
+            Some(s) => s.to_string(),
+            None => return ToolResult { content: "Missing summary".to_string(), is_error: true },
+        };
+        let start = match args["start_datetime"].as_str() {
+            Some(s) => s.to_string(),
+            None => return ToolResult { content: "Missing start_datetime".to_string(), is_error: true },
+        };
+        let end = match args["end_datetime"].as_str() {
+            Some(s) => s.to_string(),
+            None => return ToolResult { content: "Missing end_datetime".to_string(), is_error: true },
+        };
+        let description = args["description"].as_str().unwrap_or("").to_string();
+
+        let body = serde_json::json!({
+            "summary": summary,
+            "description": description,
+            "start": { "dateTime": start },
+            "end": { "dateTime": end }
+        });
+        let params = serde_json::json!({ "calendarId": AI_AGENT_CALENDAR_ID });
+
+        let output = tokio::process::Command::new(&self.gws_path)
+            .args(["calendar", "events", "insert",
+                   "--params", &params.to_string(),
+                   "--json", &body.to_string(),
+                   "--format", "json"])
+            .output()
+            .await;
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let body = String::from_utf8_lossy(&out.stdout).to_string();
+                ToolResult { content: body, is_error: false }
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr).to_string();
+                ToolResult { content: format!("gws calendar insert error: {}", err), is_error: true }
+            }
+            Err(e) => ToolResult { content: format!("gws calendar insert exec failed: {}", e), is_error: true },
         }
     }
 }

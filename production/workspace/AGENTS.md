@@ -145,9 +145,10 @@ When a message is received, determine whether it is a **simple question or a tas
 
 ## Google Calendar / Gmail — 制約
 
-- **すべてのカレンダー（自分・あゆみ様・ゆうき様）は読み取り専用。**
-- イベントの作成・変更・削除は一切行わないこと。
-- 使用できるツール: `gws_calendar_list_events`（参照のみ）、`gws_gmail_list_messages`（参照のみ）
+- **`AI AGENT` カレンダーのみ書き込み可能。** ツール: `gws_ai_agent_calendar_insert`
+- **その他のカレンダー（かずあき・あゆみ・ゆうき・ファミリー等）はすべて読み取り専用。**
+  イベントの作成・変更・削除は一切行わないこと。
+- 参照ツール: `gws_calendar_list_events`（読み取り専用）、`gws_gmail_list_messages`（読み取り専用）
 
 ## Language
 

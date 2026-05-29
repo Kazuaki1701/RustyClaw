@@ -663,8 +663,9 @@ impl Gateway {
             });
         if !gws_path.is_empty() {
             tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
+            tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarWriteTool::new(gws_path.clone())));
             tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path)));
-            tracing::info!("Registered native gws Google Workspace tools.");
+            tracing::info!("Registered native gws Google Workspace tools (calendar read/AI AGENT write/gmail read).");
         }
 
         let tool_registry = Arc::new(tool_registry);
