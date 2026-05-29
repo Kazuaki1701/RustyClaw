@@ -11,7 +11,8 @@ pub(crate) fn find_next_session_needing_summary(sessions_dir: &std::path::Path, 
     for entry in entries.flatten() {
         let path = entry.path();
         let filename = path.file_name()?.to_string_lossy().to_string();
-        if !filename.ends_with(".jsonl") || filename.starts_with("cron") {
+        // cron セッションと http-dashboard（Dashboard /chat）は除外
+        if !filename.ends_with(".jsonl") || filename.starts_with("cron") || filename.starts_with("http-") {
             continue;
         }
         let safe_session_id = filename.trim_end_matches(".jsonl").to_string();
@@ -358,12 +359,13 @@ mod tests {
         std::fs::create_dir_all(&sessions_dir).unwrap();
         std::fs::create_dir_all(ws.path().join("memory").join("summaries")).unwrap();
 
-        // cron プレフィックスのセッションは除外される
+        // cron セッションと http-dashboard は除外される
         make_old_jsonl(&sessions_dir, "cron-heartbeat");
         make_old_jsonl(&sessions_dir, "cron-daily-summary");
+        make_old_jsonl(&sessions_dir, "http-dashboard");
 
         let result = find_next_session_needing_summary(&sessions_dir, ws.path());
-        assert!(result.is_none(), "cron sessions must be excluded");
+        assert!(result.is_none(), "cron and http- sessions must be excluded");
     }
 
     #[test]
