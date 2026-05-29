@@ -334,8 +334,13 @@
   - バイナリ・vault・config・workspace を RPi4 に転送
   - `/etc/systemd/system/rustyclaw.service` 作成・`enable` 済み
   - 起動ログで `Tool registry initialized with 4 tools`・Discord 接続確認
-- `[ ]` **【未着手】`gws` (Go製) による Google Workspace 連携への一本化**
-  - `gws` バイナリのソースリポジトリ確認後に着手（保留中）
+- `[x]` **`gws` (Rust製) による Google Workspace 連携（subprocess 方式）**
+  - `gws` = `googleworkspace/cli`（Rust 製、Go 製ではなかった）
+  - `GwsCalendarTool` / `GwsGmailTool` を `rustyclaw-tools` に実装（subprocess 呼び出し）
+  - aarch64 クロスビルド済み・RPi4 `~/.local/bin/gws` に配置済み
+  - OAuth 認証済み credentials を RPi4 に転送済み（`token_valid: true`）
+  - RPi4 上で Calendar API 疎通確認済み
+  - `Tool registry initialized with 6 tools` ログ確認済み
 - `[ ]` **【未着手】stn/rqmd によるローカル知識ベース RAG 構築**
 
 ---
@@ -369,9 +374,8 @@
 ### 2. Cloudflare Workers Paid プランへの移行検討
 - `[ ]` CF 無料枠（10,000 neurons/日）を超過した場合のバックオフが正常動作することを確認済み。継続運用には Paid プランへのアップグレードを検討する。
 
-### 3. Google Workspace (gws) への移行
-- `[ ]` `gws` バイナリのソースリポジトリを確認・取得し、RPi4 向け aarch64 バイナリをビルドする。
-- `[ ]` `config.json` の `google-calendar` / `gmail` を `gws mcp` コマンドで `enabled: true` に更新し、認証テストを完了させる。
+### 3. Google Workspace (gws) — ✅ 完了
+- gws ネイティブツール（subprocess 方式）で Calendar / Gmail が RPi4 上で稼働中。
 
 ### 4. MEMORY.md および知識構造の更なる整理
 - `[ ]` 稼働が蓄積される中で肥大化するナレッジファイルを整理するためのクリーンアップまたはスリム化自動トリガーの検討。
