@@ -385,6 +385,150 @@ impl Tool for ObsidianReadTool {
     }
 }
 
+/// Google Calendar のイベント一覧を取得するツール（gws CLI subprocess 経由）
+pub struct GwsCalendarTool {
+    gws_path: String,
+}
+
+impl GwsCalendarTool {
+    pub fn new(gws_path: String) -> Self {
+        Self { gws_path }
+    }
+}
+
+#[async_trait]
+impl Tool for GwsCalendarTool {
+    fn name(&self) -> &str { "gws_calendar_list_events" }
+
+    fn description(&self) -> &str {
+        "List upcoming events from Google Calendar. Returns event title, start/end time, attendees, and location."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "calendar_id": {
+                    "type": "string",
+                    "description": "Calendar ID (default: 'primary')"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Max events to return (default: 10)"
+                },
+                "time_min": {
+                    "type": "string",
+                    "description": "Start of time range in RFC3339 format (default: now)"
+                }
+            },
+            "required": []
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let calendar_id = args["calendar_id"].as_str().unwrap_or("primary");
+        let max_results = args["max_results"].as_u64().unwrap_or(10);
+
+        let mut params = serde_json::json!({
+            "calendarId": calendar_id,
+            "maxResults": max_results,
+            "singleEvents": true,
+            "orderBy": "startTime"
+        });
+        if let Some(t) = args["time_min"].as_str() {
+            params["timeMin"] = Value::String(t.to_string());
+        } else {
+            params["timeMin"] = Value::String(chrono::Utc::now().to_rfc3339());
+        }
+
+        let output = tokio::process::Command::new(&self.gws_path)
+            .args(["calendar", "events", "list",
+                   "--params", &params.to_string(),
+                   "--format", "json"])
+            .output()
+            .await;
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let body = String::from_utf8_lossy(&out.stdout).to_string();
+                ToolResult { content: body, is_error: false }
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr).to_string();
+                ToolResult { content: format!("gws calendar error: {}", err), is_error: true }
+            }
+            Err(e) => ToolResult { content: format!("gws calendar exec failed: {}", e), is_error: true },
+        }
+    }
+}
+
+/// Gmail のメッセージ一覧を取得するツール（gws CLI subprocess 経由）
+pub struct GwsGmailTool {
+    gws_path: String,
+}
+
+impl GwsGmailTool {
+    pub fn new(gws_path: String) -> Self {
+        Self { gws_path }
+    }
+}
+
+#[async_trait]
+impl Tool for GwsGmailTool {
+    fn name(&self) -> &str { "gws_gmail_list_messages" }
+
+    fn description(&self) -> &str {
+        "Search and list Gmail messages. Returns sender, subject, snippet, and date. Use query syntax like 'is:unread', 'from:someone@example.com', 'subject:hello'."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Gmail search query (e.g. 'is:unread', 'from:boss@example.com')"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Max messages to return (default: 10)"
+                }
+            },
+            "required": []
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let query = args["query"].as_str().unwrap_or("is:unread");
+        let max_results = args["max_results"].as_u64().unwrap_or(10);
+
+        let params = serde_json::json!({
+            "userId": "me",
+            "q": query,
+            "maxResults": max_results
+        });
+
+        let output = tokio::process::Command::new(&self.gws_path)
+            .args(["gmail", "users", "messages", "list",
+                   "--params", &params.to_string(),
+                   "--format", "json"])
+            .output()
+            .await;
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let body = String::from_utf8_lossy(&out.stdout).to_string();
+                ToolResult { content: body, is_error: false }
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr).to_string();
+                ToolResult { content: format!("gws gmail error: {}", err), is_error: true }
+            }
+            Err(e) => ToolResult { content: format!("gws gmail exec failed: {}", e), is_error: true },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,5 +702,24 @@ mod tests {
         let result = tool.execute(serde_json::json!({})).await;
         assert!(result.is_error);
         assert!(result.content.contains("query") || result.content.contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_gws_calendar_tool_name_and_schema() {
+        let tool = GwsCalendarTool::new("/usr/local/bin/gws".to_string());
+        assert_eq!(tool.name(), "gws_calendar_list_events");
+        assert!(tool.description().len() > 10);
+        let params = tool.parameters();
+        assert_eq!(params["type"], "object");
+        assert!(params["properties"]["calendar_id"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_gws_gmail_tool_name_and_schema() {
+        let tool = GwsGmailTool::new("/usr/local/bin/gws".to_string());
+        assert_eq!(tool.name(), "gws_gmail_list_messages");
+        assert!(tool.description().len() > 10);
+        let params = tool.parameters();
+        assert!(params["properties"]["query"].is_object());
     }
 }

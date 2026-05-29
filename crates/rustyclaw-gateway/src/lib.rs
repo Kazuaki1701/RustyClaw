@@ -648,6 +648,25 @@ impl Gateway {
             tracing::info!("Registered native Obsidian tools.");
         }
 
+        // gws (Google Workspace) ネイティブツール登録
+        let gws_path = config.mcp.get("google-calendar")
+            .and_then(|c| c.env.get("GWS_PATH"))
+            .cloned()
+            .unwrap_or_else(|| {
+                // デフォルトパスを順番に探索
+                for p in &["/home/pi/.local/bin/gws", "/home/kazuaki/.local/bin/gws", "/usr/local/bin/gws"] {
+                    if std::path::Path::new(p).exists() {
+                        return p.to_string();
+                    }
+                }
+                String::new()
+            });
+        if !gws_path.is_empty() {
+            tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
+            tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path)));
+            tracing::info!("Registered native gws Google Workspace tools.");
+        }
+
         let tool_registry = Arc::new(tool_registry);
         tracing::info!("Tool registry initialized with {} tools.", tool_registry.tool_count());
 
