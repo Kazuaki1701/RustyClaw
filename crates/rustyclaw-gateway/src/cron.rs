@@ -72,10 +72,10 @@ impl CronService {
         let bus = self.bus.clone();
         let _db_path = self.db_path.clone();
 
-        // 1. Heartbeat patrol loop (every 10 minutes)
+        // 1. Heartbeat patrol loop (every 30 minutes)
         tokio::spawn(async move {
-            tracing::info!("CronService: Starting 10-minute Heartbeat scheduler...");
-            let mut interval = time::interval(Duration::from_secs(600)); // 10 minutes = 600s
+            tracing::info!("CronService: Starting 30-minute Heartbeat scheduler...");
+            let mut interval = time::interval(Duration::from_secs(1800)); // 30 minutes = 1800s
             
             // First tick fires immediately, let's skip or let it run
             interval.tick().await; 
