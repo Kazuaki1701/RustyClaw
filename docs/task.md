@@ -290,24 +290,53 @@
 
 ---
 
-## Phase 13: Lightweight RPi4 Optimization (Go gws + Rust In-process Tools) 🚀 進行予定
+## Phase 15: CF rate limit バースト対策 ✅ 完了 (2026-05-30)
 
-> 外部プロセス (Node.js/Python) を全廃し、シングル Go 常駐プロセス ＋ インプロセス Rust 呼び出しに移行する軽量化フェーズ。
+> 2026-05-29 稼働中に全 RATE LIMIT を突破するバーストが発生。根本原因を特定し3点の修正を実施。
 
-- `[ ]` **1. `gws` (Go製) による Google Workspace 連携への一本化**
-  - `[ ]` RPi4 向けに `gws` (aarch64) バイナリをクロスコンパイル
-  - `[ ]` `config.json` の `google-calendar` / `gmail` (npx) を削除し、単一 `google-workspace` (`gws mcp`) に統合
-  - `[ ]` Google Cloud Console から取得した `credentials.json` による認証の動作点検
-- `[ ]` **2. Karakeep の Rust インプロセス (直実装) 化**
-  - `[ ]` `rustyclaw-tools` に `reqwest` ベースの Karakeep ネイティブツールを追加
-  - `[ ]` `config.json` から `npx @karakeep/mcp` の定義を削除
-- `[ ]` **3. Obsidian の Rust インプロセス (直実装) 化**
-  - `[ ]` `rustyclaw-tools` に Local REST API (HTTP) を叩く `ObsidianTool` を追加
-  - `[ ]` `config.json` から `uvx mcp-obsidian` の定義を削除
-- `[ ]` **4. 【拡張】stn/rqmd によるローカル知識ベース RAG 構築**
-  - `[ ]` RPi4 向けに `rqmd` バイナリのビルドと配置
-  - `[ ]` `rustyclaw-tools` に `rqmd` CLI 経由で Vault を意味検索する `ObsidianSearch` ネイティブツールを追加
-  - `[ ]` `AGENTS.md` に ObsidianSearch を自律使用する指示を追加
+- `[x]` **`OpenAiCompatProvider` の 429 で `GLOBAL_COOLDOWN` を設定**
+  - `complete()` / `complete_stream()` の 429 検知時に `set_global_cooldown_from_error()` を呼ぶよう修正
+  - `GmnCliProvider` の重複コードも同ヘルパーに統一
+- `[x]` **`reset_after()` に CF RPM 429 パース追加・デフォルト 60s**
+  - `"too many requests"` パターンを検出して 60s を返すよう追加
+  - 実際の CF JSON ボディ（`internalCode: 4006`）形式のテストケース追加
+- `[x]` **Session Summary の複数セッション同時発火を抑制**
+  - `find_next_session_needing_summary()` を抽出し 1件/60s tick に制限
+  - `filetime` / `tempfile` を dev dependency に追加してテスト整備
+
+---
+
+## Phase 13: Lightweight RPi4 Optimization (Rust In-process Tools) ✅ 完了 (2026-05-30)
+
+> 外部プロセス (Node.js/Python) を全廃し、Rust インプロセス直実装 + RPi4 常駐化を完了。
+
+- `[x]` **Gateway を `execute_with_tools` + `McpManager` に切り替え**
+  - `McpManager` 起動・`ToolRegistry` 構築を `Gateway::run()` に組み込み
+  - 通常メッセージ dispatch を `pipeline.execute()` → `pipeline.execute_with_tools()` に変更
+  - SIGINT/SIGTERM で `mcp_manager.close_all()` 呼び出しを追加
+- `[x]` **Karakeep の Rust インプロセス (直実装) 化**
+  - `rustyclaw-tools` に `KarakeepListTool` / `KarakeepTagTool` を実装（`reqwest` ベース）
+  - `config.json` の `karakeep` MCP を `enabled: false` に変更
+- `[x]` **Obsidian の Rust インプロセス (直実装) 化**
+  - `rustyclaw-tools` に `ObsidianSearchTool` / `ObsidianReadTool` を実装（Local REST API）
+  - `config.json` の `obsidian` MCP を `enabled: false` に変更
+- `[x]` **全 MCP 外部プロセス無効化**
+  - 開発・本番 `config.json` の全4エントリを `enabled: false` に変更
+  - `google-calendar` / `gmail` も無効化（gws 移行まで）
+- `[x]` **production/config.json モデル統一**
+  - 全 purpose を `@cf/meta/llama-3-8b-instruct`（Cloudflare）に統一
+  - `gmn`/`gemini-2.5-flash` 依存を除去
+- `[x]` **aarch64 クロスビルド**
+  - `scripts/cross-build.sh` 作成
+  - `.cargo/config.toml` にリンカ設定追加
+  - `target/aarch64-unknown-linux-gnu/release/rustyclaw-cli`（26MB）生成確認
+- `[x]` **RPi4 (`rp1`) デプロイ・systemd 常駐化**
+  - バイナリ・vault・config・workspace を RPi4 に転送
+  - `/etc/systemd/system/rustyclaw.service` 作成・`enable` 済み
+  - 起動ログで `Tool registry initialized with 4 tools`・Discord 接続確認
+- `[ ]` **【未着手】`gws` (Go製) による Google Workspace 連携への一本化**
+  - `gws` バイナリのソースリポジトリ確認後に着手（保留中）
+- `[ ]` **【未着手】stn/rqmd によるローカル知識ベース RAG 構築**
 
 ---
 
@@ -333,43 +362,19 @@
 
 ## 今後の未完了課題（優先順）
 
-### 1. Google Workspace (gws) への移行（Phase 13 先行）
-- `[ ]` Phase 13 の計画に基づき、Go 製の `gws` への完全移行を行い、MCP コネクタと認証・スケジュール連携テストを完了させる。
-- `[ ]` Karakeep / Obsidian の Rust インプロセス (直実装) 化を完了し、外部常駐プロセス（Node.js/Python）を全廃する。
+### 1. RPi4 本番稼働の継続モニタリング
+- `[ ]` `cron.json` による定期ジョブ（Daily Briefing・Topic Patrol・Vital Check）が実際に発火して Discord へ正常に通知されることを確認・モニタリングする。
+- `[ ]` Karakeep / Obsidian ネイティブツールの実際のツール呼び出しが RPi4 上で正常動作することを確認する。
 
-### 2. RPi4 本番環境での新環境常駐化と稼働疎通確認
-- `[ ]` RPi4 側で `rustyclaw-gateway` デーモンを常駐起動させ、今回新設した動的 `cron.json` による定期ジョブ（特に Daily Briefing や Topic Patrol）が実際に発火して Discord へ正常に通知されることを確認・モニタリングする。
+### 2. Cloudflare Workers Paid プランへの移行検討
+- `[ ]` CF 無料枠（10,000 neurons/日）を超過した場合のバックオフが正常動作することを確認済み。継続運用には Paid プランへのアップグレードを検討する。
 
-### 3. Karakeep / Obsidian の本番 RPi4 安定稼働
-- `[ ]` 新環境の MCP クライアント (`rustyclaw-mcp`) において、Obsidian (REST APIベースのMCP) および Karakeep (セルフホストAPIベースのMCP) との接続・動作を本番環境（RPi4）で完全に安定稼働させる。
-- `[ ]` RPi4 側のメモリおよび CPU リソースの最適化（超軽量化）を完了させる。
+### 3. Google Workspace (gws) への移行
+- `[ ]` `gws` バイナリのソースリポジトリを確認・取得し、RPi4 向け aarch64 バイナリをビルドする。
+- `[ ]` `config.json` の `google-calendar` / `gmail` を `gws mcp` コマンドで `enabled: true` に更新し、認証テストを完了させる。
 
 ### 4. MEMORY.md および知識構造の更なる整理
 - `[ ]` 稼働が蓄積される中で肥大化するナレッジファイルを整理するためのクリーンアップまたはスリム化自動トリガーの検討。
-
-### 5. Cloudflare レートリミット対策の完全化（バースト再発防止）
-
-> 2026-05-29 稼働中に全 RATE LIMIT を突破するバーストが発生。調査の結果、以下3点のギャップが判明。
-
-- `[ ]` **【最重要】`OpenAiCompatProvider` の 429 で `GLOBAL_COOLDOWN` を設定する**
-  - 現状: `GLOBAL_COOLDOWN` の更新は `GmnCliProvider`（gmn/Gemini）にのみ実装されている
-  - 全モデルを Cloudflare (`OpenAiCompatProvider`) に移行した現在、429 を受けてもグローバルクールダウンゲートが一切発動しない
-  - 対策: `OpenAiCompatProvider::complete()` / `complete_stream()` の 429 検知時に `GLOBAL_COOLDOWN` を更新する（`GmnCliProvider` と同じパターンで実装）
-  - 対象: `crates/rustyclaw-providers/src/lib.rs`
-
-- `[ ]` **【重要】`reset_after()` に Cloudflare RPM 429 のパースを追加し、デフォルト待機時間を引き上げる**
-  - 現状: `reset_after()` が解析できる形式は Gemini 形式（`"Your Quota will reset after XXs"`）と CF neurons 日次制限のみ
-  - CF の RPM 制限 429（`{"errors":[{"code":10014,"message":"Too Many Requests"}]}` 等）は `None` を返し、フォールバックの指数バックオフ（5s→10s→20s）が適用される
-  - 動的バックオフの仕組み自体はゲートウェイの retry loop に存在するが、CF 形式が未パースのため `reset_after()` が機能しない
-  - 対策A: CF RPM 429 のエラーボディをパースしてリセット秒数を返す
-  - 対策B: CF 用デフォルト待機時間を 60s（RPM リセット想定）に引き上げる
-  - 対象: `crates/rustyclaw-providers/src/lib.rs`（`reset_after()`）
-
-- `[ ]` **【軽微】Session Summary の複数セッション同時発火を抑制する**
-  - 現状: 60s ごとにアイドル5分超の全 `.jsonl` を一括スキャンし、該当セッションを**全件いっぺんに**バスへ投入する
-  - 複数セッションが同時に条件を満たすと多数の BG イベントが積まれ、`gmn_sem(1)` 直列化でも連続 API 呼び出しが増大する
-  - 対策: 1回のスキャンにつき最大1件のみ発火し、次の発火は次の 60s チックまで待機する
-  - 対象: `crates/rustyclaw-gateway/src/cron.rs`（Session Summary ループ）
 
 ---
 
