@@ -101,8 +101,12 @@ impl CronService {
         let db_path_daily = self.db_path.clone();
         tokio::spawn(async move {
             tracing::info!("CronService: Starting Daily Summary checker...");
-            let mut interval = time::interval(Duration::from_secs(3600)); // Every hour = 3600s
-            
+            // 起動直後の同時発火を避けるため 90s 遅延してから開始
+            let mut interval = time::interval_at(
+                tokio::time::Instant::now() + Duration::from_secs(90),
+                Duration::from_secs(3600),
+            );
+
             loop {
                 interval.tick().await;
                 
@@ -158,7 +162,11 @@ impl CronService {
         let ws_path = self.db_path.parent().unwrap().to_path_buf(); // db_path is workspace/memory.db, parent is workspace
         tokio::spawn(async move {
             tracing::info!("CronService: Starting 60-second Session Summary scheduler...");
-            let mut interval = time::interval(Duration::from_secs(60));
+            // 起動直後の同時発火を避けるため 30s 遅延してから開始
+            let mut interval = time::interval_at(
+                tokio::time::Instant::now() + Duration::from_secs(30),
+                Duration::from_secs(60),
+            );
             
             loop {
                 interval.tick().await;
@@ -197,7 +205,11 @@ impl CronService {
 
         tokio::spawn(async move {
             tracing::info!("CronService: Starting 60-second Dynamic Cron settings loader...");
-            let mut interval = time::interval(Duration::from_secs(60));
+            // 起動直後の同時発火を避けるため 60s 遅延してから開始
+            let mut interval = time::interval_at(
+                tokio::time::Instant::now() + Duration::from_secs(60),
+                Duration::from_secs(60),
+            );
             
             loop {
                 interval.tick().await;
