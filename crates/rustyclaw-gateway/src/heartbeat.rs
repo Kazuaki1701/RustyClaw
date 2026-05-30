@@ -280,6 +280,34 @@ impl HeartbeatService {
                 (sid, ch)
             };
 
+            // proactive-posts.md への追記（最新 5 件・48h 以内を保持）
+            {
+                let posts_path = self.workspace_path.join("memory").join("proactive-posts.md");
+                let now_label = Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string();
+                let new_entry = format!("[{}] {}", now_label, response_content.replace('\n', " "));
+                let cutoff = Local::now() - chrono::Duration::hours(48);
+                let mut kept: Vec<String> = Vec::new();
+                if let Ok(existing) = fs::read_to_string(&posts_path) {
+                    for line in existing.lines() {
+                        if line.starts_with('[') {
+                            if let Some(end) = line.find(']') {
+                                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&line[1..end]) {
+                                    if dt.with_timezone(&Local) >= cutoff {
+                                        kept.push(line.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                kept.push(new_entry);
+                if kept.len() > 5 {
+                    kept = kept.split_off(kept.len() - 5);
+                }
+                let _ = fs::create_dir_all(posts_path.parent().unwrap());
+                let _ = rustyclaw_storage::atomic_write(&posts_path, kept.join("\n").as_bytes());
+            }
+
             // 1. Proactive Post 注入 (ユーザーの会話履歴ファイルへ記録)
             let logger = SessionLogger::new(&self.workspace_path);
             let assistant_msg = Message {
@@ -585,6 +613,30 @@ mod tests {
             "Second digest should contain response"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_proactive_post_writes_to_file() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let ws = dir.path();
+        let memory_dir = ws.join("memory");
+        std::fs::create_dir_all(ws.join("sessions"))?;
+        std::fs::create_dir_all(&memory_dir)?;
+
+        let db_path = memory_dir.join("memory.db");
+        let db = rustyclaw_storage::DbManager::new(&db_path)?;
+        let bus = std::sync::Arc::new(crate::MessageBus::new());
+        let config = rustyclaw_config::Config::default();
+        let svc = HeartbeatService::new(config, ws.to_path_buf(), bus);
+
+        // proactive（非 HEARTBEAT_OK）応答を処理
+        svc.process_heartbeat_response("雨が近づいています。傘をお持ちください。", &db)?;
+
+        let posts_file = memory_dir.join("proactive-posts.md");
+        assert!(posts_file.exists(), "proactive-posts.md が作成されるべき");
+        let content = std::fs::read_to_string(&posts_file)?;
+        assert!(content.contains("雨が近づいています"), "投稿内容が記録されるべき");
         Ok(())
     }
 
