@@ -99,6 +99,90 @@ impl DbManager {
         Ok(())
     }
 
+    pub fn get_usage_summary(&self, since: Option<&str>) -> serde_json::Value {
+        let where_clause = if since.is_some() { "WHERE created_at >= ?1" } else { "" };
+        let since_owned = since.map(|s| s.to_string());
+        let params: Vec<&dyn rusqlite::ToSql> = match since_owned.as_ref() {
+            Some(s) => vec![s],
+            None => vec![],
+        };
+
+        let total: (i64, i64, i64, i64) = self.conn.query_row(
+            &format!("SELECT COALESCE(COUNT(*),0), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0) FROM usage {}", where_clause),
+            params.as_slice(),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap_or((0, 0, 0, 0));
+
+        let mut by_model = serde_json::Map::new();
+        if let Ok(mut stmt) = self.conn.prepare(
+            &format!("SELECT model, COUNT(*), COALESCE(SUM(total_tokens),0) FROM usage {} GROUP BY model ORDER BY SUM(total_tokens) DESC LIMIT 10", where_clause)
+        ) {
+            if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            }) {
+                for row in rows.flatten() {
+                    by_model.insert(row.0, serde_json::json!({ "runs": row.1, "tokens": row.2 }));
+                }
+            }
+        }
+
+        serde_json::json!({
+            "total_runs": total.0,
+            "total_input_tokens": total.1,
+            "total_completion_tokens": total.2,
+            "total_tokens": total.3,
+            "by_model": by_model,
+        })
+    }
+
+    pub fn get_usage_timeline(&self, since: Option<&str>) -> Vec<serde_json::Value> {
+        let where_clause = if since.is_some() { "WHERE created_at >= ?1" } else { "" };
+        let since_owned = since.map(|s| s.to_string());
+        let params: Vec<&dyn rusqlite::ToSql> = match since_owned.as_ref() {
+            Some(s) => vec![s],
+            None => vec![],
+        };
+        let mut stmt = match self.conn.prepare(&format!(
+            "SELECT DATE(created_at) AS d, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0) FROM usage {} GROUP BY DATE(created_at) ORDER BY d ASC",
+            where_clause
+        )) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        stmt.query_map(params.as_slice(), |row| {
+            Ok(serde_json::json!({
+                "date": row.get::<_, String>(0)?,
+                "runs": row.get::<_, i64>(1)?,
+                "input_tokens": row.get::<_, i64>(2)?,
+                "completion_tokens": row.get::<_, i64>(3)?,
+                "tokens": row.get::<_, i64>(4)?,
+            }))
+        }).map(|rows| rows.flatten().collect()).unwrap_or_default()
+    }
+
+    pub fn get_usage_by_trigger(&self, since: Option<&str>) -> Vec<serde_json::Value> {
+        let where_clause = if since.is_some() { "WHERE created_at >= ?1" } else { "" };
+        let since_owned = since.map(|s| s.to_string());
+        let params: Vec<&dyn rusqlite::ToSql> = match since_owned.as_ref() {
+            Some(s) => vec![s],
+            None => vec![],
+        };
+        let mut stmt = match self.conn.prepare(&format!(
+            "SELECT trigger_type, COUNT(*), COALESCE(SUM(total_tokens),0) FROM usage {} GROUP BY trigger_type ORDER BY SUM(total_tokens) DESC",
+            where_clause
+        )) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        stmt.query_map(params.as_slice(), |row| {
+            Ok(serde_json::json!({
+                "trigger": row.get::<_, String>(0)?,
+                "runs": row.get::<_, i64>(1)?,
+                "tokens": row.get::<_, i64>(2)?,
+            }))
+        }).map(|rows| rows.flatten().collect()).unwrap_or_default()
+    }
+
     // --- Patrol State (Heartbeatパトロール実行時刻) 操作 ---
     pub fn update_patrol_state(&self, patrol_name: &str) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
@@ -383,6 +467,31 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "Hello");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_usage_aggregation() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        let db = DbManager::new(&tmp_dir.path().join("agg.db"))?;
+        db.record_usage("cron:heartbeat", 100, 50, 150, "model-a", "heartbeat", 0)?;
+        db.record_usage("discord-1", 200, 80, 280, "model-a", "discord", 0)?;
+
+        let summary = db.get_usage_summary(None);
+        assert_eq!(summary["total_runs"], 2);
+        assert_eq!(summary["total_tokens"], 430);
+        assert_eq!(summary["by_model"]["model-a"]["tokens"], 430);
+
+        let timeline = db.get_usage_timeline(None);
+        assert_eq!(timeline.len(), 1); // both rows on the same UTC day
+        assert_eq!(timeline[0]["tokens"], 430);
+
+        let triggers = db.get_usage_by_trigger(None);
+        assert_eq!(triggers.len(), 2);
+
+        // since-filter excluding everything (far future) yields zero runs
+        let empty = db.get_usage_summary(Some("2999-01-01"));
+        assert_eq!(empty["total_runs"], 0);
         Ok(())
     }
 

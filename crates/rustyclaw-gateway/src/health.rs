@@ -166,6 +166,34 @@ impl HealthServer {
                                     });
                                     ("200 OK".to_string(), json.to_string(), "application/json; charset=utf-8")
 
+                                } else if request.starts_with("GET /api/usage/summary") {
+                                    let since = extract_since_param(&request);
+                                    let db_path = workspace_path_clone.join("memory.db");
+                                    let json = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                        db.get_usage_summary(since.as_deref())
+                                    } else {
+                                        serde_json::json!({ "total_runs": 0, "total_tokens": 0, "by_model": {} })
+                                    };
+                                    ("200 OK".to_string(), json.to_string(), "application/json; charset=utf-8")
+
+                                } else if request.starts_with("GET /api/usage/timeline") {
+                                    let since = extract_since_param(&request);
+                                    let db_path = workspace_path_clone.join("memory.db");
+                                    let rows = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                        db.get_usage_timeline(since.as_deref())
+                                    } else { vec![] };
+                                    let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string());
+                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
+
+                                } else if request.starts_with("GET /api/usage/by-trigger") {
+                                    let since = extract_since_param(&request);
+                                    let db_path = workspace_path_clone.join("memory.db");
+                                    let rows = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                        db.get_usage_by_trigger(since.as_deref())
+                                    } else { vec![] };
+                                    let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string());
+                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
+
                                 // ── ダッシュボード & チャット ────────────────────
                                 } else if request.starts_with("GET /dashboard")
                                     || request.starts_with("GET / ")
@@ -277,6 +305,23 @@ fn get_latest_app_log() -> Option<PathBuf> {
         }
     }
     latest_file
+}
+
+/// GET /api/usage/summary?since=2026-05-01 の since パラメータを抽出する。
+/// 形式が `YYYY-MM-DD...`（先頭が数字・長さ10以上）の場合のみ採用する。
+fn extract_since_param(request: &str) -> Option<String> {
+    let first_line = request.lines().next()?;
+    let query_start = first_line.find('?')?;
+    let query = &first_line[query_start + 1..];
+    let end = query.find(' ').unwrap_or(query.len());
+    for pair in query[..end].split('&') {
+        if let Some(val) = pair.strip_prefix("since=") {
+            if val.len() >= 10 && val.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
 }
 
 // ── ダッシュボード HTML ────────────────────────────────────────────────────────
