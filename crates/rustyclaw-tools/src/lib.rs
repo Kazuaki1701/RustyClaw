@@ -104,17 +104,14 @@ impl Tool for KarakeepListTool {
     }
 
     fn description(&self) -> &str {
-        "List recent bookmarks from Karakeep. Returns title, URL, tags, and ID for each bookmark. Use to find bookmarks for recommendation or tagging."
+        "List Karakeep bookmarks (title, URL, tags, ID)."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Number of bookmarks to return (default: 20, max: 50)"
-                }
+                "limit": { "type": "integer", "description": "Max bookmarks (default: 20)" }
             },
             "required": []
         })
@@ -173,21 +170,15 @@ impl Tool for KarakeepTagTool {
     }
 
     fn description(&self) -> &str {
-        "Add a tag to a Karakeep bookmark by its ID. Use bookmark IDs from karakeep_list_bookmarks."
+        "Add a tag to a Karakeep bookmark by ID."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "bookmark_id": {
-                    "type": "string",
-                    "description": "The bookmark ID to tag"
-                },
-                "tag_name": {
-                    "type": "string",
-                    "description": "The tag name to apply (e.g. '_recommended')"
-                }
+                "bookmark_id": { "type": "string" },
+                "tag_name": { "type": "string", "description": "e.g. '_recommended'" }
             },
             "required": ["bookmark_id", "tag_name"]
         })
@@ -263,21 +254,15 @@ impl Tool for ObsidianSearchTool {
     fn name(&self) -> &str { "obsidian_search" }
 
     fn description(&self) -> &str {
-        "Search for notes in the Obsidian vault by keyword. Returns matching note paths and excerpts."
+        "Search Obsidian vault by keyword. Returns note paths and excerpts."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query string"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results to return (default: 10)"
-                }
+                "query": { "type": "string" },
+                "limit": { "type": "integer", "description": "Max results (default: 10)" }
             },
             "required": ["query"]
         })
@@ -341,17 +326,14 @@ impl Tool for ObsidianReadTool {
     fn name(&self) -> &str { "obsidian_read_note" }
 
     fn description(&self) -> &str {
-        "Read the full content of a specific note from the Obsidian vault by its path."
+        "Read a note from Obsidian vault by path."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Vault-relative path to the note (e.g. 'Folder/Note.md')"
-                }
+                "path": { "type": "string", "description": "e.g. 'Folder/Note.md'" }
             },
             "required": ["path"]
         })
@@ -401,25 +383,16 @@ impl Tool for GwsCalendarTool {
     fn name(&self) -> &str { "gws_calendar_list_events" }
 
     fn description(&self) -> &str {
-        "List upcoming events from Google Calendar. Returns event title, start/end time, attendees, and location. READ-ONLY for all calendars EXCEPT 'AI AGENT' (ID: 6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com) which is write-enabled. Do NOT write to any other calendar (かずあき/あゆみ/ゆうき/ファミリー etc)."
+        "List Google Calendar events (read-only). Use gws_writable_calendar_insert to create events."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "calendar_id": {
-                    "type": "string",
-                    "description": "Calendar ID (default: 'primary')"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Max events to return (default: 10)"
-                },
-                "time_min": {
-                    "type": "string",
-                    "description": "Start of time range in RFC3339 format (default: now)"
-                }
+                "calendar_id": { "type": "string", "description": "default: 'primary'" },
+                "max_results": { "type": "integer", "description": "default: 10" },
+                "time_min": { "type": "string", "description": "RFC3339 start (default: now)" }
             },
             "required": []
         })
@@ -477,8 +450,7 @@ impl GwsCalendarWriteTool {
             .map(|(id, name)| format!("'{}' ({})", name, id))
             .collect();
         let description_cache = format!(
-            "Create an event in one of the writable calendars: {}. \
-             Do NOT use this for any other calendar.",
+            "Create a Google Calendar event. Writable calendars: {}.",
             names.join(", ")
         );
         Self { gws_path, allowed, description_cache }
@@ -497,26 +469,11 @@ impl Tool for GwsCalendarWriteTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "calendar_id": {
-                    "type": "string",
-                    "description": "Target calendar ID. Must match the configured writable calendar."
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "Event title"
-                },
-                "start_datetime": {
-                    "type": "string",
-                    "description": "Start datetime in RFC3339 format (e.g. '2026-06-01T10:00:00+09:00')"
-                },
-                "end_datetime": {
-                    "type": "string",
-                    "description": "End datetime in RFC3339 format"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Event description (optional)"
-                }
+                "calendar_id": { "type": "string" },
+                "summary": { "type": "string", "description": "Event title" },
+                "start_datetime": { "type": "string", "description": "RFC3339 e.g. '2026-06-01T10:00:00+09:00'" },
+                "end_datetime": { "type": "string", "description": "RFC3339" },
+                "description": { "type": "string" }
             },
             "required": ["calendar_id", "summary", "start_datetime", "end_datetime"]
         })
@@ -601,21 +558,15 @@ impl Tool for GwsGmailTool {
     fn name(&self) -> &str { "gws_gmail_list_messages" }
 
     fn description(&self) -> &str {
-        "Search and list Gmail messages. Returns sender, subject, snippet, and date. Use query syntax like 'is:unread', 'from:someone@example.com', 'subject:hello'."
+        "List Gmail messages. Query syntax: 'is:unread', 'from:x@y.com', 'subject:z'."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Gmail search query (e.g. 'is:unread', 'from:boss@example.com')"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Max messages to return (default: 10)"
-                }
+                "query": { "type": "string", "description": "Gmail search query" },
+                "max_results": { "type": "integer", "description": "default: 10" }
             },
             "required": []
         })
@@ -684,17 +635,14 @@ impl Tool for GwsGmailDeleteTool {
     fn name(&self) -> &str { "gws_gmail_trash_message" }
 
     fn description(&self) -> &str {
-        "Move a Gmail message to trash. ONLY messages labeled with the configured deletable label are allowed. Use this to clean up messages the agent has already processed."
+        "Trash a Gmail message (only messages with the configured deletable label)."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "message_id": {
-                    "type": "string",
-                    "description": "Gmail message ID to trash"
-                }
+                "message_id": { "type": "string" }
             },
             "required": ["message_id"]
         })

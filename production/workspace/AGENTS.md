@@ -26,12 +26,7 @@ When you learn a lesson or make a mistake, document it so future-you doesn't rep
 
 - Secrets or credentials (use Vault)
 - Routine tool call results
-- Transient status (current time, temporary state)
-
-### Searching Memory
-
-- `qmd_query` — hybrid search (BM25 + vector + reranking, supports `intent` parameter for disambiguation)
-- `qmd_get` — read full document content by path or docid from search results
+- Transient status
 
 ## Time
 
@@ -47,27 +42,9 @@ When you learn a lesson or make a mistake, document it so future-you doesn't rep
   - Output artifacts to the session working directory under `runs/`
   - Exception: persistent files such as MEMORY.md, memory/*.md are edited directly at the workspace root
 
-### Sending files and media to the user via chat
+### Sending files via chat
 
-To deliver a file or media URL in the channel reply (Discord / Slack / Telegram), include one or more `MEDIA:` lines **anywhere in your response text**:
-
-```
-File created.
-
-MEDIA:output/report.csv
-MEDIA:output/chart.png
-MEDIA:https://example.com/screenshot.png
-```
-
-- **Local paths** — relative to the workspace root, or absolute. Sent as file attachments.
-- **Remote URLs** — `http://` or `https://`. Embedded/unfurled natively by the platform.
-- `MEDIA:` lines are stripped from the visible message before delivery.
-- Missing local paths are silently skipped.
-- Works on every supported channel (Discord, Slack, Telegram).
-
-## Preview Server
-
-RustyClaw does not provide a preview server. For file sharing, attach files directly via `MEDIA:` lines.
+Include `MEDIA:<path-or-url>` lines in response text to attach files or embed URLs. Lines are stripped before delivery.
 
 ## Heartbeat Mode
 
@@ -84,40 +61,9 @@ Follow `HEARTBEAT.md` exactly. Each check produces one of three outcomes:
 - Informational items are always logged, never sent as alerts — they surface in the daily summary or when the user asks
 
 
-## Secret Management (Vault)
-
-**The agent never handles secret values directly.** Tokens, API keys, passwords, etc. are managed through the vault.
-
-### Principles
-
-- Secret fields in config.json contain `$vault:<key-name>` references (not plaintext tokens)
-- Values seen by the agent via `config show` are masked as `***`
-- **Never ask the user to paste tokens directly**
-
-### Guiding the user to register secrets
-
-Provide the following CLI commands to the user (the agent does not run these itself):
-
-```bash
-# Save a secret to the vault (entered with echo-off)
-geminiclaw vault set <key-name>
-
-# Set a $vault: reference in config.json
-geminiclaw config set <dot.path> '$vault:<key-name>'
-```
-
-Example: Registering a Discord token
-```bash
-geminiclaw vault set discord-token
-geminiclaw config set channels.discord.token '$vault:discord-token'
-```
-
-### Migrating existing plaintext tokens to the vault
-
-```bash
-geminiclaw vault migrate channels.discord.token discord-token
-geminiclaw config set channels.discord.token '$vault:discord-token'
-```
+// ## Secret Management (Vault)
+// Secrets are stored in vault.enc. The agent never handles secret values directly.
+// Use `rustyclaw vault set <key>` to register secrets.
 
 ## Task Processing Flow
 
@@ -125,39 +71,25 @@ When a message is received, determine whether it is a **simple question or a tas
 
 ### For tasks
 
-**Before execution**, declare the following:
-1. If the scope is ambiguous, has multiple interpretations, or involves irreversible operations — **ask first**
-2. **Define Success Criteria** — state verifiable criteria such as "done when X is achieved"
-3. Select and execute the appropriate skill (see table below)
+Clarify scope if ambiguous or irreversible. State success criteria before acting. Report unexpected issues rather than brute-forcing.
 
-**After execution**, verify against the Success Criteria and return a summary. If unexpected issues arise, stop and report to the user (do not brute-force).
-
-| Task type | Trigger keywords | Skill |
-|---|---|---|
-| Deep research | "research" "compare" "reviews" "reputation" | `deep-research` |
-| Coding | "implement" "bug" "test" "refactor" | `coding-plan` |
-| Browser operations | dynamic sites, forms, login | `agent-browser` |
-| Google Workspace | Gmail/Calendar/Drive/Sheets | `gog` (MCP tools: `gog_gmail_*`, `gog_calendar_*`, `gog_drive_*`, `gog_sheets_*`, `gog_docs_*` — **never** use `run_shell_command gog`) |
-| GitHub | PR/Issue/CI/review/repository/`github.com` URL | `github` |
-| Daily briefing | "morning briefing" "daily brief" "start my day" | `daily-briefing` |
-| Proactive monitoring | "patrol" "track this topic" "what's new in" | `topic-patrol` |
-| Complex / long-running | combinations of the above / spans sessions | `todo-tracker` + respective skills |
+| Task type | Skill |
+|---|---|
+| Research / compare | `deep-research` |
+| Coding | `coding-plan` |
+| Google Workspace | gws tools (`gws_calendar_*`, `gws_gmail_*`) |
+| Daily briefing | `daily-briefing` |
+| Topic patrol | `topic-patrol` |
 
 ## Language
 
 - **Always respond in the user's preferred language** — check `USER.md` for `Preferred language`
 - If the user writes in Japanese, reply in Japanese. If English, reply in English.
 
-## Karakeep Operation Scripts
+## Karakeep Scripts
 
-When performing Karakeep maintenance or batch operations, invoke the local scripts under `workspace/scripts/`:
-
-*   **Karakeep Cleanup (deletion of old/unprotected RSS items)**:
-    *   Command: `bash workspace/scripts/501_karakeep-cleanup.sh`
-    *   Trigger: Periodically or when asked to clean up old bookmarks. Deletes RSS items older than 14 days without favs/protect tags.
-*   **Karakeep Tagging (batch tagging of bookmarks)**:
-    *   Command: `bash workspace/scripts/502_karakeep-tag-items.sh <tag_name> <id1> <id2> ...`
-    *   Trigger: When asked to apply a specific tag to a list of bookmark IDs.
+- Cleanup: `bash workspace/scripts/501_karakeep-cleanup.sh`
+- Tagging: `bash workspace/scripts/502_karakeep-tag-items.sh <tag> <id...>`
 
 ## Interactive Mode
 
