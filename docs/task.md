@@ -431,6 +431,54 @@
 
 ---
 
+## Phase 17: Vault コマンド実装 & 本番環境 symlink 再構成 ✅ 完了 (2026-05-30)
+
+### #1 rustyclaw vault コマンドの実装 ✅
+
+- `[x]` **`vault set <key>`** — echo-off でシークレットを入力・保存
+- `[x]` **`vault get <key>`** — シークレット値を stdout に出力
+- `[x]` **`vault list`** — 保存済みキー一覧（値は非表示）
+- `[x]` **`vault delete <key>`** — シークレットを削除
+- `[x]` **`vault status`** — バックエンド・件数表示、legacy vault.json 検出
+- `[x]` **`vault migrate <config-key> <vault-key>`** — config.json の平文トークンを vault に移行
+- `[x]` **`vault import-json`** — 既存 vault.json を vault.enc に一括移行（AgyClaw にない独自コマンド）
+- `[x]` **vault 暗号化** — AES-256-GCM + PBKDF2-HMAC-SHA256（100,000 rounds）、保存先 `~/.rustyclaw/vault.enc`（chmod 600）
+- `[x]` **後方互換フォールバック** — vault.enc 未作成時は vault.json を参照
+
+> `rustyclaw-config/src/vault.rs` に実装。参照実装: AgyClaw `agyclaw/src/vault.rs`
+
+### #2 `~/.rustyclaw → production/` symlink 再構成 ✅
+
+- `[x]` **vault.json → vault.enc 移行** — `vault import-json` で 6 件移行・vault.json 削除
+- `[x]` **workspace rsync** — `~/.rustyclaw/workspace/` → `production/workspace/`（memory.db・memory/・sessions/ 同期）
+- `[x]` **symlink 切り替え** — `~/.rustyclaw → ~/Projects/RustyClaw/production/`
+- `[x]` **後処理** — `production/.gitignore` に `rustyclaw.log.*` 追加、`deploy.sh` 更新
+
+> 完了後: 開発機の `production/` 編集（config.json・AGENTS.md 等）が rp1 に即時反映される。
+
+---
+
+## Phase 18: デバッグ機能・コンテキスト最適化 ✅ 完了 (2026-05-30)
+
+- `[x]` **`--no-agent` デバッグモード**
+  - CLI グローバルフラグ `--no-agent`（`RUSTYCLAW_NO_AGENT=1` 環境変数でも同等）
+  - `NoopProvider` を実装 — API 送信なし、送信予定メッセージ内容を INFO ログに出力
+  - `agent` / `gateway` 両サブコマンドに対応（env var 経由で Gateway 内部にも伝播）
+  - vault テストや CLI 動作確認など API 不要な場面で積極的に使用すること
+
+- `[x]` **Heartbeat 専用軽量コンテキスト**
+  - `build_heartbeat_context()` を実装 — SOUL.md + MEMORY.md + HEARTBEAT.md のみ送信
+  - AGENTS.md（4,322 chars）・USER.md（3,981 chars）を除外
+  - 推定削減: 16,432 → 約 9,400 chars（▲43%）
+
+- `[x]` **`//` コメントによる API 送信除外**
+  - `strip_comments()` 関数を `Pipeline` に追加（行頭 `//`、インデント許容）
+  - `build_system_context()` / `build_heartbeat_context()` 両方に適用
+  - SOUL.md を英語優先・日本語訳を `//` コメント化（16 箇所、約 26% 削減）
+  - テスト 3 件追加
+
+---
+
 ## 保留中課題
 
 ### 本番環境の自動バックアップ体制の確立 【保留中】

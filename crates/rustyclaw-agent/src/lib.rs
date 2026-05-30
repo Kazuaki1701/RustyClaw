@@ -25,6 +25,14 @@ impl Pipeline {
     }
 
     /// 各種人格定義ファイルを読み込んでシステムプロンプト（Context）を構築する
+    /// 行頭が // で始まる行（インデント許容）を除去する
+    fn strip_comments(content: &str) -> String {
+        content.lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
         // ── 現在日時を1行で先頭に注入（rate limit 対策で最小文字数）──
         let now = chrono::Local::now();
@@ -43,7 +51,7 @@ impl Pipeline {
                 }
             };
 
-            context.push_str(&format!("# {}\n\n{}\n\n", filename, content));
+            context.push_str(&format!("# {}\n\n{}\n\n", filename, Self::strip_comments(&content)));
         }
 
         Ok(context)
@@ -431,6 +439,79 @@ Rules:
 
         tracing::info!(session = %session_id, "memory flush: completed");
         Ok(())
+    }
+
+    /// Heartbeat 専用の軽量システムコンテキストを構築する（SOUL + MEMORY + HEARTBEAT のみ）
+    pub fn build_heartbeat_context(&self, workspace_dir: &Path) -> Result<String> {
+        let now = chrono::Local::now();
+        let runtime_block = format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z"));
+        let files = ["SOUL.md", "MEMORY.md", "HEARTBEAT.md"];
+        let mut context = runtime_block;
+        for filename in &files {
+            let path = workspace_dir.join(filename);
+            let content = match fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(e) => {
+                    tracing::warn!("Failed to read context file {:?}: {}. Using empty content.", path, e);
+                    String::new()
+                }
+            };
+            context.push_str(&format!("# {}\n\n{}\n\n", filename, Self::strip_comments(&content)));
+        }
+        Ok(context)
+    }
+
+    /// Heartbeat 専用実行（軽量コンテキスト使用、履歴なし）
+    pub async fn execute_heartbeat(
+        &self,
+        workspace_dir: &Path,
+        session_id: &str,
+        user_message: &str,
+    ) -> Result<LlmResponse> {
+        let system_context = self.build_heartbeat_context(workspace_dir)?;
+
+        let logger = SessionLogger::new(workspace_dir);
+        let mut messages = Vec::new();
+        messages.push(Message {
+            role: "system".to_string(),
+            content: system_context,
+            name: None,
+            ..Default::default()
+        });
+        let user_msg = Message {
+            role: "user".to_string(),
+            content: user_message.to_string(),
+            name: None,
+            ..Default::default()
+        };
+        messages.push(user_msg.clone());
+
+        self.dump_request(workspace_dir, &messages);
+
+        let opts = CompletionOptions {
+            model: self.config.model_name.clone(),
+            max_tokens: self.config.max_tokens,
+            temperature: self.config.temperature,
+            timeout: Duration::from_secs(900),
+        };
+
+        let mut response = self.provider.complete(&messages, &[], &opts).await?;
+        response.content = filter_json_leaks(&response.content);
+
+        logger.append_message(session_id, &user_msg)
+            .context("Failed to save user message in session log (fail-closed)")?;
+        let assistant_msg = Message {
+            role: response.role.clone(),
+            content: response.content.clone(),
+            name: None,
+            ..Default::default()
+        };
+        logger.append_message(session_id, &assistant_msg)
+            .context("Failed to save assistant response in session log (fail-closed)")?;
+
+        self.dump_response(workspace_dir, &response.content, &response.role);
+
+        Ok(response)
     }
 
     /// 通常（一括）の対話実行
@@ -1461,5 +1542,41 @@ mod tests {
 
         let _ = server_task.await;
         Ok(())
+    }
+
+    #[test]
+    fn test_strip_comments_removes_slashslash_lines() {
+        let input = "\
+Be genuine.\n\
+  // 形骸化した丁寧さではなく、真に役立つこと。\n\
+Have opinions.\n\
+// 意見を持つこと。\n\
+Keep it short.\n\
+";
+        let result = Pipeline::strip_comments(input);
+        assert!(!result.contains("形骸化"));
+        assert!(!result.contains("意見を持つこと"));
+        assert!(result.contains("Be genuine."));
+        assert!(result.contains("Have opinions."));
+        assert!(result.contains("Keep it short."));
+    }
+
+    #[test]
+    fn test_strip_comments_preserves_url_with_slashes() {
+        // 行中の // (URL等) は除去しない — 行頭 // のみ対象
+        let input = "See https://example.com for details.\n// コメント行\n";
+        let result = Pipeline::strip_comments(input);
+        assert!(result.contains("https://example.com"));
+        assert!(!result.contains("コメント行"));
+    }
+
+    #[test]
+    fn test_strip_comments_handles_indented() {
+        let input = "- Item\n  // インデントコメント\n- Next\n\t// タブインデント\n";
+        let result = Pipeline::strip_comments(input);
+        assert!(!result.contains("インデントコメント"));
+        assert!(!result.contains("タブインデント"));
+        assert!(result.contains("- Item"));
+        assert!(result.contains("- Next"));
     }
 }

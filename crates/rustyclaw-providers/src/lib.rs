@@ -775,8 +775,61 @@ impl LlmProvider for GmnCliProvider {
     }
 }
 
+/// デバッグ用 No-op プロバイダ（--no-agent / RUSTYCLAW_NO_AGENT=1 時に使用）
+/// API への送信は行わず、受信したメッセージ内容をログ出力してダミー応答を返す
+pub struct NoopProvider;
+
+#[async_trait]
+impl LlmProvider for NoopProvider {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        _opts: &CompletionOptions,
+    ) -> std::result::Result<LlmResponse, ProviderError> {
+        Self::dump(messages, tools);
+        Ok(LlmResponse {
+            role: "assistant".to_string(),
+            content: "[NO-AGENT] Debug mode. No API call made.".to_string(),
+            tool_calls: None,
+        })
+    }
+
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        _opts: &CompletionOptions,
+    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
+        Self::dump(messages, tools);
+        let chunk = StreamChunk { content: "[NO-AGENT] Debug mode. No API call made.".to_string() };
+        let stream = futures_util::stream::once(async move { Ok(chunk) });
+        Ok(Box::pin(stream))
+    }
+}
+
+impl NoopProvider {
+    fn dump(messages: &[Message], tools: &[ToolDef]) {
+        tracing::info!("[NO-AGENT] Would send {} message(s), {} tool(s)", messages.len(), tools.len());
+        for (i, m) in messages.iter().enumerate() {
+            let preview = m.content.chars().take(200).collect::<String>();
+            let ellipsis = if m.content.len() > 200 { "…" } else { "" };
+            tracing::info!("[NO-AGENT] messages[{}] role={} | {}{}", i, m.role, preview, ellipsis);
+        }
+        if !tools.is_empty() {
+            let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+            tracing::info!("[NO-AGENT] tools: {}", names.join(", "));
+        }
+    }
+}
+
 /// 設定に基づいて LLM プロバイダの具象インスタンスを生成するファクトリ
+/// RUSTYCLAW_NO_AGENT=1 が設定されている場合は NoopProvider を返す
 pub fn create_provider(config: Config) -> Box<dyn LlmProvider> {
+    if std::env::var("RUSTYCLAW_NO_AGENT").as_deref() == Ok("1") {
+        tracing::info!("[NO-AGENT] Debug mode active — API calls suppressed");
+        return Box::new(NoopProvider);
+    }
     if config.model_provider == "openai" {
         Box::new(OpenAiCompatProvider::new(config))
     } else {

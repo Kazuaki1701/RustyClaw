@@ -5,6 +5,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
+pub mod vault;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmModelConfig {
     pub model_purpose: String,
@@ -77,16 +79,24 @@ fn resolve_value(val: &str) -> String {
         std::env::var(env_name).unwrap_or_else(|_| val.to_string())
     } else if val.starts_with("$vault:") {
         let vault_key = &val[7..];
+        // 1. 環境変数（直接 or RUSTYCLAW_VAULT_ プレフィックス）
         if let Ok(env_val) = std::env::var(vault_key) {
             return env_val;
         }
         if let Ok(env_val) = std::env::var(format!("RUSTYCLAW_VAULT_{}", vault_key.to_uppercase())) {
             return env_val;
         }
+        // 2. 暗号化 vault.enc (~/.config/rustyclaw/vault.enc)
+        if let Ok(secrets) = vault::load_vault(None) {
+            if let Some(v) = secrets.get(vault_key) {
+                return v.clone();
+            }
+        }
+        // 3. 後方互換: 平文 vault.json (~/.rustyclaw/vault.json)
         if let Ok(home) = std::env::var("HOME") {
-            let vault_path = std::path::PathBuf::from(home).join(".rustyclaw").join("vault.json");
-            if vault_path.exists() {
-                if let Ok(file) = std::fs::File::open(vault_path) {
+            let json_path = std::path::PathBuf::from(home).join(".rustyclaw").join("vault.json");
+            if json_path.exists() {
+                if let Ok(file) = std::fs::File::open(json_path) {
                     if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
                         if let Some(v) = json.get(vault_key).and_then(|v| v.as_str()) {
                             return v.to_string();

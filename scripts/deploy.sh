@@ -13,7 +13,7 @@ set -e
 PROJECT_ROOT="/home/kazuaki/Projects/RustyClaw"
 PROD_DIR="$PROJECT_ROOT/production"
 PROD_BIN_DIR="$PROD_DIR/bin"
-TARGET_RPI_DIR="~/.rustyclaw/bin"
+TARGET_RPI_DIR="~/.local/bin"
 
 # 色出力用
 GREEN='\033[0;32m'
@@ -64,24 +64,23 @@ if ! ssh -q rp1 exit; then
     exit 1
 fi
 
-# RPi4 上でディレクトリ作成、本番共有フォルダからローカルSSD（~/.rustyclaw/bin/）へバイナリをコピー、シンボリックリンクの作成を一括実行
-# 同一の共有ネットワークドライブを介しているため、RPi4 自身がローカルにコピーする形となり一瞬で完了します。
-ssh rp1 "mkdir -p $TARGET_RPI_DIR && \
-         cp ~/Projects/RustyClaw/production/bin/rustyclaw-rpi4 $TARGET_RPI_DIR/rustyclaw-rpi4 && \
-         ln -sf $TARGET_RPI_DIR/rustyclaw-rpi4 $TARGET_RPI_DIR/rustyclaw && \
-         chmod +x $TARGET_RPI_DIR/rustyclaw-rpi4"
+# NAS 共有経由でバイナリを ~/.local/bin/rustyclaw に配置
+# （~/.rustyclaw は production/ への symlink のため、バイナリは ~/.local/bin/ に置く）
+ssh rp1 "sudo systemctl stop rustyclaw && \
+         mkdir -p $TARGET_RPI_DIR && \
+         cp ~/Projects/RustyClaw/production/bin/rustyclaw-rpi4 $TARGET_RPI_DIR/rustyclaw && \
+         chmod +x $TARGET_RPI_DIR/rustyclaw"
 
-echo -e "${GREEN}✓ RPi4 側のローカル SSD (~/.rustyclaw/bin/rustyclaw-rpi4) にバイナリを同期しました。${NC}"
-echo -e "${GREEN}✓ シンボリックリンクを作成しました: ~/.rustyclaw/bin/rustyclaw -> rustyclaw-rpi4${NC}"
+echo -e "${GREEN}✓ RPi4 側の ~/.local/bin/rustyclaw を更新しました。${NC}"
 
-# 初回セットアップ補助: ~/.rustyclaw (config / workspace) のシンボリックリンク確保
-echo -e "\n${YELLOW}[4/4] RPi4 上の環境設定リンクとサービスの再起動を実行中...${NC}"
+# ~/.rustyclaw -> production/ symlink の確認（初回以降は不要）
+echo -e "\n${YELLOW}[4/4] symlink 確認とサービスの再起動を実行中...${NC}"
 
-# ~/.rustyclaw/config.json および ~/.rustyclaw/workspace が共有フォルダの production/ を指すように自動リンク
 ssh rp1 "if [ ! -L ~/.rustyclaw ]; then \
-             if [ -d ~/.rustyclaw ]; then mv ~/.rustyclaw ~/.rustyclaw_backup_\$(date +%s); fi; \
-             ln -s ~/Projects/RustyClaw/production ~/.rustyclaw; \
-             echo 'RPi4 側で ~/.rustyclaw -> production/ のシンボリックリンクを設定しました。'; \
+             echo '⚠ ~/.rustyclaw が symlink ではありません。手動で再構成が必要です。'; \
+             echo '  run: ln -s ~/Projects/RustyClaw/production ~/.rustyclaw'; \
+         else \
+             echo '✓ ~/.rustyclaw -> \$(readlink ~/.rustyclaw)'; \
          fi"
 
 # デーモンの再起動
