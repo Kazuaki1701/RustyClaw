@@ -631,6 +631,18 @@ Rules:
                 }
             }
         }
+        // B: LLM 呼び出し前にプレースホルダーを書き込む
+        // → 失敗時も summary_path が存在し更新日時が新しくなるため、再トリガーを防ぐ
+        let _ = fs::create_dir_all(&summaries_dir);
+        if !existing_summary_path.exists() {
+            let placeholder = format!(
+                "<!-- summary: pending ({}) -->\n<!-- turns: {} -->\n",
+                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%z"),
+                history.len()
+            );
+            let _ = fs::write(&existing_summary_path, placeholder);
+        }
+
         let summary_model = self.config.get_model("summary");
         let mut model_config = self.config.clone();
         model_config.model_provider = summary_model.model_provider.clone();

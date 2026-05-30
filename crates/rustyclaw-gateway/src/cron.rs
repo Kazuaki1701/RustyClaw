@@ -176,6 +176,12 @@ impl CronService {
                     continue;
                 }
                 
+                // C: グローバルレート制限中はスキップ（無駄なイベント発火を抑制）
+                if let Some(remaining) = rustyclaw_providers::global_cooldown_remaining() {
+                    tracing::debug!("CronService: Session Summary skipped — global rate limit active ({:.0}s remaining)", remaining.as_secs_f64());
+                    continue;
+                }
+
                 // 1tick につき最大1セッションのみ発火（CF rate limit 連続突破を防ぐ）
                 if let Some(safe_session_id) = find_next_session_needing_summary(&sessions_dir, &ws_path) {
                     let logger = rustyclaw_storage::SessionLogger::new(&ws_path);
