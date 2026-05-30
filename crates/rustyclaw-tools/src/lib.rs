@@ -968,10 +968,7 @@ fn strip_html_to_text(html: &str, max_chars: usize) -> String {
     let mut skip_body = false;
     let mut buf       = String::new();
 
-    let bytes = html.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i] as char;
+    for c in html.chars() {
         match c {
             '<' => {
                 in_tag = true;
@@ -997,7 +994,6 @@ fn strip_html_to_text(html: &str, max_chars: usize) -> String {
             }
             _ => {}
         }
-        i += 1;
         if out.len() >= max_chars {
             break;
         }
@@ -1538,5 +1534,14 @@ mod tests {
         let tool = WebFetchTool::new();
         let res = tool.execute(serde_json::json!({})).await;
         assert!(res.is_error);
+    }
+
+    #[test]
+    fn test_strip_html_handles_multibyte() {
+        let html = "<p>こんにちは</p><script>秘密</script><p>世界</p>";
+        let plain = strip_html_to_text(html, 1000);
+        assert!(plain.contains("こんにちは"), "日本語テキストが保持されること");
+        assert!(plain.contains("世界"), "日本語テキストが保持されること");
+        assert!(!plain.contains("秘密"), "script内容が除去されること");
     }
 }
