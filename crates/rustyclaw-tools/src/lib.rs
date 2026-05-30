@@ -960,4 +960,36 @@ mod tests {
         assert!(result.is_error, "共有カレンダーへの書き込みはブロックされるべき");
         assert!(result.content.contains("WRITE BLOCKED"), "エラー内容: {}", result.content);
     }
+
+    #[tokio::test]
+    async fn test_gws_calendar_write_guard_passes_for_ai_agent_calendar() {
+        // AI AGENT カレンダーは許可リストに含まれるのでガードを通過する
+        // (gws バイナリが存在しないためその後 exec エラーになるが WRITE BLOCKED にはならない)
+        let ai_agent_id = "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com";
+        let tool = GwsCalendarWriteTool::new(
+            "/nonexistent/gws".to_string(),  // 存在しないパスで exec エラーを発生させる
+            vec![
+                (ai_agent_id.to_string(), "AI AGENT".to_string()),
+                (
+                    "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com".to_string(),
+                    "学習計画カレンダー".to_string(),
+                ),
+            ],
+        );
+
+        let result = tool.execute(serde_json::json!({
+            "calendar_id": ai_agent_id,
+            "summary": "テストイベント",
+            "start_datetime": "2026-06-01T10:00:00+09:00",
+            "end_datetime":   "2026-06-01T11:00:00+09:00"
+        })).await;
+
+        // ガードは通過している（WRITE BLOCKED でない）
+        assert!(!result.content.contains("WRITE BLOCKED"),
+            "AI AGENT カレンダーは WRITE BLOCKED されてはいけない。内容: {}", result.content);
+        // gws バイナリが存在しないので exec エラー
+        assert!(result.is_error);
+        assert!(result.content.contains("exec") || result.content.contains("gws"),
+            "exec エラーが期待される。内容: {}", result.content);
+    }
 }
