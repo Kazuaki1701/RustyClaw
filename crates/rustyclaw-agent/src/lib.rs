@@ -24,6 +24,23 @@ impl Pipeline {
         Self { config, provider, flush_sem }
     }
 
+    /// 用途ごとのモデルの TPM 制限に基づいて、会話履歴の圧縮しきい値を動的に決定する。
+    fn get_history_limit(&self, purpose: &str) -> usize {
+        let model_cfg = self.config.get_model(purpose);
+        let tpm = self.config.model_list.iter()
+            .find(|m| m.model == model_cfg.model_name && m.enabled)
+            .and_then(|m| m.tpm)
+            .unwrap_or(40000); // 未設定の場合は十分大きな値をデフォルトとする
+        
+        if tpm <= 6000 {
+            800
+        } else if tpm <= 12000 {
+            1500
+        } else {
+            3000
+        }
+    }
+
     /// 各種人格定義ファイルを読み込んでシステムプロンプト（Context）を構築する
     /// 行頭が // で始まる行（インデント許容）を除去する
     fn strip_comments(content: &str) -> String {
@@ -543,7 +560,8 @@ Rules:
         };
 
         let mut history = ConversationHistory::new(history_messages);
-        history.compact_if_needed(1500);
+        let history_limit = self.get_history_limit("default");
+        history.compact_if_needed(history_limit);
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
         let mut messages = Vec::new();
@@ -793,7 +811,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let mut history = ConversationHistory::new(history_messages);
-        history.compact_if_needed(1500);
+        let history_limit = self.get_history_limit(purpose);
+        history.compact_if_needed(history_limit);
 
         // 送信用メッセージリストの構築 (System + History)
         let mut active_messages = Vec::new();
@@ -937,7 +956,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let mut history = ConversationHistory::new(history_messages);
-        history.compact_if_needed(1500);
+        let history_limit = self.get_history_limit("default");
+        history.compact_if_needed(history_limit);
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
         let mut messages = Vec::new();
