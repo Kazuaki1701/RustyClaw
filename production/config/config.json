@@ -124,6 +124,17 @@
       "context_window": "131k"
     },
     {
+      "model_name": "hf-qwen2.5-7b",
+      "provider": "openai",
+      "model": "Qwen/Qwen2.5-7B-Instruct:hf-inference",
+      "api_base": "https://router.huggingface.co/hf-inference/v1",
+      "api_key": "$vault:hf-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": true,
+      "context_window": "128k"
+    },
+    {
       "model_name": "cf-qwen3-30b",
       "provider": "openai",
       "model": "@cf/qwen/qwen3-30b-a3b-fp8",
@@ -131,7 +142,7 @@
       "api_key": "$vault:cf-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
-      "enabled": false,
+      "enabled": true,
       "rpm": 300,
       "context_window": "32k"
     },
@@ -143,7 +154,7 @@
       "api_key": "$vault:cf-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
-      "enabled": false,
+      "enabled": true,
       "rpm": 300,
       "context_window": "256k"
     },
@@ -161,9 +172,13 @@
     }
   ],
   "agents": {
-    "default": { "model_name": "groq-llama-8b" },
-    "summary": { "model_name": "groq-llama-70b" },
-    "memory":  { "model_name": "groq-llama-70b" }
+    "default":   { "model_name": "groq-llama-8b" },
+    "tools":     { "model_name": "groq-qwen3-32b" },
+    "discord":   { "model_name": "hf-qwen2.5-7b" },
+    "line":      { "model_name": "hf-qwen2.5-7b" },
+    "heartbeat": { "model_name": "groq-llama-8b" },
+    "summary":   { "model_name": "cf-gemma-4-26b" },
+    "memory":    { "model_name": "cf-qwen3-30b" }
   },
   "debug_dump": true,
   "timezone": "Asia/Tokyo",
