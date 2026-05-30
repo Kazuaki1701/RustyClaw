@@ -378,11 +378,27 @@ impl LaneRegistry {
                                             let file_path = summaries_dir.join(format!("{}-daily-summary.md", today));
                                             
                                             let _ = rustyclaw_storage::atomic_write(&file_path, response.content.as_bytes());
-                                            
+
                                             // Index matching summary in Tantivy
                                             let index_dir = workspace_path.join("memory").join("index");
                                             if let Ok(search_mgr) = rustyclaw_storage::SearchIndexManager::new(&index_dir) {
                                                 let _ = search_mgr.index_file(&file_path, &response.content, &today);
+                                            }
+                                            if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                                let trigger = if session_id.starts_with("cron:heartbeat") { "heartbeat" }
+                                                    else if session_id.starts_with("cron:") { "cron" }
+                                                    else if session_id.starts_with("discord-") { "discord" }
+                                                    else if session_id.starts_with("cli-") { "cli" }
+                                                    else { "unknown" };
+                                                let _ = db.record_usage(
+                                                    &session_id,
+                                                    response.prompt_tokens.unwrap_or(0),
+                                                    response.completion_tokens.unwrap_or(0),
+                                                    response.total_tokens.unwrap_or(0),
+                                                    response.model_used.as_deref().unwrap_or(""),
+                                                    trigger,
+                                                    0,
+                                                );
                                             }
                                             crate::queue_remove(&session_id);
                                             break; // Exit the retry loop!
@@ -529,6 +545,21 @@ impl LaneRegistry {
                                                 if let Ok(serialized) = serde_json::to_string_pretty(&current_state) {
                                                     let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes());
                                                 }
+
+                                                let trigger = if session_id.starts_with("cron:heartbeat") { "heartbeat" }
+                                                    else if session_id.starts_with("cron:") { "cron" }
+                                                    else if session_id.starts_with("discord-") { "discord" }
+                                                    else if session_id.starts_with("cli-") { "cli" }
+                                                    else { "unknown" };
+                                                let _ = db.record_usage(
+                                                    &session_id,
+                                                    response.prompt_tokens.unwrap_or(0),
+                                                    response.completion_tokens.unwrap_or(0),
+                                                    response.total_tokens.unwrap_or(0),
+                                                    response.model_used.as_deref().unwrap_or(""),
+                                                    trigger,
+                                                    0,
+                                                );
                                             }
                                             crate::queue_remove(&session_id);
                                             break; // Exit the retry loop!

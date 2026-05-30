@@ -43,8 +43,12 @@ impl DbManager {
             CREATE TABLE IF NOT EXISTS usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
-                prompt_tokens INTEGER NOT NULL,
-                completion_tokens INTEGER NOT NULL,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                model TEXT NOT NULL DEFAULT '',
+                trigger_type TEXT NOT NULL DEFAULT 'unknown',
+                duration_ms INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
 
@@ -60,15 +64,36 @@ impl DbManager {
             );
         ")
         .context("Failed to create SQLite tables")?;
+
+        // Migration: add columns for DBs created before the schema extension.
+        // Each ALTER is run independently; errors (column already exists) are ignored.
+        for stmt in [
+            "ALTER TABLE usage ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE usage ADD COLUMN model TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE usage ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'unknown'",
+            "ALTER TABLE usage ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0",
+        ] {
+            let _ = self.conn.execute(stmt, []);
+        }
+
         Ok(())
     }
 
     // --- Usage (トークン使用量) 操作 ---
-    pub fn record_usage(&self, session_id: &str, prompt: u32, completion: u32) -> Result<()> {
+    pub fn record_usage(
+        &self,
+        session_id: &str,
+        prompt: u32,
+        completion: u32,
+        total: u32,
+        model: &str,
+        trigger_type: &str,
+        duration_ms: u64,
+    ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT INTO usage (session_id, prompt_tokens, completion_tokens, created_at) VALUES (?1, ?2, ?3, ?4)",
-            (session_id, prompt, completion, now),
+            "INSERT INTO usage (session_id, prompt_tokens, completion_tokens, total_tokens, model, trigger_type, duration_ms, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![session_id, prompt, completion, total, model, trigger_type, duration_ms as i64, now],
         )
         .context("Failed to record usage in SQLite")?;
         Ok(())
@@ -313,7 +338,7 @@ mod tests {
         let db = DbManager::new(&db_path)?;
         
         // Usage テスト
-        db.record_usage("session-1", 100, 50)?;
+        db.record_usage("session-1", 100, 50, 150, "test-model", "cli", 0)?;
         
         // Patrol State テスト
         assert!(db.get_last_patrol_run("patrol-1")?.is_none());
