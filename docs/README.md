@@ -76,5 +76,88 @@ docs/
 
 ---
 
+## 4. デプロイ・SSH 接続手順（RPi4 / `rp1`）
+
+本番は Raspberry Pi 4（aarch64, ホスト名 `rp1`）上で systemd サービス `rustyclaw.service` として稼働する。開発機（x86_64）から aarch64 バイナリをクロスビルドして配置する。
+
+### 4-1. デプロイ先への SSH 接続
+
+`~/.ssh/config` のエイリアスで接続する（鍵認証・NOPASSWD sudo 設定済み）。
+
+```bash
+ssh rp1
+```
+
+| 項目 | 値 |
+|---|---|
+| SSH エイリアス | `rp1` |
+| Hostname | `RaspberryPi.local`（mDNS。解決不可時は `ssh kazuaki@192.168.1.12`） |
+| LAN IP（参考） | `192.168.1.12` |
+| ユーザー / Arch | `kazuaki` / `aarch64` |
+| sudo | NOPASSWD（`sudo systemctl …` 可） |
+
+**`rp1` のディレクトリ構成**
+
+| パス | 役割 |
+|---|---|
+| `~/.local/bin/rustyclaw` | 実行バイナリ（デプロイ先） |
+| `~/.rustyclaw` → `~/Projects/RustyClaw/production`（symlink） | 本番ルート（NAS 共有。開発機の `production/` と同一） |
+| `~/.rustyclaw/config/config.json`, `vault.enc` | 設定とシークレット vault |
+| `~/.rustyclaw/workspace/` | `*.md` 人格定義・`cron.json`・`memory/`・`memory.db` |
+| `~/.rustyclaw/logs/` | アプリログ |
+
+> バイナリは symlink 先（共有 `production/`）と分離するため `~/.local/bin/` に置く。
+
+### 4-2. aarch64 クロスビルド
+
+Docker は不要。`cargo` にクロスリンカーを指定する。前提（開発機に一度だけ）: `rustup target add aarch64-unknown-linux-gnu`、`aarch64-linux-gnu-gcc`（`gcc-aarch64-linux-gnu`）、`.cargo/config.toml` のリンカー設定。
+
+```bash
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+  cargo build --release --target aarch64-unknown-linux-gnu -p rustyclaw-cli
+# 成果物: target/aarch64-unknown-linux-gnu/release/rustyclaw-cli
+```
+
+### 4-3. デプロイ
+
+**自動（推奨）** — `scripts/deploy.sh` が x64/aarch64 ビルド → `production/bin/` へリネーム配置 → `rp1` へ配置 → サービス再起動まで実行する。
+
+```bash
+./scripts/deploy.sh
+```
+
+**手動** — 稼働中バイナリは置換不可（`ETXTBSY`）。別名転送 → 停止 → 原子的差し替え → 再起動。
+
+```bash
+scp target/aarch64-unknown-linux-gnu/release/rustyclaw-cli rp1:~/.local/bin/rustyclaw.new
+ssh rp1 'sudo systemctl stop rustyclaw && \
+         mv ~/.local/bin/rustyclaw.new ~/.local/bin/rustyclaw && \
+         chmod +x ~/.local/bin/rustyclaw && \
+         sudo systemctl start rustyclaw'
+ssh rp1 '~/.local/bin/rustyclaw --version'   # 確認
+```
+
+### 4-4. サービス管理・ダッシュボード
+
+```bash
+ssh rp1 'sudo systemctl status  rustyclaw'
+ssh rp1 'sudo systemctl restart rustyclaw'
+ssh rp1 'journalctl --user -u rustyclaw -f'   # ログ追尾（または ~/.rustyclaw/logs/）
+```
+
+- vault パスフレーズは systemd クレデンシャル（`vault-key`）または環境変数 `VAULT_PASSPHRASE` で供給。
+- ダッシュボード: `http://192.168.1.12:8080/`（`MONITOR`/`STATS` の単一 SPA）。
+
+### 4-5. デプロイ前検証（実 API 不要）
+
+`--no-agent` で起動するとプロバイダが Noop になり実 API を送らない。vault/Discord に依存させないよう、検証時は Discord・外部ツールを無効化した一時 config ＋一時 workspace でクリーンに起動できる（本番サービスと同一ポートで同時起動しないこと）。
+
+```bash
+rustyclaw --config /tmp/verify/config.json --workspace /tmp/verify/workspace --no-agent gateway
+curl -s http://127.0.0.1:8080/api/concurrency
+```
+
+---
+
 > [!TIP]
 > AI エージェントは、本ルールを常に前提として解釈します。仕様変更を伴う提案や実装を行う際は、この `docs/README.md` を読み込み、対象ファイルを正しく分類・アップデートしてください。

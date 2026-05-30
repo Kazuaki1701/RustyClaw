@@ -15,6 +15,7 @@
 | :--- | :--- | :--- | :--- |
 | **言語・ランタイム** | Bun / Node.js (V8) | Rust (`tokio` 非同期ランタイム) | Raspberry Pi 4 (8GB) の CPU/メモリリソース最適化、シングルバイナリ化。 |
 | **LLM 接続方式** | **ACP (Agent Control Protocol)**<br>Gemini CLI を stdio JSON-RPC サブプロセスとして制御 | **LlmProvider (直接 HTTP SSE)**<br>`reqwest` + `rustls` を使用した直接のステートレス接続 | 外部プロセス起動の遅延および一時ファイル・プロセスの競合によるデッドロックリスクの完全排除。 |
+| **プロセス・デーモン制御** | **PM2**<br>PM2による起動・管理 | **systemd**<br>・systemdによる定常起動・ライフサイクル管理を採用 | ホストOS標準のsystemdでデーモンプロセス管理を行うため、RustyClaw自身には不要な二重実装を行わない。 |
 | **並列・排他制御** | Inngest / 自作プロセスプール | `tokio::sync::Semaphore` / Lane Registry | インプロセスで完結する軽量でスレッド安全な同時実行制御。 |
 | **状態永続化** | `heartbeat-state.json` (ファイル) | SQLite WAL モード (`deadpool-sqlite`) ＋ JSONL | 電源断に対する堅牢性 (atomic write + SQLite WAL) の向上。 |
 | **全文検索 (RAG)** | QMD (外部プロセス) | `tantivy` (インプロセス BM25 検索) | 外部プロセス依存を排除した純 Rust によるローカル検索。 |
