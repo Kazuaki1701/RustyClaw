@@ -79,7 +79,7 @@ impl HealthServer {
                                     let logs = if let Some(log_path) = get_latest_app_log() {
                                         read_last_lines(&log_path, 100)
                                     } else {
-                                        format!("No application logs found under {}/", get_app_dir().display())
+                                        format!("No application logs found under {}/logs/", get_app_dir().display())
                                     };
                                     ("200 OK".to_string(), logs, "text/plain; charset=utf-8")
 
@@ -200,7 +200,7 @@ fn read_last_lines(path: &Path, limit: usize) -> String {
 }
 
 fn get_latest_app_log() -> Option<PathBuf> {
-    let log_dir = get_app_dir();
+    let log_dir = get_app_dir().join("logs");
     if !log_dir.exists() {
         return None;
     }

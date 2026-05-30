@@ -87,7 +87,7 @@ enum VaultCommands {
 
 /// デバッグログ（tracing）のセットアップを行う
 fn setup_logging() -> Result<()> {
-    let log_dir = get_app_dir();
+    let log_dir = get_app_dir().join("logs");
     std::fs::create_dir_all(&log_dir)?;
 
     let file_appender = tracing_appender::rolling::daily(&log_dir, "rustyclaw.log");
