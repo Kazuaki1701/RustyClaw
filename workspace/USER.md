@@ -9,6 +9,8 @@ _This is about understanding a person, not building a dossier._
 - Timezone: Asia/Tokyo
 - Preferred language: Japanese (日本語)
 - Location: 大森駅付近 (居住地) [2026-04-07]
+- Coordinates: 35.5613,139.7241 (OMORI)
+- Commute Destination Coordinates: 35.4432,139.3624 (ATSUGI)
 
 ## Communication Preferences
 - Notification style: Chat channel (Discord)

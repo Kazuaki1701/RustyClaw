@@ -1544,4 +1544,195 @@ mod tests {
         assert!(plain.contains("世界"), "日本語テキストが保持されること");
         assert!(!plain.contains("秘密"), "script内容が除去されること");
     }
+
+    #[tokio::test]
+    async fn test_yolp_weather_tool_invalid_coords() {
+        let tool = YolpWeatherTool::new();
+        let res = tool.execute(serde_json::json!({ "coordinates": "invalid" })).await;
+        assert!(res.is_error);
+    }
+}
+
+// ─── YolpWeatherTool ─────────────────────────────────────────────────────────
+
+pub struct YolpWeatherTool;
+
+impl YolpWeatherTool {
+    pub fn new() -> Self { Self }
+}
+
+#[async_trait]
+impl Tool for YolpWeatherTool {
+    fn name(&self) -> &str { "yolp_weather" }
+
+    fn description(&self) -> &str {
+        "Get Yahoo YOLP-compatible weather forecast (rainfall prediction up to 60 mins in 10-min intervals) for given coordinates (longitude,latitude)."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "coordinates": {
+                    "type": "string",
+                    "description": "Location coordinates formatted as 'longitude,latitude' (e.g. '139.732293,35.663613'). NOTE: Longitude comes first."
+                },
+                "output": {
+                    "type": "string",
+                    "description": "Output format, typically 'json'."
+                }
+            },
+            "required": ["coordinates"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let coords = match args["coordinates"].as_str() {
+            Some(c) => c.to_string(),
+            None => return ToolResult { content: "Missing coordinates".into(), is_error: true },
+        };
+
+        let parts: Vec<&str> = coords.split(',').collect();
+        if parts.len() != 2 {
+            return ToolResult {
+                content: format!("Invalid coordinates format: '{}'. Expected 'longitude,latitude'", coords),
+                is_error: true,
+            };
+        }
+
+        let lon: f64 = match parts[0].trim().parse() {
+            Ok(v) => v,
+            Err(e) => return ToolResult { content: format!("Invalid longitude: {}. Error: {}", parts[0], e), is_error: true },
+        };
+        let lat: f64 = match parts[1].trim().parse() {
+            Ok(v) => v,
+            Err(e) => return ToolResult { content: format!("Invalid latitude: {}. Error: {}", parts[1], e), is_error: true },
+        };
+
+        match fetch_open_meteo_weather(lat, lon).await {
+            Ok(weather_list) => {
+                let response_json = serde_json::json!({
+                    "Feature": [
+                        {
+                            "Name": format!("地点({},{})の天気情報", lon, lat),
+                            "Property": {
+                                "WeatherList": {
+                                    "Weather": weather_list
+                                }
+                            }
+                        }
+                    ]
+                });
+                ToolResult {
+                    content: serde_json::to_string(&response_json).unwrap_or_default(),
+                    is_error: false,
+                }
+            }
+            Err(e) => ToolResult {
+                content: format!("Failed to fetch weather: {}", e),
+                is_error: true,
+            }
+        }
+    }
+}
+
+async fn fetch_open_meteo_weather(lat: f64, lon: f64) -> Result<Vec<Value>, anyhow::Error> {
+    let url = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&minutely_15=precipitation&timezone=Asia%2FTokyo",
+        lat, lon
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!("Open-Meteo API returned status {}", resp.status()));
+    }
+
+    let json: Value = resp.json().await?;
+    let minutely_15 = json["minutely_15"].as_object()
+        .ok_or_else(|| anyhow::anyhow!("Missing 'minutely_15' in Open-Meteo response"))?;
+
+    let times = minutely_15["time"].as_array()
+        .ok_or_else(|| anyhow::anyhow!("Missing 'time' in minutely_15"))?;
+    let precipitations = minutely_15["precipitation"].as_array()
+        .ok_or_else(|| anyhow::anyhow!("Missing 'precipitation' in minutely_15"))?;
+
+    if times.len() != precipitations.len() {
+        return Err(anyhow::anyhow!("Mismatched time and precipitation array lengths"));
+    }
+
+    use chrono::{DateTime, Local, TimeZone, Duration};
+
+    let parse_time = |s: &str| -> Option<DateTime<Local>> {
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M") {
+            return Local.from_local_datetime(&naive).single();
+        }
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+            return Local.from_local_datetime(&naive).single();
+        }
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+            return Some(dt.with_timezone(&Local));
+        }
+        None
+    };
+
+    let now = Local::now();
+    let mut weather_entries = Vec::new();
+
+    for offset_mins in [0, 10, 20, 30, 40, 50, 60] {
+        let target_time = now + Duration::minutes(offset_mins);
+        
+        let mut before: Option<(DateTime<Local>, f64)> = None;
+        let mut after: Option<(DateTime<Local>, f64)> = None;
+
+        for (t_val, p_val) in times.iter().zip(precipitations.iter()) {
+            let t_str = t_val.as_str().unwrap_or("");
+            let p = p_val.as_f64().unwrap_or(0.0);
+
+            if let Some(t) = parse_time(t_str) {
+                if t <= target_time {
+                    if before.is_none() || t > before.unwrap().0 {
+                        before = Some((t, p));
+                    }
+                }
+                if t >= target_time {
+                    if after.is_none() || t < after.unwrap().0 {
+                        after = Some((t, p));
+                    }
+                }
+            }
+        }
+
+        let mut val = 0.0;
+        if let (Some((t_b, p_b)), Some((t_a, p_a))) = (before, after) {
+            if t_b == t_a {
+                val = p_b;
+            } else {
+                let total_dur = (t_a - t_b).num_seconds() as f64;
+                let elapsed = (target_time - t_b).num_seconds() as f64;
+                val = p_b + (p_a - p_b) * (elapsed / total_dur);
+            }
+        } else if let Some((_, p_b)) = before {
+            val = p_b;
+        } else if let Some((_, p_a)) = after {
+            val = p_a;
+        }
+
+        val = (val * 100.0).round() / 100.0;
+
+        let entry_type = if offset_mins == 0 { "observation" } else { "forecast" };
+        let date_str = target_time.format("%Y%m%d%H%M").to_string();
+
+        weather_entries.push(serde_json::json!({
+            "Type": entry_type,
+            "Date": date_str,
+            "Rainfall": val
+        }));
+    }
+
+    Ok(weather_entries)
 }

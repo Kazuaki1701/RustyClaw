@@ -7,6 +7,7 @@ use chrono::{Local, DateTime, Timelike};
 use rustyclaw_config::Config;
 use rustyclaw_providers::Message;
 use rustyclaw_storage::{DbManager, SessionLogger};
+use rustyclaw_tools::Tool;
 use crate::{MessageBus, SystemEvent};
 
 pub struct HeartbeatService {
@@ -335,6 +336,176 @@ impl HeartbeatService {
 
         Ok(())
     }
+
+    /// Heartbeat Step 4: Weather / Rain Patrol (雨雲パトロール)
+    /// 指定された現在地の緯度経度から降水量をチェックし、必要に応じて雨雲接近アラートのプロンプトを返す。
+    pub async fn run_weather_patrol(&self, db_path: &std::path::Path) -> Result<Option<String>> {
+        // 1. USER.md から現在地の緯度経度を抽出
+        let (lat, lon) = match extract_coordinates(&self.workspace_path) {
+            Some(coords) => coords,
+            None => {
+                tracing::info!("HeartbeatService: Coordinates not found in USER.md. Weather Patrol skipped.");
+                return Ok(None);
+            }
+        };
+
+        // 2. 前回の雨アラート状態を SQLite から取得 (同期ブロック)
+        let (last_alert_dt, last_alert_level) = {
+            let db = DbManager::new(db_path.to_str().unwrap_or_default())?;
+            let now_dt = Local::now();
+            let last_alert_ts_str = db.get_last_patrol_run("last_rain_alert_ts")?.unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+            let last_alert_dt = DateTime::parse_from_rfc3339(&last_alert_ts_str)
+                .map(|dt| dt.with_timezone(&Local))
+                .unwrap_or_else(|_| now_dt - chrono::Duration::hours(24));
+
+            let last_alert_level = db.get_last_patrol_run("last_rain_alert_level")?
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            (last_alert_dt, last_alert_level)
+        };
+
+        tracing::info!("HeartbeatService: Weather Patrol coordinates: lat={}, lon={}", lat, lon);
+
+        // 3. YolpWeatherTool を用いて降水量をフェッチ (await が発生、この時点では db への参照はない)
+        let tool = rustyclaw_tools::YolpWeatherTool::new();
+        let tool_res = tool.execute(serde_json::json!({
+            "coordinates": format!("{},{}", lon, lat)
+        })).await;
+
+        if tool_res.is_error {
+            tracing::error!("HeartbeatService: Weather Patrol API fetch failed: {}", tool_res.content);
+            return Ok(None);
+        }
+
+        // レスポンスのパース
+        let parsed_val: serde_json::Value = match serde_json::from_str(&tool_res.content) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("HeartbeatService: Weather Patrol response parse failed: {}", e);
+                return Ok(None);
+            }
+        };
+
+        // WeatherList の Weather 配列を抽出
+        let weather_list = parsed_val["Feature"][0]["Property"]["WeatherList"]["Weather"].as_array();
+        let weather_array = match weather_list {
+            Some(arr) if !arr.is_empty() => arr,
+            _ => {
+                tracing::warn!("HeartbeatService: Weather Patrol response is empty.");
+                return Ok(None);
+            }
+        };
+
+        // 降水強度の判定（最大降水量の算出）
+        let mut max_rainfall = 0.0;
+        let mut rain_timeline = Vec::new();
+        for item in weather_array {
+            let rainfall = item["Rainfall"].as_f64().unwrap_or(0.0);
+            let time_str = item["Date"].as_str().unwrap_or("");
+            let entry_type = item["Type"].as_str().unwrap_or("");
+            
+            if rainfall > max_rainfall {
+                max_rainfall = rainfall;
+            }
+
+            // 時刻表示をHH:MMに整形
+            let formatted_time = if time_str.len() == 12 {
+                format!("{}:{}", &time_str[8..10], &time_str[10..12])
+            } else {
+                time_str.to_string()
+            };
+
+            rain_timeline.push(format!("- {} ({}): {} mm/h", formatted_time, entry_type, rainfall));
+        }
+
+        tracing::info!("HeartbeatService: Weather Patrol completed. Max rainfall forecast: {} mm/h", max_rainfall);
+
+        // 雨が降らない場合は無音 (通知なし)
+        if max_rainfall <= 0.0 {
+            return Ok(None);
+        }
+
+        let now_dt = Local::now();
+        let hour = now_dt.hour();
+
+        // Quiet Hours (23:00 〜 08:00) の処理
+        let is_quiet_hours = hour >= 23 || hour < 8;
+        if is_quiet_hours && max_rainfall < 5.0 {
+            // 豪雨（5.0mm/h以上）以外は Quiet Hours 中は Discord 通知をスキップ。
+            // ただし findings.md に静かに記録する。
+            let findings_log = format!(
+                "\n- [{}] [Rain Patrol] Rain predicted (Max: {} mm/h) (skipped due to quiet hours)\n",
+                now_dt.format("%H:%M"), max_rainfall
+            );
+            let findings_path = self.workspace_path.join("patrol").join("findings.md");
+            if let Ok(mut current) = std::fs::read_to_string(&findings_path) {
+                current.push_str(&findings_log);
+                let _ = rustyclaw_storage::atomic_write(&findings_path, current.as_bytes());
+            }
+            tracing::info!("HeartbeatService: Rain predicted but skipped due to Quiet Hours ({} mm/h). Recorded to findings.md.", max_rainfall);
+            return Ok(None);
+        }
+
+        let elapsed_mins = now_dt.signed_duration_since(last_alert_dt).num_minutes();
+        let is_level_escalated = max_rainfall >= 1.0 && last_alert_level < 1.0; // 小雨から本降りの悪化
+
+        if elapsed_mins < 180 && !is_level_escalated {
+            // 3時間以内で、かつ著しい状況悪化でもない場合はサイレントスキップ
+            tracing::info!("HeartbeatService: Rain predicted but skipped due to 3-hour duplicate guard (last alert: {} mins ago, last level: {} mm/h, current max: {} mm/h)", elapsed_mins, last_alert_level, max_rainfall);
+            return Ok(None);
+        }
+
+        // 4. 警報を送信するため、状態を SQLite に保存 (同期ブロック)
+        {
+            let db = DbManager::new(db_path.to_str().unwrap_or_default())?;
+            let _ = db.set_state_value("last_rain_alert_ts", &now_dt.to_rfc3339());
+            let _ = db.set_state_value("last_rain_alert_level", &max_rainfall.to_string());
+        }
+
+        // findings.md に警報発令の旨を記録
+        let findings_log = format!(
+            "\n- [{}] [Rain Patrol] Rain alert triggered (Max: {} mm/h)\n",
+            now_dt.format("%H:%M"), max_rainfall
+        );
+        let findings_path = self.workspace_path.join("patrol").join("findings.md");
+        if let Ok(mut current) = std::fs::read_to_string(&findings_path) {
+            current.push_str(&findings_log);
+            let _ = rustyclaw_storage::atomic_write(&findings_path, current.as_bytes());
+        }
+
+        // プロンプト注入用警告テキストの生成
+        let alert_prompt = format!(
+            "⚠️ [RAIN PATROL ALERT] Rain is expected within the next hour at the user's location.\n\
+             Max Rainfall Forecast: {} mm/h\n\
+             Precipitation Timeline:\n{}\n\n\
+             Action required: Since rain is approaching, do NOT output 'HEARTBEAT_OK'. Instead, proactively notify the user about the incoming rain (such as advising to carry an umbrella or take inside laundry) with a friendly, soft, personal secretary tone in Japanese. Keep the alert extremely concise and polite.",
+            max_rainfall, rain_timeline.join("\n")
+        );
+
+        Ok(Some(alert_prompt))
+    }
+}
+
+fn extract_coordinates(workspace_path: &std::path::Path) -> Option<(f64, f64)> {
+    let user_md_path = workspace_path.join("USER.md");
+    if let Ok(content) = std::fs::read_to_string(&user_md_path) {
+        for line in content.lines() {
+            if line.contains("Coordinates:") && !line.contains("Commute") {
+                if let Some(pos) = line.find("Coordinates:") {
+                    let s = &line[pos + "Coordinates:".len()..];
+                    let end_pos = s.find('(').unwrap_or(s.len());
+                    let clean_s = &s[..end_pos].trim();
+                    let parts: Vec<&str> = clean_s.split(',').collect();
+                    if parts.len() == 2 {
+                        if let (Ok(lat), Ok(lon)) = (parts[0].trim().parse::<f64>(), parts[1].trim().parse::<f64>()) {
+                            return Some((lat, lon));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

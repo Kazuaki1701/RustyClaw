@@ -443,6 +443,7 @@ mod tests {
                 discord: None,
                 line: None,
                 heartbeat: None,
+                patrol: None,
             },
             ..Default::default()
         }

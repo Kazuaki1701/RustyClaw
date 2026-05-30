@@ -215,24 +215,34 @@ impl LaneRegistry {
                     if session_id == "cron:heartbeat" {
                         let heartbeat_svc = crate::heartbeat::HeartbeatService::new(active_config.clone(), workspace_path.clone(), bus.clone());
                         
-                        let setup_res = {
+                        let setup_res = async {
                             if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
                                 if let Ok(digest) = heartbeat_svc.generate_digest(&db) {
                                     let is_step5_allowed = heartbeat_svc.is_step5_allowed(&db).unwrap_or(false);
-                                    Some((digest, is_step5_allowed))
+                                    let weather_alert = heartbeat_svc.run_weather_patrol(&db_path).await.unwrap_or(None);
+                                    Some((digest, is_step5_allowed, weather_alert))
                                 } else {
                                     None
                                 }
                             } else {
                                 None
                             }
-                        };
+                        }.await;
 
-                        if let Some((digest, is_step5_allowed)) = setup_res {
-                            let heartbeat_prompt = format!(
-                                "You are executing your HEARTBEAT patrol. Step 5 Vocal Greeting allowed: {}.\n\nRecent activity digest:\n{}", 
-                                is_step5_allowed, digest
-                            );
+                        if let Some((digest, is_step5_allowed, weather_alert)) = setup_res {
+                            let mut prompt_parts = Vec::new();
+                            prompt_parts.push(format!(
+                                "You are executing your HEARTBEAT patrol. Step 5 Vocal Greeting allowed: {}.", 
+                                is_step5_allowed
+                            ));
+
+                            if let Some(alert) = weather_alert {
+                                prompt_parts.push(alert);
+                            }
+
+                            prompt_parts.push(format!("Recent activity digest:\n{}", digest));
+
+                            let heartbeat_prompt = prompt_parts.join("\n\n");
 
                             let mut attempt = 0;
                             let max_attempts = 3;
@@ -648,6 +658,8 @@ impl Gateway {
         }
         // WebFetchTool は常時登録（APIキー不要）
         tool_registry.register(Arc::new(rustyclaw_tools::WebFetchTool::new()));
+        // YolpWeatherTool は常時登録（APIキー不要、Open-Meteoバックエンド）
+        tool_registry.register(Arc::new(rustyclaw_tools::YolpWeatherTool::new()));
 
         // WorkspaceReadTool / WorkspaceWriteTool 登録
         tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone())));

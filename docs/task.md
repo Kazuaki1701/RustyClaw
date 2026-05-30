@@ -69,9 +69,9 @@
 - `[ ]` **4. Google Drive / Sheets / Docs ツール**
   - gws CLI 経由で実装可能。ユースケース確定後。
 
-- `[ ]` **5. 天気チェック（Heartbeat Step 4）**
+- `[x]` **5. 天気チェック（Heartbeat Step 4）**
   - 参照仕様書: `docs/specs/10_weather_yolp_spec.md`
-  - YOLP 気象情報 API 仕様（経度・緯度に基づく 60 分先までの 10 分ごと降水量）を参考に、`Open-Meteo` 等の代替 API を用いてピンポイント雨雲パトロール・傘持ち出し指示・二重通知ガード（3時間インターバル）を実装する。
+  - YOLP 気象情報 API 仕様（経度・緯度に基づく 60 分先までの 10 分ごと降水量）を参考に、`Open-Meteo` 等の代替 API を用いてピンポイント雨雲パトロール・傘持ち出し指示・二重通知ガード（3時間インターバル）を実装・テスト完了。 ✅ (2026-05-30)
   - 対象: `crates/rustyclaw-tools/` ＋ `crates/rustyclaw-gateway/src/heartbeat.rs`
 
 ---
