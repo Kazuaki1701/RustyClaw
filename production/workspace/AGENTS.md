@@ -145,10 +145,15 @@ When a message is received, determine whether it is a **simple question or a tas
 
 ## Google Calendar / Gmail — 制約
 
-- **`AI AGENT` カレンダーのみ書き込み可能。** ツール: `gws_ai_agent_calendar_insert`
-- **その他のカレンダー（かずあき・あゆみ・ゆうき・ファミリー等）はすべて読み取り専用。**
-  イベントの作成・変更・削除は一切行わないこと。
-- 参照ツール: `gws_calendar_list_events`（読み取り専用）、`gws_gmail_list_messages`（読み取り専用）
+### Calendar
+- **書き込み許可カレンダー（`gws_writable_calendar_insert` ツール）のみ** イベント作成可能。
+- **その他のカレンダー（かずあき・あゆみ・ゆうき・ファミリー等）は読み取り専用。**
+- 参照ツール: `gws_calendar_list_events`
+
+### Gmail
+- **メール参照**: `gws_gmail_list_messages` ツールを使用。
+- **メール送信**: **絶対に禁止。** 送信ツールは存在しない。`gws gmail users messages send` コマンドも使用禁止。
+- **メール削除（trash）**: `gws_gmail_trash_message` ツールを使用。**`_ai-agent` ラベル付きのメールのみ削除可能。** ラベルのないメールは削除不可。
 
 ## Language
 

@@ -652,6 +652,159 @@ impl Tool for GwsGmailTool {
     }
 }
 
+/// Gmail メール削除ツール（gws CLI subprocess 経由）
+/// config の GWS_GMAIL_DELETABLE_LABEL に設定されたラベルを持つメールのみ削除可能
+pub struct GwsGmailDeleteTool {
+    gws_path: String,
+    /// 削除を許可するラベル名（例: "_ai-agent"）
+    deletable_label: String,
+}
+
+impl GwsGmailDeleteTool {
+    pub fn new(gws_path: String, deletable_label: String) -> Self {
+        Self { gws_path, deletable_label }
+    }
+
+    /// labelIds リストに削除許可ラベルが含まれるかチェック（テスト可能な純粋関数）
+    pub fn has_deletable_label(&self, label_ids: &[&str], label_name_to_id: Option<&str>) -> bool {
+        // labelIds に直接ラベル名が含まれる場合
+        if label_ids.iter().any(|id| id.to_lowercase() == self.deletable_label.to_lowercase()) {
+            return true;
+        }
+        // API から解決したラベル ID が含まれる場合
+        if let Some(lid) = label_name_to_id {
+            return label_ids.contains(&lid);
+        }
+        false
+    }
+}
+
+#[async_trait]
+impl Tool for GwsGmailDeleteTool {
+    fn name(&self) -> &str { "gws_gmail_trash_message" }
+
+    fn description(&self) -> &str {
+        "Move a Gmail message to trash. ONLY messages labeled with the configured deletable label are allowed. Use this to clean up messages the agent has already processed."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "type": "string",
+                    "description": "Gmail message ID to trash"
+                }
+            },
+            "required": ["message_id"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let message_id = match args["message_id"].as_str() {
+            Some(id) => id.to_string(),
+            None => return ToolResult { content: "Missing message_id".to_string(), is_error: true },
+        };
+
+        // 削除前にメッセージのラベルを取得して確認
+        let params = serde_json::json!({ "userId": "me", "id": &message_id }).to_string();
+        let label_check = tokio::process::Command::new(&self.gws_path)
+            .args(["gmail", "users", "messages", "get",
+                   "--params", &params, "--format", "json"])
+            .output()
+            .await;
+
+        match label_check {
+            Ok(out) if out.status.success() => {
+                let body = String::from_utf8_lossy(&out.stdout);
+                let msg: serde_json::Value = match serde_json::from_str(&body) {
+                    Ok(v) => v,
+                    Err(e) => return ToolResult {
+                        content: format!("Failed to parse message: {}", e),
+                        is_error: true,
+                    },
+                };
+                // labelIds にラベルが含まれるか確認
+                let label_ids = msg["labelIds"].as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                    .unwrap_or_default();
+
+                // ラベル名→ID の変換は省略。labelIds にラベル名そのものが含まれる場合もあるため
+                // gws でラベル名検索して ID を解決する
+                let has_label = label_ids.iter().any(|id| {
+                    id.to_lowercase() == self.deletable_label.to_lowercase()
+                });
+
+                if !has_label {
+                    // ラベル ID ではなくラベル名で照合するため gws labels list で確認
+                    let labels_params = serde_json::json!({"userId": "me"}).to_string();
+                    let labels_out = tokio::process::Command::new(&self.gws_path)
+                        .args(["gmail", "users", "labels", "list",
+                               "--params", &labels_params, "--format", "json"])
+                        .output()
+                        .await;
+
+                    let label_id = labels_out.ok()
+                        .filter(|o| o.status.success())
+                        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+                        .and_then(|v| {
+                            v["labels"].as_array()?.iter()
+                                .find(|l| l["name"].as_str().unwrap_or("").to_lowercase()
+                                    == self.deletable_label.to_lowercase())
+                                .and_then(|l| l["id"].as_str().map(|s| s.to_string()))
+                        });
+
+                    let confirmed = label_id
+                        .map(|lid| label_ids.contains(&lid.as_str()))
+                        .unwrap_or(false);
+
+                    if !confirmed {
+                        return ToolResult {
+                            content: format!(
+                                "DELETE BLOCKED: message '{}' does not have the required label '{}'. \
+                                 Only messages with this label can be trashed.",
+                                message_id, self.deletable_label
+                            ),
+                            is_error: true,
+                        };
+                    }
+                }
+
+                // ラベル確認済み → trash に移動
+                let trash_params = serde_json::json!({"userId": "me", "id": &message_id}).to_string();
+                let trash_out = tokio::process::Command::new(&self.gws_path)
+                    .args(["gmail", "users", "messages", "trash",
+                           "--params", &trash_params, "--format", "json"])
+                    .output()
+                    .await;
+
+                match trash_out {
+                    Ok(o) if o.status.success() => ToolResult {
+                        content: format!("Message '{}' moved to trash.", message_id),
+                        is_error: false,
+                    },
+                    Ok(o) => ToolResult {
+                        content: format!("Trash failed: {}", String::from_utf8_lossy(&o.stderr)),
+                        is_error: true,
+                    },
+                    Err(e) => ToolResult {
+                        content: format!("gws gmail trash exec failed: {}", e),
+                        is_error: true,
+                    },
+                }
+            }
+            Ok(o) => ToolResult {
+                content: format!("Failed to get message labels: {}", String::from_utf8_lossy(&o.stderr)),
+                is_error: true,
+            },
+            Err(e) => ToolResult {
+                content: format!("gws gmail get exec failed: {}", e),
+                is_error: true,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -991,5 +1144,41 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("exec") || result.content.contains("gws"),
             "exec エラーが期待される。内容: {}", result.content);
+    }
+
+    #[test]
+    fn test_gmail_delete_label_check_blocks_without_label() {
+        let tool = GwsGmailDeleteTool::new("/nonexistent/gws".to_string(), "_ai-agent".to_string());
+        // ラベルなし → 削除不可
+        assert!(!tool.has_deletable_label(&["INBOX", "UNREAD"], None));
+    }
+
+    #[test]
+    fn test_gmail_delete_label_check_passes_with_label_name() {
+        let tool = GwsGmailDeleteTool::new("/nonexistent/gws".to_string(), "_ai-agent".to_string());
+        // labelIds にラベル名が直接含まれる → 削除可
+        assert!(tool.has_deletable_label(&["INBOX", "_ai-agent"], None));
+    }
+
+    #[test]
+    fn test_gmail_delete_label_check_passes_with_label_id() {
+        let tool = GwsGmailDeleteTool::new("/nonexistent/gws".to_string(), "_ai-agent".to_string());
+        // API が解決したラベル ID で照合 → 削除可
+        assert!(tool.has_deletable_label(&["INBOX", "Label_12345"], Some("Label_12345")));
+    }
+
+    #[test]
+    fn test_gmail_delete_label_check_case_insensitive() {
+        let tool = GwsGmailDeleteTool::new("/nonexistent/gws".to_string(), "_AI-AGENT".to_string());
+        // 大文字小文字を区別しない
+        assert!(tool.has_deletable_label(&["_ai-agent"], None));
+    }
+
+    #[tokio::test]
+    async fn test_gmail_delete_requires_message_id() {
+        let tool = GwsGmailDeleteTool::new("/nonexistent/gws".to_string(), "_ai-agent".to_string());
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_error);
+        assert!(result.content.contains("message_id") || result.content.contains("Missing"));
     }
 }

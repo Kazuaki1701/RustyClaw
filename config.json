@@ -57,7 +57,9 @@
         "-y",
         "@anthropic-ai/mcp-server-gmail"
       ],
-      "env": {}
+      "env": {
+        "GWS_GMAIL_DELETABLE_LABEL": "_ai-agent"
+      }
     },
     "karakeep": {
       "enabled": false,

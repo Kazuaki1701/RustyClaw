@@ -714,7 +714,20 @@ impl Gateway {
                 }
             }
 
-            tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path)));
+            tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path.clone())));
+
+            // Gmail 削除ツール: config の GWS_GMAIL_DELETABLE_LABEL が設定されている場合のみ登録
+            let deletable_label = config.mcp.get("gmail")
+                .and_then(|c| c.env.get("GWS_GMAIL_DELETABLE_LABEL"))
+                .cloned()
+                .unwrap_or_default();
+            if !deletable_label.is_empty() {
+                tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailDeleteTool::new(
+                    gws_path.clone(), deletable_label.clone(),
+                )));
+                tracing::info!("Registered gws Gmail delete tool (label: {}).", deletable_label);
+            }
+
             tracing::info!("Registered native gws Google Workspace tools.");
         }
 
