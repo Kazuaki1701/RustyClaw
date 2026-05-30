@@ -47,6 +47,25 @@ enum Commands {
         #[command(subcommand)]
         command: VaultCommands,
     },
+    /// LLM への送受信データを参照する（debug_dump が有効な場合のみ）
+    Debug {
+        #[command(subcommand)]
+        command: DebugCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum DebugCommands {
+    /// 最後に送信したリクエスト（全メッセージ）を表示する
+    Request {
+        /// メッセージ本文を全文表示する（省略時は先頭 300 文字）
+        #[arg(long)]
+        full: bool,
+    },
+    /// 最後に受信したレスポンスを表示する
+    Response,
+    /// デバッグダンプファイルを削除する
+    Clear,
 }
 
 #[derive(Subcommand)]
@@ -157,6 +176,83 @@ fn read_secret() -> Result<String> {
         io::stdin().read_line(&mut s)?;
         Ok(s.trim().to_string())
     }
+}
+
+fn run_debug(cmd: DebugCommands, workspace: &PathBuf) -> Result<()> {
+    let debug_dir = workspace.join("memory").join("debug");
+
+    match cmd {
+        DebugCommands::Request { full } => {
+            let path = debug_dir.join("last_request.json");
+            if !path.exists() {
+                anyhow::bail!("No debug dump found at {}. Enable debug_dump in config.json.", path.display());
+            }
+            let content = std::fs::read_to_string(&path)?;
+            let messages: Vec<serde_json::Value> = serde_json::from_str(&content)?;
+            let meta = std::fs::metadata(&path)?;
+            let modified: chrono::DateTime<chrono::Local> = meta.modified()?.into();
+
+            println!("=== Last Request ({}) ===", modified.format("%Y-%m-%dT%H:%M:%S%z"));
+            println!("Messages: {}", messages.len());
+            println!();
+
+            for (i, msg) in messages.iter().enumerate() {
+                let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+                let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let char_count = content.chars().count();
+
+                if full {
+                    println!("[{}] {} ({} chars)", i, role.to_uppercase(), char_count);
+                    println!("{}", content);
+                } else {
+                    let preview: String = content.chars().take(300).collect();
+                    let ellipsis = if char_count > 300 { format!("… (+{} chars)", char_count - 300) } else { String::new() };
+                    println!("[{}] {} ({} chars)", i, role.to_uppercase(), char_count);
+                    println!("{}{}", preview, ellipsis);
+                }
+                println!();
+            }
+        }
+
+        DebugCommands::Response => {
+            let path = debug_dir.join("last_response.json");
+            if !path.exists() {
+                anyhow::bail!("No debug dump found at {}. Enable debug_dump in config.json.", path.display());
+            }
+            let content = std::fs::read_to_string(&path)?;
+            let json: serde_json::Value = serde_json::from_str(&content)?;
+            let meta = std::fs::metadata(&path)?;
+            let modified: chrono::DateTime<chrono::Local> = meta.modified()?.into();
+
+            println!("=== Last Response ({}) ===", modified.format("%Y-%m-%dT%H:%M:%S%z"));
+            if let Some(role) = json.get("role").and_then(|v| v.as_str()) {
+                println!("Role: {}", role);
+            }
+            println!();
+            if let Some(text) = json.get("content").and_then(|v| v.as_str()) {
+                println!("{}", text);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&json)?);
+            }
+        }
+
+        DebugCommands::Clear => {
+            let req = debug_dir.join("last_request.json");
+            let res = debug_dir.join("last_response.json");
+            let mut removed = 0;
+            for p in [&req, &res] {
+                if p.exists() {
+                    std::fs::remove_file(p)?;
+                    println!("Removed: {}", p.display());
+                    removed += 1;
+                }
+            }
+            if removed == 0 {
+                println!("No debug dump files found.");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
@@ -311,9 +407,12 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // vault コマンドはログ初期化不要
+    // vault / debug コマンドはログ初期化不要
     if let Commands::Vault { command } = cli.command {
         return run_vault(command, &cli.config);
+    }
+    if let Commands::Debug { command } = cli.command {
+        return run_debug(command, &cli.workspace);
     }
 
     // --no-agent フラグを環境変数に伝播（Gateway 内の create_provider にも届く）
@@ -358,7 +457,7 @@ async fn main() -> Result<()> {
             let gateway = rustyclaw_gateway::Gateway::new(&cli.config, &cli.workspace);
             gateway.run().await?;
         }
-        Commands::Vault { .. } => unreachable!(),
+        Commands::Vault { .. } | Commands::Debug { .. } => unreachable!(),
     }
 
     Ok(())

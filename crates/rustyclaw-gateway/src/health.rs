@@ -83,6 +83,27 @@ impl HealthServer {
                                     };
                                     ("200 OK".to_string(), logs, "text/plain; charset=utf-8")
 
+                                // ── デバッグダンプ エンドポイント ──────────────
+                                } else if request.starts_with("GET /debug/request") {
+                                    let path = workspace_path_clone.join("memory").join("debug").join("last_request.json");
+                                    let raw = std::fs::read_to_string(&path)
+                                        .unwrap_or_else(|_| "null".to_string());
+                                    let pretty = serde_json::from_str::<serde_json::Value>(&raw)
+                                        .ok()
+                                        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                                        .unwrap_or(raw);
+                                    ("200 OK".to_string(), pretty, "application/json; charset=utf-8")
+
+                                } else if request.starts_with("GET /debug/response") {
+                                    let path = workspace_path_clone.join("memory").join("debug").join("last_response.json");
+                                    let raw = std::fs::read_to_string(&path)
+                                        .unwrap_or_else(|_| "null".to_string());
+                                    let pretty = serde_json::from_str::<serde_json::Value>(&raw)
+                                        .ok()
+                                        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                                        .unwrap_or(raw);
+                                    ("200 OK".to_string(), pretty, "application/json; charset=utf-8")
+
                                 } else if request.starts_with("GET /api/queue") {
                                     let mut state = crate::QUEUE_STATE.lock().unwrap().clone();
                                     
