@@ -645,6 +645,9 @@ impl Gateway {
                 tool_registry.register(Arc::new(rustyclaw_tools::ObsidianReadTool::new(
                     o.host.clone(), o.api_key.clone(),
                 )));
+                tool_registry.register(Arc::new(rustyclaw_tools::ObsidianWriteTool::new(
+                    o.host.clone(), o.api_key.clone(),
+                )));
                 tracing::info!("Registered native Obsidian tools.");
             }
         }
@@ -664,7 +667,8 @@ impl Gateway {
         // WorkspaceReadTool / WorkspaceWriteTool 登録
         tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone())));
         tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone())));
-        tracing::info!("Registered Workspace I/O tools.");
+        tool_registry.register(Arc::new(rustyclaw_tools::MemorySearchTool::new(self.workspace_path.clone())));
+        tracing::info!("Registered Workspace I/O and Memory Search tools.");
 
         // Google Workspace ネイティブツール登録
         if let Some(gws) = config.tools.google_workspace.as_ref().filter(|g| g.enabled) {
