@@ -1144,6 +1144,8 @@ mod tests {
                 max_tokens: Some(2048),
                 temperature: Some(0.7),
                 enabled: true,
+                rpm: None, rpd: None, tpm: None, tpd: None,
+                context_window: None,
             }],
             agents: AgentsConfig {
                 default: AgentPurposeConfig { model_name: "test-model".to_string() },

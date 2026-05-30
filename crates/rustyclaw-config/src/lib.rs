@@ -49,6 +49,21 @@ pub struct ModelEntry {
     pub temperature: Option<f32>,
     #[serde(default = "bool_true")]
     pub enabled: bool,
+    /// 1分間のリクエスト数上限（Requests Per Minute）
+    #[serde(default)]
+    pub rpm: Option<u64>,
+    /// 1日のリクエスト数上限（Requests Per Day）
+    #[serde(default)]
+    pub rpd: Option<u64>,
+    /// 1分間のトークン数上限（Tokens Per Minute）
+    #[serde(default)]
+    pub tpm: Option<u64>,
+    /// 1日のトークン数上限（Tokens Per Day）
+    #[serde(default)]
+    pub tpd: Option<u64>,
+    /// コンテキストウィンドウサイズ（tokens。"131k", "1M" 等の表記可）
+    #[serde(default)]
+    pub context_window: Option<String>,
 }
 
 fn default_provider() -> String { "openai".to_string() }
@@ -270,6 +285,8 @@ mod tests {
                     max_tokens: Some(2048),
                     temperature: Some(0.7),
                     enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: Some("131k".to_string()),
                 },
                 ModelEntry {
                     model_name: "test-70b".to_string(),
@@ -280,6 +297,8 @@ mod tests {
                     max_tokens: Some(1500),
                     temperature: Some(0.3),
                     enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
                 },
             ],
             agents: AgentsConfig {
@@ -370,6 +389,8 @@ mod tests {
                 max_tokens: Some(2048),
                 temperature: Some(0.7),
                 enabled: true,
+                rpm: None, rpd: None, tpm: None, tpd: None,
+                context_window: None,
             }],
             ..Default::default()
         };
