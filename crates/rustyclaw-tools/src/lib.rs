@@ -111,7 +111,7 @@ impl Tool for KarakeepListTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "limit": { "anyOf": [{"type": "integer"}, {"type": "string"}], "description": "Max bookmarks (default: 20)" }
+                "limit": { "type": "string", "description": "Max bookmarks as a string (default: '20')" }
             },
             "required": []
         })
@@ -266,7 +266,7 @@ impl Tool for ObsidianSearchTool {
             "type": "object",
             "properties": {
                 "query": { "type": "string" },
-                "limit": { "anyOf": [{"type": "integer"}, {"type": "string"}], "description": "Max results (default: 10)" }
+                "limit": { "type": "string", "description": "Max results as a string (default: '10')" }
             },
             "required": ["query"]
         })
@@ -478,7 +478,7 @@ impl Tool for GwsCalendarTool {
             "type": "object",
             "properties": {
                 "calendar_id": { "type": "string", "description": "default: 'primary'" },
-                "max_results": { "type": "integer", "description": "default: 10" },
+                "max_results": { "type": "string", "description": "Max results as a string (default: '10')" },
                 "time_min": { "type": "string", "description": "RFC3339 start (default: now)" }
             },
             "required": []
@@ -487,7 +487,11 @@ impl Tool for GwsCalendarTool {
 
     async fn execute(&self, args: Value) -> ToolResult {
         let calendar_id = args["calendar_id"].as_str().unwrap_or("primary");
-        let max_results = args["max_results"].as_u64().unwrap_or(10);
+        let max_results = match &args["max_results"] {
+            Value::Number(n) => n.as_u64().unwrap_or(10),
+            Value::String(s) => s.parse::<u64>().unwrap_or(10),
+            _ => 10,
+        };
 
         let mut params = serde_json::json!({
             "calendarId": calendar_id,
@@ -653,7 +657,7 @@ impl Tool for GwsGmailTool {
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "Gmail search query" },
-                "max_results": { "type": "integer", "description": "default: 10" }
+                "max_results": { "type": "string", "description": "Max results as a string (default: '10')" }
             },
             "required": []
         })
@@ -661,7 +665,11 @@ impl Tool for GwsGmailTool {
 
     async fn execute(&self, args: Value) -> ToolResult {
         let query = args["query"].as_str().unwrap_or("is:unread");
-        let max_results = args["max_results"].as_u64().unwrap_or(10);
+        let max_results = match &args["max_results"] {
+            Value::Number(n) => n.as_u64().unwrap_or(10),
+            Value::String(s) => s.parse::<u64>().unwrap_or(10),
+            _ => 10,
+        };
 
         let params = serde_json::json!({
             "userId": "me",
@@ -1039,8 +1047,8 @@ impl Tool for WebSearchTool {
             "properties": {
                 "query": { "type": "string", "description": "Search query" },
                 "count": {
-                    "anyOf": [{"type": "integer"}, {"type": "string"}],
-                    "description": "Number of results (default: 5, max: 10)"
+                    "type": "string",
+                    "description": "Number of results as a string (default: '5', max: '10')"
                 }
             },
             "required": ["query"]
@@ -1160,8 +1168,8 @@ impl Tool for WebFetchTool {
             "properties": {
                 "url": { "type": "string", "description": "URL to fetch" },
                 "max_chars": {
-                    "anyOf": [{"type": "integer"}, {"type": "string"}],
-                    "description": "Max characters to return (default: 3000)"
+                    "type": "string",
+                    "description": "Max characters to return as a string (default: '3000')"
                 }
             },
             "required": ["url"]
