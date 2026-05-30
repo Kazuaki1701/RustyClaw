@@ -42,3 +42,25 @@ tempfile*
 # Antigravity CLI metadata
 .antigravitycli/
 
+# ── Production (RPi4) deploy dir: ローカル設定・シークレット・バイナリ・ランタイムデータ ──
+# シークレット vault（絶対にコミットしない）
+/production/config/vault.enc
+/production/config/*.enc
+# クロスビルド成果物（大容量バイナリ）
+/production/bin/
+# 本番ワークスペースのランタイム生成物（DB・索引・ログ・要約・セッション）
+/production/workspace/memory.db
+/production/workspace/memory.db-journal
+/production/workspace/memory.db-wal
+/production/workspace/memory.db-shm
+/production/workspace/memory/index/
+/production/workspace/memory/heartbeat-state.json
+/production/workspace/memory/heartbeat-digest.md
+/production/workspace/memory/logs/
+/production/workspace/memory/summaries/
+/production/workspace/memory/debug/
+/production/workspace/sessions/
+
+# ローカル開発用設定ディレクトリ（$vault 参照・各種 ID を含むため追跡しない）
+/config/
+
