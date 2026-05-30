@@ -22,14 +22,16 @@
 
 ### Groq Free Tier
 
-| model_name | model | RPM | RPD | TPM | TPD | Context |
-|-----------|-------|-----|-----|-----|-----|---------|
-| groq-llama-8b | llama-3.1-8b-instant | 30 | 14,400 | 6,000 | 500,000 | 131k |
-| groq-llama-70b | llama-3.3-70b-versatile | 30 | 1,000 | 12,000 | 100,000 | 131k |
-| groq-qwen3-32b | qwen/qwen3-32b | 60 | 1,000 | 6,000 | 500,000 | 131k |
-| （参考）groq-llama4-scout | meta-llama/llama-4-scout | 30 | 1,000 | **30,000** | — | — |
-| （参考）groq-gpt-oss-120b | openai/gpt-oss-120b | 30 | 1,000 | 8,000 | — | — |
-| （参考）groq-gpt-oss-20b | openai/gpt-oss-20b | 30 | 1,000 | 8,000 | — | — |
+> 出典: cheahjs/free-llm-api-resources + Groq 公式ドキュメント（2026-05-30 確認）
+
+| model_name | model | RPM | RPD | TPM | TPD | Context | Max Completion |
+|-----------|-------|-----|-----|-----|-----|---------|---------------|
+| groq-llama-8b | llama-3.1-8b-instant | 30 | **14,400** | 6,000 | 500,000 | **131,072** | 131,072 |
+| groq-llama-70b | llama-3.3-70b-versatile | 30 | 1,000 | 12,000 | 100,000 | **131,072** | 32,768 |
+| groq-qwen3-32b | qwen/qwen3-32b | 60 | 1,000 | 6,000 | 500,000 | **131,072** | 40,960 |
+| （参考）groq-llama4-scout | meta-llama/llama-4-scout-17b-16e-instruct | 30 | 1,000 | **30,000** | — | — | — |
+| （参考）groq-gpt-oss-120b | openai/gpt-oss-120b | 30 | 1,000 | 8,000 | — | — | — |
+| （参考）groq-gpt-oss-20b | openai/gpt-oss-20b | 30 | 1,000 | 8,000 | — | — | — |
 
 ### Cloudflare Workers AI Free Tier
 
@@ -42,11 +44,13 @@
 | TPM / TPD | なし | トークン数制限なし |
 | Neurons/日 | **10,000** | 計算量の日次上限 |
 
+> 出典: CF 公式ドキュメント pricing ページ（2026-05-30 確認）
+
 | model_name | model | RPM | Input neurons/M | Output neurons/M | Context |
 |-----------|-------|-----|----------------|-----------------|---------|
-| cf-qwen3-30b | @cf/qwen/qwen3-30b-a3b-fp8 | 300 | 4,625 | 30,475 | 32k |
-| cf-gemma-4-26b | @cf/google/gemma-4-26b-a4b-it | 300 | 9,091 | 27,273 | 256k |
-| cf-granite-micro | @cf/ibm-granite/granite-4.0-h-micro | 300 | 1,542 | 10,158 | 131k |
+| cf-qwen3-30b | @cf/qwen/qwen3-30b-a3b-fp8 | 300 | 4,625 | 30,475 | **32,768** |
+| cf-gemma-4-26b | @cf/google/gemma-4-26b-a4b-it | 300 | 9,091 | 27,273 | **256,000** |
+| cf-granite-micro | @cf/ibm-granite/granite-4.0-h-micro | 300 | 1,542 | 10,158 | **131,000** |
 
 500 input + 500 output tokens/req 想定での neurons 消費目安:
 
@@ -103,6 +107,16 @@ OpenAI 互換エンドポイント: `https://api.cerebras.ai/v1`
 | 外部プロバイダークレジット | $0.10/月 | Layer 2 使用時のみ消費 |
 | 実質 context | **2k〜4k tokens** | モデル本来の値に関わらずAPI側で切り詰め |
 
+> 出典: HuggingFace model config.json 実測（2026-05-30）。Qwen2.5-xB は 32,768 tokens（≠ 128k）。
+
+| model_name | model | 本来の Context | 無料 API の実質制限 | RPD |
+|-----------|-------|-------------|-----------------|-----|
+| hf-qwen2.5-1.5b | Qwen/Qwen2.5-1.5B-Instruct:hf-inference | **32,768** | ~2k〜4k | 1,000 |
+| hf-qwen2.5-0.5b | Qwen/Qwen2.5-0.5B-Instruct:hf-inference | **32,768** | ~2k〜4k | 1,000 |
+| hf-qwen2.5-coder-1.5b | Qwen/Qwen2.5-Coder-1.5B-Instruct:hf-inference | **32,768** | ~2k〜4k | 1,000 |
+| hf-gemma-2-2b | google/gemma-2-2b-it:hf-inference | **8,192** | ~2k〜4k | 1,000 |
+| hf-llama-3.2-3b | meta-llama/Llama-3.2-3B-Instruct:hf-inference | **131,072** | ~4k | 1,000 |
+
 ⚠️ 現代 LLM（Qwen2.5・Llama 3.2 等）は Layer 1 非対応。RustyClaw の用途（長い System Prompt + 会話履歴 + ツール呼び出し）では context 超過リスクが高く、実用困難。
 
 ### OpenRouter Free Tier
@@ -117,20 +131,22 @@ OpenAI 互換エンドポイント: `https://api.cerebras.ai/v1`
 
 **現在の無料モデル一覧（2026年時点）:**
 
+> 出典: OpenRouter API `/v1/models`（2026-05-30 実測）
+
 | model_name（config） | model | Context | 特徴 |
 |-------------------|-------|---------|------|
-| or-deepseek-v4-flash | deepseek/deepseek-v4-flash:free | 1M | |
-| or-minimax-m2.5 | minimax/minimax-m2.5:free | 205k | |
-| or-gemma-4-31b | google/gemma-4-31b-it:free | 262k | |
-| or-nemotron-120b | nvidia/nemotron-3-super-120b-a12b:free | 1M | |
-| or-gpt-oss-120b | openai/gpt-oss-120b:free | 131k | |
-| or-llama-3.3-free | meta-llama/llama-3.3-70b-instruct:free | 131k | |
-| ★未追加 | qwen/qwen3-coder:free | — | Qwen3 Coder |
-| ★未追加 | qwen/qwen3-next-80b-a3b-instruct:free | — | 80B MoE 無料 |
-| ★未追加 | moonshotai/kimi-k2.6:free | — | |
-| ★未追加 | openai/gpt-oss-20b:free | 131k | |
-| ★未追加 | google/gemma-4-26b-a4b-it:free | 262k | CF と同モデル |
-| ★未追加 | nvidia/nemotron-3-nano-30b-a3b:free | — | Nano 30B MoE |
+| or-deepseek-v4-flash | deepseek/deepseek-v4-flash:free | **1,048,576** | |
+| or-minimax-m2.5 | minimax/minimax-m2.5:free | **204,800** | |
+| or-gemma-4-31b | google/gemma-4-31b-it:free | **262,144** | |
+| or-nemotron-120b | nvidia/nemotron-3-super-120b-a12b:free | **1,000,000** | |
+| or-gpt-oss-120b | openai/gpt-oss-120b:free | **131,072** | |
+| or-llama-3.3-free | meta-llama/llama-3.3-70b-instruct:free | **131,072** | |
+| ★未追加 | qwen/qwen3-coder:free | **1,048,576** | Qwen3 Coder |
+| ★未追加 | qwen/qwen3-next-80b-a3b-instruct:free | **262,144** | 80B MoE 無料 |
+| ★未追加 | moonshotai/kimi-k2.6:free | **262,144** | |
+| ★未追加 | openai/gpt-oss-20b:free | **131,072** | |
+| ★未追加 | google/gemma-4-26b-a4b-it:free | **262,144** | CF と同モデル |
+| ★未追加 | nvidia/nemotron-3-nano-30b-a3b:free | **256,000** | Nano 30B MoE |
 
 ---
 
