@@ -836,7 +836,7 @@ impl Tool for WorkspaceWriteTool {
                 "path":    { "type": "string", "description": "Relative path within workspace" },
                 "content": { "type": "string", "description": "Text to write" },
                 "mode":    {
-                    "anyOf": [{"type": "string"}, {"type": "string"}],
+                    "type": "string",
                     "description": "\"write\" (overwrite, default) or \"append\""
                 }
             },
