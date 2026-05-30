@@ -474,7 +474,7 @@ impl LaneRegistry {
                                                 tool_calls: None,
                                             })
                                     } else {
-                                        pipeline.execute_with_tools(&workspace_path, &session_id, &content, &tool_reg).await
+                                        pipeline.execute_with_tools(&workspace_path, &session_id, &content, &tool_reg, "discord").await
                                     };
                                     match exec_res {
                                         Ok(response) => {

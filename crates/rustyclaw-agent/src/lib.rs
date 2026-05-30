@@ -762,6 +762,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         session_id: &str,
         user_message: &str,
         tool_registry: &ToolRegistry,
+        purpose: &str,
     ) -> Result<LlmResponse> {
         let logger = SessionLogger::new(workspace_dir);
 
@@ -816,11 +817,12 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             })
             .collect();
 
+        let model_cfg = self.config.get_model(purpose);
         let opts = CompletionOptions {
-            model: self.config.get_model("default").model_name,
-            max_tokens: self.config.get_model("default").max_tokens,
-            temperature: self.config.get_model("default").temperature,
-            timeout: Duration::from_secs(900),
+            model: model_cfg.model_name.clone(),
+            max_tokens: model_cfg.max_tokens,
+            temperature: model_cfg.temperature,
+            timeout: Duration::from_secs(300),
         };
 
         let mut loop_count = 0;
@@ -1152,6 +1154,7 @@ mod tests {
                 default: AgentPurposeConfig { model_name: "test-model".to_string() },
                 summary: None,
                 memory: None,
+                ..Default::default()
             },
             debug_dump: true,
             ..Default::default()
@@ -1474,7 +1477,7 @@ mod tests {
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(MockAddTool));
 
-        let resp = pipeline.execute_with_tools(ws_dir.path(), "session-tool-test", "calculate 5+10", &registry).await?;
+        let resp = pipeline.execute_with_tools(ws_dir.path(), "session-tool-test", "calculate 5+10", &registry, "default").await?;
         assert_eq!(resp.content, "The calculation result is 15.");
 
         let logger = SessionLogger::new(ws_dir.path());
