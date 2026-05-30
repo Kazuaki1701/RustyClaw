@@ -375,6 +375,85 @@ impl Tool for ObsidianReadTool {
     }
 }
 
+// ─── ObsidianWriteTool ───────────────────────────────────────────────────────
+
+pub struct ObsidianWriteTool {
+    host: String,
+    api_key: String,
+}
+
+impl ObsidianWriteTool {
+    pub fn new(host: String, api_key: String) -> Self {
+        Self { host, api_key }
+    }
+}
+
+#[async_trait]
+impl Tool for ObsidianWriteTool {
+    fn name(&self) -> &str { "obsidian_write_note" }
+
+    fn description(&self) -> &str {
+        "Create or update a note in Obsidian vault. Use mode 'append' to add content to an existing note, or 'write' to overwrite."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path":    { "type": "string", "description": "Vault-relative path, e.g. 'Folder/Note.md'" },
+                "content": { "type": "string", "description": "Markdown content to write" },
+                "mode":    { "type": "string", "description": "\"write\" (overwrite, default) or \"append\"" }
+            },
+            "required": ["path", "content"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let path = match args["path"].as_str() {
+            Some(p) => p.to_string(),
+            None => return ToolResult { content: "Missing path".into(), is_error: true },
+        };
+        let new_content = match args["content"].as_str() {
+            Some(c) => c.to_string(),
+            None => return ToolResult { content: "Missing content".into(), is_error: true },
+        };
+        let mode = args["mode"].as_str().unwrap_or("write");
+        let client = reqwest::Client::new();
+        let url = format!("http://{}:27123/vault/{}", self.host, percent_encode(&path));
+        let auth = format!("Bearer {}", self.api_key);
+
+        let body = if mode == "append" {
+            match client.get(&url).header("Authorization", &auth).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let existing = resp.text().await.unwrap_or_default();
+                    format!("{}\n{}", existing.trim_end(), new_content)
+                }
+                _ => new_content.clone(),
+            }
+        } else {
+            new_content
+        };
+
+        match client
+            .put(&url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "text/markdown")
+            .body(body)
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 204 => {
+                ToolResult { content: format!("Written to {}", path), is_error: false }
+            }
+            Ok(resp) => ToolResult {
+                content: format!("Obsidian write error: HTTP {}", resp.status()),
+                is_error: true,
+            },
+            Err(e) => ToolResult { content: format!("Obsidian write failed: {}", e), is_error: true },
+        }
+    }
+}
+
 /// Google Calendar のイベント一覧を取得するツール（gws CLI subprocess 経由）
 pub struct GwsCalendarTool {
     gws_path: String,
@@ -872,6 +951,64 @@ impl Tool for WorkspaceWriteTool {
         match result {
             Ok(_)  => ToolResult { content: format!("OK: wrote to {}", rel), is_error: false },
             Err(e) => ToolResult { content: format!("Write failed {}: {}", rel, e), is_error: true },
+        }
+    }
+}
+
+// ─── MemorySearchTool ────────────────────────────────────────────────────────
+
+pub struct MemorySearchTool {
+    workspace_path: std::path::PathBuf,
+}
+
+impl MemorySearchTool {
+    pub fn new(workspace_path: std::path::PathBuf) -> Self {
+        Self { workspace_path }
+    }
+}
+
+#[async_trait]
+impl Tool for MemorySearchTool {
+    fn name(&self) -> &str { "memory_search" }
+
+    fn description(&self) -> &str {
+        "Search the agent's long-term memory (session summaries) by keyword. Returns file paths of matching summaries."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query" }
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let query = match args["query"].as_str() {
+            Some(q) => q.to_string(),
+            None => return ToolResult { content: "Missing query".into(), is_error: true },
+        };
+        let index_dir = self.workspace_path.join("memory").join("index");
+        match rustyclaw_storage::SearchIndexManager::new(&index_dir) {
+            Ok(mgr) => match mgr.search(&query) {
+                Ok(paths) if paths.is_empty() => {
+                    ToolResult { content: "No results found.".into(), is_error: false }
+                }
+                Ok(paths) => {
+                    let result = paths.iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    ToolResult { content: result, is_error: false }
+                }
+                Err(e) => ToolResult { content: format!("Search failed: {}", e), is_error: true },
+            },
+            Err(e) => ToolResult {
+                content: format!("Memory index not available (may not have summaries yet): {}", e),
+                is_error: true,
+            },
         }
     }
 }
@@ -1550,6 +1687,59 @@ mod tests {
         let tool = YolpWeatherTool::new();
         let res = tool.execute(serde_json::json!({ "coordinates": "invalid" })).await;
         assert!(res.is_error);
+    }
+
+    #[tokio::test]
+    async fn test_memory_search_tool_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = MemorySearchTool::new(dir.path().to_path_buf());
+        assert_eq!(tool.name(), "memory_search");
+        let params = tool.parameters();
+        assert!(params["properties"]["query"].is_object());
+        assert_eq!(params["required"][0], "query");
+    }
+
+    #[tokio::test]
+    async fn test_memory_search_missing_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = MemorySearchTool::new(dir.path().to_path_buf());
+        let res = tool.execute(serde_json::json!({})).await;
+        assert!(res.is_error);
+        assert!(res.content.contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_search_empty_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = MemorySearchTool::new(dir.path().to_path_buf());
+        // インデックスが存在しない場合は graceful に処理（クラッシュしないこと）
+        let res = tool.execute(serde_json::json!({"query": "rust"})).await;
+        assert!(!res.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_obsidian_write_tool_schema() {
+        let tool = ObsidianWriteTool::new("192.168.1.2".to_string(), "key".to_string());
+        assert_eq!(tool.name(), "obsidian_write_note");
+        let params = tool.parameters();
+        assert!(params["properties"]["path"].is_object());
+        assert!(params["properties"]["content"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_obsidian_write_missing_path() {
+        let tool = ObsidianWriteTool::new("192.168.1.2".to_string(), "key".to_string());
+        let res = tool.execute(serde_json::json!({"content": "hello"})).await;
+        assert!(res.is_error);
+        assert!(res.content.contains("Missing path"));
+    }
+
+    #[tokio::test]
+    async fn test_obsidian_write_missing_content() {
+        let tool = ObsidianWriteTool::new("192.168.1.2".to_string(), "key".to_string());
+        let res = tool.execute(serde_json::json!({"path": "Test/Note.md"})).await;
+        assert!(res.is_error);
+        assert!(res.content.contains("Missing content"));
     }
 }
 
