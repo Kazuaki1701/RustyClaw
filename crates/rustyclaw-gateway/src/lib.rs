@@ -143,10 +143,11 @@ impl LaneRegistry {
         workspace_path: PathBuf,
         bus: Arc<MessageBus>,
         tool_registry: Arc<rustyclaw_tools::ToolRegistry>,
+        gmn_sem: Arc<Semaphore>,
     ) -> Self {
         Self {
             lanes: Arc::new(TokioMutex::new(HashMap::new())),
-            gmn_sem: Arc::new(Semaphore::new(1)), // 全 gmn プロセス統合枠 (user + bg + flush を一本化)
+            gmn_sem,
             config: Arc::new(StdMutex::new(config)),
             workspace_path,
             bus,
@@ -741,11 +742,13 @@ impl Gateway {
 
         // 3. MessageBus および LaneRegistry の初期化
         let bus = Arc::new(MessageBus::new());
+        let gmn_sem = Arc::new(Semaphore::new(1)); // 全 gmn プロセス統合枠 (user + bg + flush を一本化)
         let registry = Arc::new(LaneRegistry::new(
             config.clone(),
             self.workspace_path.clone(),
             bus.clone(),
             tool_registry.clone(),
+            gmn_sem.clone(),
         ));
 
         // 4. DiscordConnector コネクタの起動
@@ -824,7 +827,14 @@ impl Gateway {
 
         // ③ HealthServer (HTTPサーバー) の起動
         let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(1);
-        let health_server = health::HealthServer::new(8080, reload_tx, bus.clone(), self.workspace_path.clone());
+        let health_server = health::HealthServer::new(
+            8080,
+            reload_tx,
+            bus.clone(),
+            self.workspace_path.clone(),
+            gmn_sem.clone(),
+            1, // gmn_sem capacity = 1
+        );
         health_server.start().await.context("Failed to start HealthServer")?;
 
         // 8. シグナルおよび HTTP リロードハンドリングループ
@@ -932,7 +942,8 @@ mod tests {
         let config = Config::default();
 
         let tool_registry = Arc::new(rustyclaw_tools::ToolRegistry::new());
-        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry);
+        let test_gmn_sem = Arc::new(Semaphore::new(1));
+        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry, test_gmn_sem);
 
         // メッセージを投入
         registry.dispatch(SystemEvent::IncomingMessage {

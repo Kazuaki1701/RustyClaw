@@ -12,12 +12,21 @@ pub struct HealthServer {
     reload_tx: tokio::sync::mpsc::Sender<()>,
     bus: Arc<crate::MessageBus>,
     workspace_path: PathBuf,
+    gmn_sem: Arc<tokio::sync::Semaphore>,
+    gmn_capacity: usize,
 }
 
 impl HealthServer {
-    pub fn new(port: u16, reload_tx: tokio::sync::mpsc::Sender<()>, bus: Arc<crate::MessageBus>, workspace_path: PathBuf) -> Self {
+    pub fn new(
+        port: u16,
+        reload_tx: tokio::sync::mpsc::Sender<()>,
+        bus: Arc<crate::MessageBus>,
+        workspace_path: PathBuf,
+        gmn_sem: Arc<tokio::sync::Semaphore>,
+        gmn_capacity: usize,
+    ) -> Self {
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
-        Self { addr, reload_tx, bus, workspace_path }
+        Self { addr, reload_tx, bus, workspace_path, gmn_sem, gmn_capacity }
     }
 
     pub async fn start(self) -> Result<()> {
@@ -28,6 +37,8 @@ impl HealthServer {
         let reload_tx = Arc::new(self.reload_tx);
         let bus = self.bus.clone();
         let workspace_path = Arc::new(self.workspace_path.clone());
+        let gmn_sem_arc = self.gmn_sem.clone();
+        let gmn_capacity = self.gmn_capacity;
 
         tokio::spawn(async move {
             loop {
@@ -37,6 +48,8 @@ impl HealthServer {
                         let reload_tx_clone = reload_tx.clone();
                         let bus_clone = bus.clone();
                         let workspace_path_clone = workspace_path.clone();
+                        let gmn_sem_clone = gmn_sem_arc.clone();
+                        let gmn_cap_clone = gmn_capacity;
 
                         tokio::spawn(async move {
                             let mut buffer = [0u8; 8192];
@@ -131,6 +144,27 @@ impl HealthServer {
                                     let stats = rustyclaw_providers::get_neuron_stats();
                                     let json = serde_json::to_string(&stats).unwrap_or_else(|_| "{}".to_string());
                                     ("200 OK".to_string(), json, "application/json; charset=utf-8")
+
+                                } else if request.starts_with("GET /api/concurrency") {
+                                    let available = gmn_sem_clone.available_permits();
+                                    let active = gmn_cap_clone.saturating_sub(available);
+                                    let queue_state = crate::QUEUE_STATE.lock().unwrap();
+                                    let queue_depth = queue_state.items.iter()
+                                        .filter(|i| i.status == "Waiting")
+                                        .count();
+                                    drop(queue_state);
+                                    let cooldown_secs = rustyclaw_providers::global_cooldown_remaining()
+                                        .map(|d| d.as_secs_f64())
+                                        .unwrap_or(0.0);
+                                    let json = serde_json::json!({
+                                        "active": active,
+                                        "available": available,
+                                        "capacity": gmn_cap_clone,
+                                        "queue_depth": queue_depth,
+                                        "cooldown_secs": cooldown_secs,
+                                        "global_cooldown": if cooldown_secs > 0.0 { Some(cooldown_secs) } else { None::<f64> }
+                                    });
+                                    ("200 OK".to_string(), json.to_string(), "application/json; charset=utf-8")
 
                                 // ── ダッシュボード & チャット ────────────────────
                                 } else if request.starts_with("GET /dashboard")
