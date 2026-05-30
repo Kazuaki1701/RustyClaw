@@ -12,7 +12,7 @@
 | **Groq** | 超高速（LPU）・高 RPD | context 131k 固定 | 対話の主力 |
 | **Cloudflare** | RPM 300・RPD/TPD 制限なし・256k context (gemma) | neurons 10,000/日上限（計算量制限）| 定期処理向き |
 | **OpenRouter** | 1M context・120B 規模モデル | RPD **50**（最大の制約）| 特殊用途限定 |
-| **Hugging Face** | 5M tokens/月・日本語特化モデル・3.8B超軽量 | RPM 非公開（動的スロットリング）・$0.10 外部クレジット | 軽量モデル特化 |
+| **Hugging Face** | RPD 1,000・5M tokens/月 | hf-inference は旧世代モデルのみ・現代 LLM は $0.10 クレジット必須・実質 context 2k〜4k | ⚠️ 戦略再検討中 |
 
 ---
 
@@ -53,34 +53,44 @@
 
 ### Hugging Face Inference Free Tier
 
-制限は **2層構造** になっている点に注意:
+> ⚠️ **2026年実態調査により大幅修正** — 旧来の想定（hf-inference が現代 LLM に対応）は誤りだった
 
-| 層 | サービス | 無料枠 | 対象モデル |
-|---|---------|--------|----------|
-| Layer 1 | HF Serverless (`hf-inference`) | **5M tokens/月** | ファイルサイズ 10GB 以下（7〜14B クラス）|
-| Layer 2 | Inference Providers（外部ルーター） | **$0.10/月クレジット** | 70B+ など大型モデル（Groq / Together AI 等へルーティング）|
+制限は **2層構造** だが、実用上の制約は想定より大きい:
 
-**7〜8B の推奨モデルはすべて Layer 1 に該当する → `:hf-inference` suffix で 5M tokens/月が無料で使える**
+| 層 | サービス | 無料枠 | 実際に対応するモデル |
+|---|---------|--------|-----------------|
+| Layer 1 | HF Serverless (`hf-inference`) | **5M tokens/月** | **旧世代モデルのみ**（BERT・GPT-2 等 CPU 推論）|
+| Layer 2 | Inference Providers（外部ルーター） | **$0.10/月クレジット** | Qwen2.5・Llama 3.2 等の現代 LLM |
+
+**⚠️ `hf-inference` は現代的な instruction-tuned モデルには対応していない。**  
+Qwen2.5・Llama 3.2・Gemma 2 などを使うには Layer 2（$0.10 クレジット消費）が必要。
+
+#### Free Tier 全体の共通制限（2026年時点）
 
 | 項目 | 値 | 備考 |
 |------|-----|------|
-| 月間トークン上限 | **5,000,000** | Layer 1（hf-inference）全体の月次上限 |
-| 日次換算 | ~167K tokens/日 | 500 tokens/req 換算で ~330 req/日 |
+| 月間トークン上限 | **5,000,000** | Layer 1 全体の月次上限 |
+| RPD | **1,000** | 1日あたりの最大リクエスト数 |
+| RPM | 非公開 | 動的スロットリング（大量連打で 429）|
+| 外部プロバイダークレジット | $0.10/月 | Layer 2 使用時のみ消費 |
 | HTTP ボディ上限 | 2MB/リクエスト | 超過時 413 エラー |
-| RPM | 非公開 | 動的スロットリング（DDoS 検知時に 429）|
-| RPD | なし | |
-| デフォルト max_tokens | ~500 | 未指定時にカットアウトされるため **明示必須** |
-| 外部プロバイダークレジット | $0.10/月 | Layer 2 のみ消費（Layer 1 には不要）|
 
-| model_name | model | Context | 特徴 |
-|-----------|-------|---------|------|
-| hf-llama-3.1-8b | meta-llama/Llama-3.1-8B-Instruct:hf-inference | 128k | 汎用・安定性最高 |
-| hf-qwen2.5-7b | Qwen/Qwen2.5-7B-Instruct:hf-inference | 128k | 日本語特化 |
-| hf-qwen2.5-coder-7b | Qwen/Qwen2.5-Coder-7B-Instruct:hf-inference | 128k | コード生成特化 |
-| hf-phi3-mini | microsoft/Phi-3-mini-128k-instruct:hf-inference | 128k | 3.8B・超軽量・高速 |
+#### ⚠️ 実質コンテキストウィンドウ制限
 
-> **注意**: `:cheapest` suffix は Layer 2（$0.10クレジット消費）にルーティングされる。
-> 7〜8B クラスには `:hf-inference` を使うこと。
+Free Tier の serverless API はモデル本来のコンテキストウィンドウを **フルには使えない**。  
+API 側で入力を 2k〜4k tokens 程度に切り詰める制限がある。
+
+| model_name | model | 本来の Context | 無料 API での実質制限 | RPD |
+|-----------|-------|-------------|-------------------|-----|
+| hf-qwen2.5-1.5b | Qwen/Qwen2.5-1.5B-Instruct:hf-inference | 32k | **~2k〜4k** | 1,000 |
+| hf-qwen2.5-0.5b | Qwen/Qwen2.5-0.5B-Instruct:hf-inference | 32k | **~2k〜4k** | 1,000 |
+| hf-qwen2.5-coder-1.5b | Qwen/Qwen2.5-Coder-1.5B-Instruct:hf-inference | 32k | **~2k〜4k** | 1,000 |
+| hf-gemma-2-2b | google/gemma-2-2b-it:hf-inference | 8k | **~2k〜4k** | 1,000 |
+| hf-llama-3.2-3b | meta-llama/Llama-3.2-3B-Instruct:hf-inference | 128k | **~4k** | 1,000 |
+
+> **結論**: HF Free Tier（hf-inference）は短い返答・軽量タスクにのみ向く。  
+> 長い会話履歴・System Prompt・ツール呼び出しを含む RustyClaw の用途では実用上の制限が大きい。  
+> `discord` purpose への採用は **モデル戦略の再検討が必要**（→ 現在 `groq-qwen3-32b` で代替中）。
 
 ### OpenRouter Free Tier
 
@@ -145,16 +155,23 @@
 
 > **Groq→HF 全面移行**: 速度劣化・5M tokens/月の予算制約・tools 品質低下の観点から不採用。現状維持。
 
-### Hugging Face の使いどころ
+### Hugging Face の使いどころ（⚠️ 戦略再検討中）
 
-5M tokens/月（≒ 330 req/日）。Discord chat が主用途:
+**実態調査で判明した制約：**
+- `hf-inference` は現代 LLM 非対応（旧世代 CPU 推論専用）
+- Free Tier の実質 context は 2k〜4k tokens（モデル本来の 32k〜128k ではない）
+- RustyClaw の会話 + System Prompt + ツール呼び出しでは context 超過リスクが高い
+- RPD 1,000 は対話用途には十分だが、短文レスポンスのみ実用的
 
-| モデル | 用途 |
-|--------|------|
-| hf-qwen2.5-7b | **`discord` / `line` purpose 主力**（日本語特化・完全無料）|
-| hf-phi3-mini | 超軽量・安価な summary / memory flush 代替候補 |
-| hf-llama-3.1-8b | Groq llama-8b と同一モデル（Groq 障害時の最終 fallback）|
-| hf-qwen2.5-coder-7b | コード生成タスク（将来の tools 拡張時）|
+**現状（暫定）：** `discord` purpose は `groq-qwen3-32b` で代替中
+
+| モデル | 当初想定 | 実態 |
+|--------|---------|------|
+| hf-qwen2.5-1.5b | discord 主力（日本語特化） | context 制限で Discord 対話には不向き |
+| hf-qwen2.5-0.5b | 超軽量 | 同上 |
+| hf-qwen2.5-coder-1.5b | コード生成 | 短いコードスニペットのみ実用 |
+| hf-gemma-2-2b | 日本語対話 | context 制限で不向き |
+| hf-llama-3.2-3b | バランス型 | context 制限で不向き |
 
 ### OpenRouter の使いどころ
 
