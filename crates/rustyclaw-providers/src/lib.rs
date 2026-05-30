@@ -149,6 +149,10 @@ pub struct LlmResponse {
     pub content: String,
     pub role: String,
     pub tool_calls: Option<Vec<ToolCall>>,
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
+    pub model_used: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -245,8 +249,22 @@ struct OpenAiRequest<'a> {
 }
 
 #[derive(Debug, Deserialize)]
+struct OpenAiUsage {
+    #[serde(default)]
+    prompt_tokens: u32,
+    #[serde(default)]
+    completion_tokens: u32,
+    #[serde(default)]
+    total_tokens: u32,
+}
+
+#[derive(Debug, Deserialize)]
 struct OpenAiResponse {
     choices: Vec<OpenAiChoice>,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,6 +386,10 @@ impl LlmProvider for OpenAiCompatProvider {
             content: choice.message.content.clone().unwrap_or_default(),
             role: choice.message.role.clone(),
             tool_calls: choice.message.tool_calls.clone(),
+            prompt_tokens: resp_data.usage.as_ref().map(|u| u.prompt_tokens),
+            completion_tokens: resp_data.usage.as_ref().map(|u| u.completion_tokens),
+            total_tokens: resp_data.usage.as_ref().map(|u| u.total_tokens),
+            model_used: resp_data.model.clone(),
         })
     }
 
@@ -620,6 +642,10 @@ impl LlmProvider for GmnCliProvider {
             content: final_content.trim().to_string(),
             role: "assistant".to_string(),
             tool_calls: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            model_used: None,
         })
     }
 
@@ -785,6 +811,10 @@ impl LlmProvider for NoopProvider {
             role: "assistant".to_string(),
             content: "[NO-AGENT] Debug mode. No API call made.".to_string(),
             tool_calls: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            model_used: None,
         })
     }
 

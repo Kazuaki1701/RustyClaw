@@ -486,6 +486,10 @@ impl LaneRegistry {
                                                 role: "assistant".to_string(),
                                                 content: summary,
                                                 tool_calls: None,
+                                                prompt_tokens: None,
+                                                completion_tokens: None,
+                                                total_tokens: None,
+                                                model_used: None,
                                             })
                                     } else {
                                         let run_purpose = if session_id == "cron:topic-patrol" { "patrol" } else { "discord" };
