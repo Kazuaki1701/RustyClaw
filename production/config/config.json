@@ -223,8 +223,8 @@
   "agents": {
     "default":   { "model_name": "groq-llama-8b" },
     "tools":     { "model_name": "groq-qwen3-32b" },
-    "discord":   { "model_name": "groq-qwen3-32b" },
-    "line":      { "model_name": "hf-qwen2.5-1.5b" },
+    "discord":   { "model_name": "groq-llama-70b" },
+    "line":      { "model_name": "groq-llama-70b" },
     "heartbeat": { "model_name": "groq-llama-8b" },
     "summary":   { "model_name": "cf-gemma-4-26b" },
     "memory":    { "model_name": "cf-qwen3-30b" }

@@ -166,17 +166,17 @@ OpenAI 互換エンドポイント: `https://api.cerebras.ai/v1`
 
 ## 4. 用途別モデル割り当て（現状 + 再検討候補）
 
-### 現在の暫定設定
+### 確定設定
 
-| purpose | モデル | Provider | 状態 |
+| purpose | モデル | Provider | 根拠 |
 |---------|--------|---------|------|
-| `default` | groq-llama-8b | Groq | ✅ 稼働中 |
-| `tools` | groq-qwen3-32b | Groq | ✅ 稼働中 |
-| `discord` | groq-qwen3-32b | Groq | ⚠️ 暫定（HF 戦略失敗のため）|
-| `line` | hf-qwen2.5-1.5b | HF | ⏸ disabled（予約のみ）|
-| `heartbeat` | groq-llama-8b | Groq | ✅ 稼働中 |
-| `summary` | cf-gemma-4-26b | CF | ✅ 稼働中（429 は日次リセット）|
-| `memory` | cf-qwen3-30b | CF | ✅ 稼働中（同上）|
+| `default` | groq-llama-8b | Groq | 応答速度最優先。RPD 14,400 で対話頻度を吸収 |
+| `tools` | groq-qwen3-32b | Groq | ツール呼び出し・推論特化。discord と RPD バケット分離 |
+| `discord` | **groq-llama-70b** | Groq | 70B で日本語品質向上。tools とは別 RPD（1,000/日）|
+| `line` | **groq-llama-70b** | Groq | discord と共用。LINE 実装まで予約 |
+| `heartbeat` | groq-llama-8b | Groq | 48回/日の高頻度実行。default と同モデル共用 |
+| `summary` | cf-gemma-4-26b | CF | 1日数回・256k context・neurons 消費小（~177/日）|
+| `memory` | cf-qwen3-30b | CF | 1日数回・32k context で十分・超安価（~150 neurons/日）|
 
 ### `discord` purpose の再検討候補
 
@@ -192,9 +192,10 @@ OpenAI 互換エンドポイント: `https://api.cerebras.ai/v1`
 | Provider | 用途 | 消費量/日 | 上限 | 余裕 |
 |----------|------|---------|------|------|
 | Groq llama-8b | default(~50K) + heartbeat(~144K) | ~194K tokens | TPD 500K | ✓ |
-| Groq qwen3-32b | tools + discord | ~120K tokens | TPD 500K | ✓ |
-| CF gemma-4-26b | summary (~177 neurons) | ~177 neurons | 10,000/日 | ✓ |
-| CF qwen3-30b | memory (~150 neurons) | ~150 neurons | 10,000/日 | ✓ |
+| Groq qwen3-32b | tools(~60K) | ~60K tokens | TPD 500K | ✓ |
+| Groq llama-70b | discord(~25K) | ~25K tokens | TPD 100K | ✓ |
+| CF gemma-4-26b | summary(~177 neurons) | ~177 neurons | 10,000/日 | ✓ |
+| CF qwen3-30b | memory(~150 neurons) | ~150 neurons | 10,000/日 | ✓ |
 | **CF 合計** | | **~327 neurons/日** | 10,000/日 | **余裕 97%** |
 
 ### OpenRouter の使いどころ
@@ -214,12 +215,11 @@ RPD=50 の制約から定常利用には不向き。特殊用途に限定:
 ## 5. Provider 分散イメージ（典型的な1日・現状）
 
 ```
-Groq  █████████████░░░░░░░  default(対話) + heartbeat(定期48回) + tools + discord(暫定)
-CF    ██░░░░░░░░░░░░░░░░░░  summary(1日数回) + memory(flush)
+Groq  ██████████████░░░░░░  default(対話/8b) + heartbeat(定期/8b) + tools(ツール/qwen3) + discord(チャット/70b)
+CF    ██░░░░░░░░░░░░░░░░░░  summary(1日数回/gemma-4-26b) + memory(flush/qwen3-30b)
 OR    █░░░░░░░░░░░░░░░░░░░  深層スキャン・fallback のみ
 HF    ░░░░░░░░░░░░░░░░░░░░  全モデル disabled（戦略再検討中）
-GAS   ░░░░░░░░░░░░░░░░░░░░  未導入（discord 候補）
-CRB   ░░░░░░░░░░░░░░░░░░░░  未導入（Groq 分散候補）
+CRB   ░░░░░░░░░░░░░░░░░░░░  未導入（将来 discord/line 移行候補）
 ```
 
 ---
