@@ -79,8 +79,12 @@ impl HeartbeatService {
                 let path = entry.path();
                 let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                 
-                if !filename.ends_with(".jsonl") || filename.starts_with("cron") {
-                    continue; // 自己参照 (cron-*) 除外
+                if !filename.ends_with(".jsonl")
+                    || filename.starts_with("cron")
+                    || filename.starts_with("cli-")
+                    || filename.starts_with("http-")
+                {
+                    continue; // cron-* / CLI テスト / HTTP ダッシュボード除外
                 }
 
                 // ファイル変更時刻チェック
@@ -581,6 +585,43 @@ mod tests {
             "Second digest should contain response"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_digest_excludes_cli_and_http_sessions() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let ws = dir.path();
+        let sessions_dir = ws.join("sessions");
+        let memory_dir = ws.join("memory");
+        std::fs::create_dir_all(&sessions_dir)?;
+        std::fs::create_dir_all(&memory_dir)?;
+
+        // CLI テストセッションと HTTP ダッシュボードセッションを作成
+        std::fs::write(
+            sessions_dir.join("cli-session.jsonl"),
+            "{\"role\":\"user\",\"content\":\"test\"}\n{\"role\":\"assistant\",\"content\":\"[NO-AGENT] Debug mode\"}\n",
+        )?;
+        std::fs::write(
+            sessions_dir.join("http-dashboard.jsonl"),
+            "{\"role\":\"user\",\"content\":\"ping\"}\n{\"role\":\"assistant\",\"content\":\"pong\"}\n",
+        )?;
+        // 正規の Discord セッション（24h 以内の mtime にするため直接書いて OK）
+        std::fs::write(
+            sessions_dir.join("discord-C123-20260530.jsonl"),
+            "{\"role\":\"user\",\"content\":\"こんにちは\"}\n{\"role\":\"assistant\",\"content\":\"やあ！\"}\n",
+        )?;
+
+        let db_path = memory_dir.join("memory.db");
+        let db = rustyclaw_storage::DbManager::new(&db_path)?;
+        let bus = std::sync::Arc::new(crate::MessageBus::new());
+        let config = rustyclaw_config::Config::default();
+        let svc = HeartbeatService::new(config, ws.to_path_buf(), bus);
+
+        let digest = svc.generate_digest(&db)?;
+
+        assert!(!digest.contains("NO-AGENT"), "cli-session エントリが除外されるべき");
+        assert!(!digest.contains("ping"), "http-dashboard エントリが除外されるべき");
         Ok(())
     }
 }
