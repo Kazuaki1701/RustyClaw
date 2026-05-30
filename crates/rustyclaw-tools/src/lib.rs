@@ -959,6 +959,113 @@ impl Tool for WebSearchTool {
     }
 }
 
+// ─── WebFetchTool ────────────────────────────────────────────────────────────
+
+/// HTML タグ・script・style ブロックを除去してプレーンテキストを返す（新規 crate 依存なし）
+fn strip_html_to_text(html: &str, max_chars: usize) -> String {
+    let mut out = String::with_capacity(html.len() / 2);
+    let mut in_tag    = false;
+    let mut skip_body = false;
+    let mut buf       = String::new();
+
+    let bytes = html.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        match c {
+            '<' => {
+                in_tag = true;
+                buf.clear();
+            }
+            '>' => {
+                let tag = buf.trim().to_lowercase();
+                let tag_name = tag.split_whitespace().next().unwrap_or("");
+                if tag_name == "script" || tag_name == "style" {
+                    skip_body = true;
+                }
+                if tag_name == "/script" || tag_name == "/style" {
+                    skip_body = false;
+                }
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if in_tag => {
+                buf.push(c);
+            }
+            _ if !skip_body => {
+                out.push(c);
+            }
+            _ => {}
+        }
+        i += 1;
+        if out.len() >= max_chars {
+            break;
+        }
+    }
+
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+        .chars().take(max_chars).collect()
+}
+
+pub struct WebFetchTool;
+
+impl WebFetchTool {
+    pub fn new() -> Self { Self }
+}
+
+#[async_trait]
+impl Tool for WebFetchTool {
+    fn name(&self) -> &str { "web_fetch" }
+
+    fn description(&self) -> &str {
+        "Fetch a web page and return its plain text content (HTML tags stripped). Use after web_search to read full article content."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "URL to fetch" },
+                "max_chars": {
+                    "anyOf": [{"type": "integer"}, {"type": "string"}],
+                    "description": "Max characters to return (default: 3000)"
+                }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let url = match args["url"].as_str() {
+            Some(u) => u.to_string(),
+            None => return ToolResult { content: "Missing url".into(), is_error: true },
+        };
+        let max_chars = match &args["max_chars"] {
+            Value::Number(n) => n.as_u64().unwrap_or(3000) as usize,
+            Value::String(s) => s.parse::<usize>().unwrap_or(3000),
+            _ => 3000,
+        };
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .user_agent("Mozilla/5.0 (compatible; RustyClaw/1.0)")
+            .build()
+            .unwrap_or_default();
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.text().await {
+                    Ok(html) => ToolResult { content: strip_html_to_text(&html, max_chars), is_error: false },
+                    Err(e)   => ToolResult { content: format!("Read error: {}", e), is_error: true },
+                }
+            }
+            Ok(resp) => ToolResult {
+                content: format!("HTTP {}", resp.status()),
+                is_error: true,
+            },
+            Err(e) => ToolResult { content: format!("Fetch failed: {}", e), is_error: true },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1391,5 +1498,45 @@ mod tests {
         let res = tool.execute(serde_json::json!({})).await;
         assert!(res.is_error);
         assert!(res.content.contains("Missing"));
+    }
+
+    #[test]
+    fn test_strip_html_removes_tags() {
+        let html = "<h1>Title</h1><p>Hello <b>world</b></p>";
+        let plain = strip_html_to_text(html, 1000);
+        assert!(!plain.contains('<'));
+        assert!(plain.contains("Title"));
+        assert!(plain.contains("Hello"));
+        assert!(plain.contains("world"));
+    }
+
+    #[test]
+    fn test_strip_html_removes_script_content() {
+        let html = "<p>visible</p><script>var x = secret();</script><p>also visible</p>";
+        let plain = strip_html_to_text(html, 1000);
+        assert!(!plain.contains("secret"));
+        assert!(plain.contains("visible"));
+    }
+
+    #[test]
+    fn test_strip_html_truncates_at_max_chars() {
+        let html = format!("<p>{}</p>", "a".repeat(5000));
+        let plain = strip_html_to_text(&html, 100);
+        assert!(plain.len() <= 110);
+    }
+
+    #[tokio::test]
+    async fn test_web_fetch_tool_schema() {
+        let tool = WebFetchTool::new();
+        assert_eq!(tool.name(), "web_fetch");
+        let params = tool.parameters();
+        assert!(params["properties"]["url"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_web_fetch_missing_url() {
+        let tool = WebFetchTool::new();
+        let res = tool.execute(serde_json::json!({})).await;
+        assert!(res.is_error);
     }
 }
