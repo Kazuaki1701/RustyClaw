@@ -11,7 +11,7 @@
       "enabled": true,
       "rpm": 30,
       "rpd": 14400,
-      "tpm": 18000,
+      "tpm": 6000,
       "tpd": 500000,
       "context_window": "131k"
     },
@@ -26,8 +26,8 @@
       "enabled": true,
       "rpm": 30,
       "rpd": 1000,
-      "tpm": 6000,
-      "tpd": 500000,
+      "tpm": 12000,
+      "tpd": 100000,
       "context_window": "131k"
     },
     {
