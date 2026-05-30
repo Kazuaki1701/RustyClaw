@@ -13,7 +13,7 @@ members = [
 ]
 
 [profile.release]
-opt-level     = 3           # 速度優先（8GB あるのでサイズ不問）
+opt-level     = 3           # 速度優先（4GB あるのでサイズ不問）
 lto           = "thin"      # コンパイル時間と最適化のバランス
 codegen-units = 4           # RPi4 の 4 コアに合わせる
 strip         = "debuginfo" # パニック時スタックトレースは残す
