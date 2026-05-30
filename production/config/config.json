@@ -124,14 +124,58 @@
       "context_window": "131k"
     },
     {
-      "model_name": "hf-qwen2.5-7b",
+      "model_name": "hf-qwen2.5-1.5b",
       "provider": "openai",
-      "model": "Qwen/Qwen2.5-7B-Instruct:hf-inference",
+      "model": "Qwen/Qwen2.5-1.5B-Instruct:hf-inference",
       "api_base": "https://router.huggingface.co/v1",
       "api_key": "$vault:hf-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
-      "enabled": true,
+      "enabled": false,
+      "context_window": "128k"
+    },
+    {
+      "model_name": "hf-qwen2.5-0.5b",
+      "provider": "openai",
+      "model": "Qwen/Qwen2.5-0.5B-Instruct:hf-inference",
+      "api_base": "https://router.huggingface.co/v1",
+      "api_key": "$vault:hf-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "context_window": "128k"
+    },
+    {
+      "model_name": "hf-qwen2.5-coder-1.5b",
+      "provider": "openai",
+      "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct:hf-inference",
+      "api_base": "https://router.huggingface.co/v1",
+      "api_key": "$vault:hf-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "context_window": "128k"
+    },
+    {
+      "model_name": "hf-gemma-2-2b",
+      "provider": "openai",
+      "model": "google/gemma-2-2b-it:hf-inference",
+      "api_base": "https://router.huggingface.co/v1",
+      "api_key": "$vault:hf-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "context_window": "8k"
+    },
+    {
+      "model_name": "hf-llama-3.2-3b",
+      "provider": "openai",
+      "model": "meta-llama/Llama-3.2-3B-Instruct:hf-inference",
+      "api_base": "https://router.huggingface.co/v1",
+      "api_key": "$vault:hf-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
       "context_window": "128k"
     },
     {
@@ -174,8 +218,8 @@
   "agents": {
     "default":   { "model_name": "groq-llama-8b" },
     "tools":     { "model_name": "groq-qwen3-32b" },
-    "discord":   { "model_name": "hf-qwen2.5-7b" },
-    "line":      { "model_name": "hf-qwen2.5-7b" },
+    "discord":   { "model_name": "groq-qwen3-32b" },
+    "line":      { "model_name": "hf-qwen2.5-1.5b" },
     "heartbeat": { "model_name": "groq-llama-8b" },
     "summary":   { "model_name": "cf-gemma-4-26b" },
     "memory":    { "model_name": "cf-qwen3-30b" }
