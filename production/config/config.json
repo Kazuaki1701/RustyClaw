@@ -1,7 +1,7 @@
 {
   "model_list": [
     {
-      "model_name": "groq-8b",
+      "model_name": "groq-llama-8b",
       "provider": "openai",
       "model": "llama-3.1-8b-instant",
       "api_base": "$vault:grok-base-url",
@@ -16,7 +16,7 @@
       "context_window": "131k"
     },
     {
-      "model_name": "groq-70b",
+      "model_name": "groq-llama-70b",
       "provider": "openai",
       "model": "llama-3.3-70b-versatile",
       "api_base": "$vault:grok-base-url",
@@ -60,9 +60,9 @@
     }
   ],
   "agents": {
-    "default": { "model_name": "groq-8b" },
-    "summary": { "model_name": "groq-70b" },
-    "memory":  { "model_name": "groq-70b" }
+    "default": { "model_name": "groq-llama-8b" },
+    "summary": { "model_name": "groq-llama-70b" },
+    "memory":  { "model_name": "groq-llama-70b" }
   },
   "debug_dump": true,
   "timezone": "Asia/Tokyo",
