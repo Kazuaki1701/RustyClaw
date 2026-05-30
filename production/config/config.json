@@ -31,6 +31,21 @@
       "context_window": "131k"
     },
     {
+      "model_name": "groq-qwen3-32b",
+      "provider": "openai",
+      "model": "qwen/qwen3-32b",
+      "api_base": "$vault:grok-base-url",
+      "api_key": "$vault:grok-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": true,
+      "rpm": 60,
+      "rpd": 1000,
+      "tpm": 6000,
+      "tpd": 500000,
+      "context_window": "131k"
+    },
+    {
       "model_name": "or-llama-3.3-free",
       "provider": "openai",
       "model": "meta-llama/llama-3.3-70b-instruct:free",
