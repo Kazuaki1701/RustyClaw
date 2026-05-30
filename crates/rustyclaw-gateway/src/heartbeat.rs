@@ -379,20 +379,7 @@ mod tests {
         let db = DbManager::new(db_path.to_str().unwrap())?;
         
         let bus = std::sync::Arc::new(MessageBus::new());
-        let config = Config {
-            model_provider: "gmn".to_string(),
-            model_name: "dummy".to_string(),
-            api_key: "dummy".to_string(),
-            api_base_url: "dummy".to_string(),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
+        let config = Config::default();
         
         let service = HeartbeatService::new(config, ws_path.clone(), bus);
 

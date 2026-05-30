@@ -1,7 +1,7 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
-use rustyclaw_config::{get_app_dir, Config};
+use rustyclaw_config::{get_app_dir, Config, LlmModelConfig};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::time::Duration;
@@ -182,17 +182,16 @@ pub trait LlmProvider: Send + Sync {
 
 pub struct OpenAiCompatProvider {
     client: reqwest::Client,
-    config: Config,
+    model: LlmModelConfig,
 }
 
 impl OpenAiCompatProvider {
-    pub fn new(config: Config) -> Self {
+    pub fn new(model: LlmModelConfig) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(900)) // デフォルト15分
+            .timeout(Duration::from_secs(900))
             .build()
             .expect("Failed to build reqwest HTTP client with rustls");
-        
-        Self { client, config }
+        Self { client, model }
     }
 
     fn resolve_model(&self, model: &str) -> String {
@@ -200,14 +199,8 @@ impl OpenAiCompatProvider {
             if let Ok(env_val) = std::env::var("RUSTYCLAW_FLASH_MODEL_NAME") {
                 return env_val;
             }
-            if self.config.api_base_url.contains("cloudflare") || self.config.api_base_url.contains("workers-ai") {
-                "@cf/meta/llama-3.2-3b-instruct".to_string()
-            } else {
-                self.config.model_name.clone()
-            }
-        } else {
-            model.to_string()
         }
+        model.to_string()
     }
 }
 
@@ -291,7 +284,7 @@ impl LlmProvider for OpenAiCompatProvider {
         tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<LlmResponse, ProviderError> {
-        let url = format!("{}/chat/completions", self.config.api_base_url);
+        let url = format!("{}/chat/completions", self.model.api_base_url);
         
         let openai_messages: Vec<OpenAiMessage> = messages
             .iter()
@@ -330,8 +323,8 @@ impl LlmProvider for OpenAiCompatProvider {
         let request_body = OpenAiRequest {
             model: &resolved_model,
             messages: openai_messages,
-            max_tokens: opts.max_tokens.or(self.config.max_tokens),
-            temperature: opts.temperature.or(self.config.temperature),
+            max_tokens: opts.max_tokens.or(self.model.max_tokens),
+            temperature: opts.temperature.or(self.model.temperature),
             stream: None,
             tools: openai_tools,
         };
@@ -339,7 +332,7 @@ impl LlmProvider for OpenAiCompatProvider {
         tracing::info!("Sending LLM request to OpenAI compat API at {}", url);
         
         let response = self.client.post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Authorization", format!("Bearer {}", self.model.api_key))
             .json(&request_body)
             .send()
             .await
@@ -384,7 +377,7 @@ impl LlmProvider for OpenAiCompatProvider {
         _tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
-        let url = format!("{}/chat/completions", self.config.api_base_url);
+        let url = format!("{}/chat/completions", self.model.api_base_url);
         
         let openai_messages: Vec<OpenAiMessage> = messages
             .iter()
@@ -405,8 +398,8 @@ impl LlmProvider for OpenAiCompatProvider {
         let request_body = OpenAiRequest {
             model: &resolved_model,
             messages: openai_messages,
-            max_tokens: opts.max_tokens.or(self.config.max_tokens),
-            temperature: opts.temperature.or(self.config.temperature),
+            max_tokens: opts.max_tokens.or(self.model.max_tokens),
+            temperature: opts.temperature.or(self.model.temperature),
             stream: Some(true),
             tools: None,
         };
@@ -414,7 +407,7 @@ impl LlmProvider for OpenAiCompatProvider {
         tracing::info!("Sending streaming LLM request to OpenAI compat API at {}", url);
 
         let response = self.client.post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Authorization", format!("Bearer {}", self.model.api_key))
             .json(&request_body)
             .send()
             .await
@@ -823,18 +816,14 @@ impl NoopProvider {
     }
 }
 
-/// 設定に基づいて LLM プロバイダの具象インスタンスを生成するファクトリ
+/// 解決済み LlmModelConfig から LLM プロバイダを生成するファクトリ
 /// RUSTYCLAW_NO_AGENT=1 が設定されている場合は NoopProvider を返す
-pub fn create_provider(config: Config) -> Box<dyn LlmProvider> {
+pub fn create_provider(model: LlmModelConfig) -> Box<dyn LlmProvider> {
     if std::env::var("RUSTYCLAW_NO_AGENT").as_deref() == Ok("1") {
         tracing::info!("[NO-AGENT] Debug mode active — API calls suppressed");
         return Box::new(NoopProvider);
     }
-    if config.model_provider == "openai" {
-        Box::new(OpenAiCompatProvider::new(config))
-    } else {
-        Box::new(GmnCliProvider::new(config))
-    }
+    Box::new(OpenAiCompatProvider::new(model))
 }
 
 #[cfg(test)]
@@ -862,22 +851,16 @@ mod tests {
             }
         });
 
-        let config = Config {
+        let model = LlmModelConfig {
+            model_purpose: "default".to_string(),
             model_provider: "openai".to_string(),
             model_name: "gpt-4o-mini".to_string(),
             api_key: "dummy_key".to_string(),
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
             temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
         };
-
-        let provider = OpenAiCompatProvider::new(config);
+        let provider = OpenAiCompatProvider::new(model);
         let opts = CompletionOptions {
             model: "gpt-4o-mini".to_string(),
             max_tokens: None,
@@ -920,22 +903,16 @@ mod tests {
             }
         });
 
-        let config = Config {
+        let model = LlmModelConfig {
+            model_purpose: "default".to_string(),
             model_provider: "openai".to_string(),
             model_name: "gpt-4o-mini".to_string(),
             api_key: "dummy_key".to_string(),
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
             temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
         };
-
-        let provider = OpenAiCompatProvider::new(config);
+        let provider = OpenAiCompatProvider::new(model);
         let opts = CompletionOptions {
             model: "gpt-4o-mini".to_string(),
             max_tokens: None,
@@ -984,22 +961,7 @@ mod tests {
             std::env::set_var("PATH", format!("{}:{}", temp_dir.path().to_string_lossy(), old_path));
         }
 
-        // Create provider and call complete
-        let config = Config {
-            model_provider: "gmn".to_string(),
-            model_name: "gemini-2.5-pro".to_string(),
-            api_key: "".to_string(),
-            api_base_url: "".to_string(),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
-        let provider = GmnCliProvider::new(config);
+        let provider = GmnCliProvider::new(Config::default());
         let opts = CompletionOptions {
             model: "gemini-2.5-pro".to_string(),
             max_tokens: None,
@@ -1048,22 +1010,16 @@ mod tests {
             }
         });
 
-        let config = Config {
+        let model = LlmModelConfig {
+            model_purpose: "default".to_string(),
             model_provider: "openai".to_string(),
             model_name: "gpt-4o-mini".to_string(),
             api_key: "dummy_key".to_string(),
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
             temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
         };
-
-        let provider = OpenAiCompatProvider::new(config);
+        let provider = OpenAiCompatProvider::new(model);
         let opts = CompletionOptions {
             model: "gpt-4o-mini".to_string(),
             max_tokens: None,
@@ -1099,21 +1055,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_gmn_cli_complete_with_tools_fails() -> anyhow::Result<()> {
-        let config = Config {
-            model_provider: "gmn".to_string(),
-            model_name: "gemini-2.5-pro".to_string(),
-            api_key: "".to_string(),
-            api_base_url: "".to_string(),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
-        let provider = GmnCliProvider::new(config);
+        let provider = GmnCliProvider::new(Config::default());
         let opts = CompletionOptions {
             model: "gemini-2.5-pro".to_string(),
             max_tokens: None,

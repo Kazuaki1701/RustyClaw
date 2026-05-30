@@ -593,11 +593,10 @@ impl Gateway {
         // 1. 設定のロード
         let config = rustyclaw_config::load_config(&self.config_path)
             .context("Failed to load initial configuration for Gateway")?;
-        tracing::info!(
-            "Gateway loaded configuration: provider={}, model={}",
-            config.model_provider,
-            config.model_name
-        );
+        {
+            let m = config.get_model("default");
+            tracing::info!("Gateway loaded configuration: provider={}, model={}", m.model_provider, m.model_name);
+        }
 
         // 2. MCP Manager 初期化 (enabled な MCP サーバーに接続)
         let mcp_manager = Arc::new(rustyclaw_mcp::McpManager::new());
@@ -829,11 +828,8 @@ impl Gateway {
                     match rustyclaw_config::load_config(&self.config_path) {
                         Ok(new_config) => {
                             registry.update_config(new_config.clone());
-                            tracing::info!(
-                                "Configuration reloaded successfully: provider={}, model={}",
-                                new_config.model_provider,
-                                new_config.model_name
-                            );
+                            let m = new_config.get_model("default");
+                            tracing::info!("Configuration reloaded successfully: provider={}, model={}", m.model_provider, m.model_name);
                         }
                         Err(e) => {
                             tracing::error!("Failed to reload configuration: {:#}. Using previous configuration.", e);
@@ -846,11 +842,8 @@ impl Gateway {
                     match rustyclaw_config::load_config(&self.config_path) {
                         Ok(new_config) => {
                             registry.update_config(new_config.clone());
-                            tracing::info!(
-                                "Configuration reloaded successfully via HTTP: provider={}, model={}",
-                                new_config.model_provider,
-                                new_config.model_name
-                            );
+                            let m = new_config.get_model("default");
+                            tracing::info!("Configuration reloaded successfully via HTTP: provider={}, model={}", m.model_provider, m.model_name);
                         }
                         Err(e) => {
                             tracing::error!("Failed to reload configuration via HTTP: {:#}. Using previous configuration.", e);
@@ -919,20 +912,7 @@ mod tests {
         let bus = Arc::new(MessageBus::new());
 
         // LLM 通信用に mock/dummy プロバイダを返す config
-        let config = Config {
-            model_provider: "gmn".to_string(),
-            model_name: "dummy".to_string(),
-            api_key: "dummy".to_string(),
-            api_base_url: "dummy".to_string(),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
+        let config = Config::default();
 
         let tool_registry = Arc::new(rustyclaw_tools::ToolRegistry::new());
         let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry);

@@ -20,7 +20,7 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(config: Config, flush_sem: Arc<Semaphore>) -> Self {
-        let provider = create_provider(config.clone());
+        let provider = create_provider(config.get_model("default"));
         Self { config, provider, flush_sem }
     }
 
@@ -354,13 +354,7 @@ Rules:
         );
 
         let memory_model = config.get_model("memory");
-        let mut model_config = config.clone();
-        model_config.model_provider = memory_model.model_provider.clone();
-        model_config.model_name = memory_model.model_name.clone();
-        model_config.api_key = memory_model.api_key.clone();
-        model_config.api_base_url = memory_model.api_base_url.clone();
-
-        let provider = create_provider(model_config);
+        let provider = create_provider(memory_model.clone());
         let messages = vec![
             Message {
                 role: "system".to_string(),
@@ -489,9 +483,9 @@ Rules:
         self.dump_request(workspace_dir, &messages);
 
         let opts = CompletionOptions {
-            model: self.config.model_name.clone(),
-            max_tokens: self.config.max_tokens,
-            temperature: self.config.temperature,
+            model: self.config.get_model("default").model_name,
+            max_tokens: self.config.get_model("default").max_tokens,
+            temperature: self.config.get_model("default").temperature,
             timeout: Duration::from_secs(900),
         };
 
@@ -558,9 +552,9 @@ Rules:
         self.dump_request(workspace_dir, &messages);
 
         let opts = CompletionOptions {
-            model: self.config.model_name.clone(),
-            max_tokens: self.config.max_tokens,
-            temperature: self.config.temperature,
+            model: self.config.get_model("default").model_name,
+            max_tokens: self.config.get_model("default").max_tokens,
+            temperature: self.config.get_model("default").temperature,
             timeout: Duration::from_secs(900),
         };
 
@@ -644,13 +638,7 @@ Rules:
         }
 
         let summary_model = self.config.get_model("summary");
-        let mut model_config = self.config.clone();
-        model_config.model_provider = summary_model.model_provider.clone();
-        model_config.model_name = summary_model.model_name.clone();
-        model_config.api_key = summary_model.api_key.clone();
-        model_config.api_base_url = summary_model.api_base_url.clone();
-        
-        let provider = create_provider(model_config);
+        let provider = create_provider(summary_model.clone());
         let opts = CompletionOptions {
             model: summary_model.model_name,
             max_tokens: summary_model.max_tokens.or(Some(1500)),
@@ -828,9 +816,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             .collect();
 
         let opts = CompletionOptions {
-            model: self.config.model_name.clone(),
-            max_tokens: self.config.max_tokens,
-            temperature: self.config.temperature,
+            model: self.config.get_model("default").model_name,
+            max_tokens: self.config.get_model("default").max_tokens,
+            temperature: self.config.get_model("default").temperature,
             timeout: Duration::from_secs(900),
         };
 
@@ -956,9 +944,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         self.dump_request(workspace_dir, &messages);
 
         let opts = CompletionOptions {
-            model: self.config.model_name.clone(),
-            max_tokens: self.config.max_tokens,
-            temperature: self.config.temperature,
+            model: self.config.get_model("default").model_name,
+            max_tokens: self.config.get_model("default").max_tokens,
+            temperature: self.config.get_model("default").temperature,
             timeout: Duration::from_secs(900),
         };
 
@@ -1140,29 +1128,39 @@ fn filter_json_leaks(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustyclaw_config::{ModelEntry, AgentsConfig, AgentPurposeConfig};
     use tempfile::tempdir;
     use tokio::net::TcpListener;
     use tokio::io::AsyncWriteExt;
+
+    fn make_test_config_with_url(api_base: &str) -> Config {
+        Config {
+            model_list: vec![ModelEntry {
+                model_name: "test-model".to_string(),
+                provider: "openai".to_string(),
+                model: "gpt-4o-mini".to_string(),
+                api_base: api_base.to_string(),
+                api_key: "dummy".to_string(),
+                max_tokens: Some(2048),
+                temperature: Some(0.7),
+                enabled: true,
+            }],
+            agents: AgentsConfig {
+                default: AgentPurposeConfig { model_name: "test-model".to_string() },
+                summary: None,
+                memory: None,
+            },
+            debug_dump: true,
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn test_build_system_context_injects_runtime_context() {
         let ws_dir = tempdir().unwrap();
         std::fs::write(ws_dir.path().join("SOUL.md"), "soul").unwrap();
 
-        let config = Config {
-            model_provider: "openai".to_string(),
-            model_name: "gpt-4o-mini".to_string(),
-            api_key: "dummy".to_string(),
-            api_base_url: "http://localhost".to_string(),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
+        let config = make_test_config_with_url("http://localhost");
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
         let context = pipeline.build_system_context(ws_dir.path()).unwrap();
@@ -1235,20 +1233,7 @@ mod tests {
             }
         });
 
-        let config = Config {
-            model_provider: "openai".to_string(),
-            model_name: "gpt-4o-mini".to_string(),
-            api_key: "dummy".to_string(),
-            api_base_url: format!("http://{}", addr),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: true,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
+        let config = make_test_config_with_url(&format!("http://{}", addr));
 
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
@@ -1311,20 +1296,7 @@ mod tests {
             }
         });
 
-        let config = Config {
-            model_provider: "openai".to_string(),
-            model_name: "gpt-4o-mini".to_string(),
-            api_key: "dummy".to_string(),
-            api_base_url: format!("http://{}", addr),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: true,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
+        let config = make_test_config_with_url(&format!("http://{}", addr));
 
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
@@ -1392,20 +1364,7 @@ mod tests {
             }
         });
 
-        let config = Config {
-            model_provider: "openai".to_string(),
-            model_name: "gpt-4o-mini".to_string(),
-            api_key: "dummy".to_string(),
-            api_base_url: format!("http://{}", addr),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: true,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
+        let config = make_test_config_with_url(&format!("http://{}", addr));
 
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
@@ -1474,20 +1433,7 @@ mod tests {
             }
         });
 
-        let config = Config {
-            model_provider: "openai".to_string(),
-            model_name: "gpt-4o-mini".to_string(),
-            api_key: "dummy".to_string(),
-            api_base_url: format!("http://{}", addr),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: true,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: std::collections::HashMap::new(),
-            models: vec![],
-        };
+        let config = make_test_config_with_url(&format!("http://{}", addr));
 
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);

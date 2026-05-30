@@ -1,0 +1,77 @@
+{
+  "model_list": [
+    {
+      "model_name": "groq-8b",
+      "provider": "openai",
+      "model": "llama-3.1-8b-instant",
+      "api_base": "$vault:grok-base-url",
+      "api_key": "$vault:grok-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": true
+    },
+    {
+      "model_name": "groq-70b",
+      "provider": "openai",
+      "model": "llama-3.3-70b-versatile",
+      "api_base": "$vault:grok-base-url",
+      "api_key": "$vault:grok-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": true
+    },
+    {
+      "model_name": "or-llama-3.3-free",
+      "provider": "openai",
+      "model": "meta-llama/llama-3.3-70b-instruct:free",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key": "$vault:openrouter-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false
+    }
+  ],
+  "agents": {
+    "default": { "model_name": "groq-8b" },
+    "summary": { "model_name": "groq-70b" },
+    "memory":  { "model_name": "groq-70b" }
+  },
+  "debug_dump": true,
+  "timezone": "Asia/Tokyo",
+  "discord_token": "$vault:discord-token",
+  "discord_home_channel_id": "1485590891489005749",
+  "mcp": {
+    "google-calendar": {
+      "enabled": false,
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-google-calendar"],
+      "env": {
+        "GWS_WRITABLE_CALENDAR_IDS": "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com,d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com"
+      }
+    },
+    "gmail": {
+      "enabled": false,
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-gmail"],
+      "env": { "GWS_GMAIL_DELETABLE_LABEL": "_ai-agent" }
+    },
+    "karakeep": {
+      "enabled": false,
+      "command": "npx",
+      "args": ["-y", "@karakeep/mcp"],
+      "env": {
+        "KARAKEEP_API_KEY": "$vault:karakeep-api-key",
+        "KARAKEEP_SERVER_ADDR": "http://192.168.1.2:33000"
+      }
+    },
+    "obsidian": {
+      "enabled": false,
+      "command": "uvx",
+      "args": ["mcp-obsidian"],
+      "env": {
+        "OBSIDIAN_API_KEY": "$vault:obsidian-api-key",
+        "OBSIDIAN_HOST": "192.168.1.2"
+      }
+    }
+  }
+}

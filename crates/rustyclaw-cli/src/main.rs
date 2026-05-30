@@ -4,7 +4,6 @@ use futures_util::StreamExt;
 use rustyclaw_agent::Pipeline;
 use rustyclaw_config::{get_app_dir, get_config_dir, load_config};
 use rustyclaw_config::vault;
-use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -429,7 +428,10 @@ async fn main() -> Result<()> {
         Commands::Agent { message } => {
             let config = load_config(&cli.config)
                 .with_context(|| format!("Failed to load configuration from {:?}", cli.config))?;
-            tracing::info!("Configuration loaded successfully: provider={}, model={}", config.model_provider, config.model_name);
+            {
+                let m = config.get_model("default");
+                tracing::info!("Configuration loaded successfully: provider={}, model={}", m.model_provider, m.model_name);
+            }
 
             let flush_sem = Arc::new(Semaphore::new(1));
             let pipeline = Pipeline::new(config, flush_sem);

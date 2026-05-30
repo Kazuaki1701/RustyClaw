@@ -25,6 +25,54 @@ pub fn get_config_dir() -> PathBuf {
     get_app_dir().join("config")
 }
 
+// ─────────────────────────────────────────────
+// モデル設定
+// ─────────────────────────────────────────────
+
+/// model_list の各エントリ（config.json に記述する生の値、$vault: 参照含む）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEntry {
+    /// 識別子（agents から参照するキー）
+    pub model_name: String,
+    /// プロバイダ種別（"openai" = OpenAI 互換 API）
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    /// API に渡す実際のモデル ID
+    pub model: String,
+    /// API ベース URL（$vault: 参照可）
+    pub api_base: String,
+    /// API キー（$vault: 参照可）
+    pub api_key: String,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: Option<u32>,
+    #[serde(default = "default_temperature")]
+    pub temperature: Option<f32>,
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+}
+
+fn default_provider() -> String { "openai".to_string() }
+fn default_max_tokens() -> Option<u32> { Some(2048) }
+fn default_temperature() -> Option<f32> { Some(0.7) }
+fn bool_true() -> bool { true }
+
+/// 用途ごとの LLM 設定（model_list の model_name を参照）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentPurposeConfig {
+    pub model_name: String,
+}
+
+/// agents セクション（default 必須、summary/memory は省略時 default にフォールバック）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentsConfig {
+    pub default: AgentPurposeConfig,
+    #[serde(default)]
+    pub summary: Option<AgentPurposeConfig>,
+    #[serde(default)]
+    pub memory: Option<AgentPurposeConfig>,
+}
+
+/// get_model() が返す解決済みモデル設定（$vault: 参照解決済み）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmModelConfig {
     pub model_purpose: String,
@@ -36,22 +84,9 @@ pub struct LlmModelConfig {
     pub temperature: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ParsedLlmModelConfig {
-    pub model_purpose: String,
-    #[serde(default)]
-    pub model_provider: Option<String>,
-    #[serde(default)]
-    pub model_name: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<String>,
-    #[serde(default)]
-    pub api_base_url: Option<String>,
-    #[serde(default)]
-    pub max_tokens: Option<u32>,
-    #[serde(default)]
-    pub temperature: Option<f32>,
-}
+// ─────────────────────────────────────────────
+// MCP
+// ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpServerConfig {
@@ -63,32 +98,28 @@ pub struct McpServerConfig {
     pub env: HashMap<String, String>,
 }
 
+// ─────────────────────────────────────────────
+// Config
+// ─────────────────────────────────────────────
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
-    pub model_provider: String,
-    pub model_name: String,
-    pub api_key: String,
-    pub api_base_url: String,
-    pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
+    /// 利用可能な LLM モデルリスト
+    #[serde(default)]
+    pub model_list: Vec<ModelEntry>,
+    /// 用途別 LLM 選択
+    #[serde(default)]
+    pub agents: AgentsConfig,
     #[serde(default)]
     pub debug_dump: bool,
-    /// Discord Bot トークン。未設定時は環境変数 DISCORD_TOKEN にフォールバック。
     #[serde(default)]
     pub discord_token: Option<String>,
-    /// Heartbeat proactive 通知の送信先 Discord チャンネル ID（数字文字列）。
     #[serde(default)]
     pub discord_home_channel_id: Option<String>,
-    /// @mention なしでも応答するチャンネル ID のホワイトリスト（GeminiClaw respondInChannels 相当）。
-    /// 空リストの場合は @mention のみ応答。
     #[serde(default)]
     pub discord_respond_in_channels: Vec<String>,
-    /// MCP サーバーの設定
     #[serde(default)]
     pub mcp: HashMap<String, McpServerConfig>,
-    /// 複数 LLM モデルの設定
-    #[serde(default)]
-    pub models: Vec<ParsedLlmModelConfig>,
 }
 
 fn resolve_value(val: &str) -> String {
@@ -97,20 +128,17 @@ fn resolve_value(val: &str) -> String {
         std::env::var(env_name).unwrap_or_else(|_| val.to_string())
     } else if val.starts_with("$vault:") {
         let vault_key = &val[7..];
-        // 1. 環境変数（直接 or RUSTYCLAW_VAULT_ プレフィックス）
         if let Ok(env_val) = std::env::var(vault_key) {
             return env_val;
         }
         if let Ok(env_val) = std::env::var(format!("RUSTYCLAW_VAULT_{}", vault_key.to_uppercase())) {
             return env_val;
         }
-        // 2. 暗号化 vault.enc (~/.rustyclaw/vault.enc)
         if let Ok(secrets) = vault::load_vault(None) {
             if let Some(v) = secrets.get(vault_key) {
                 return v.clone();
             }
         }
-        // 3. 後方互換: 平文 vault.json ({config_dir}/vault.json)
         {
             let json_path = get_config_dir().join("vault.json");
             if json_path.exists() {
@@ -130,79 +158,61 @@ fn resolve_value(val: &str) -> String {
 }
 
 impl Config {
-    /// 用途 (model_purpose) に基づいて適切なモデル設定を取得する。
-    /// 一致するモデルが設定されていない場合は、デフォルトのルート設定フォールバックを返す。
-    pub fn get_model(&self, model_purpose: &str) -> LlmModelConfig {
-        if let Some(m) = self.models.iter().find(|m| m.model_purpose == model_purpose) {
-            LlmModelConfig {
-                model_purpose: m.model_purpose.clone(),
-                model_provider: m.model_provider.clone().unwrap_or_else(|| self.model_provider.clone()),
-                model_name: m.model_name.clone().unwrap_or_else(|| self.model_name.clone()),
-                api_key: m.api_key.clone().unwrap_or_else(|| self.api_key.clone()),
-                api_base_url: m.api_base_url.clone().unwrap_or_else(|| self.api_base_url.clone()),
-                max_tokens: m.max_tokens.or(self.max_tokens),
-                temperature: m.temperature.or(self.temperature),
-            }
-        } else {
-            LlmModelConfig {
-                model_purpose: model_purpose.to_string(),
-                model_provider: self.model_provider.clone(),
-                model_name: self.model_name.clone(),
-                api_key: self.api_key.clone(),
-                api_base_url: self.api_base_url.clone(),
-                max_tokens: self.max_tokens,
-                temperature: self.temperature,
-            }
+    /// 用途に対応する解決済み LlmModelConfig を返す。
+    /// 該当 purpose が未設定の場合は default にフォールバック。
+    pub fn get_model(&self, purpose: &str) -> LlmModelConfig {
+        let model_name = match purpose {
+            "summary" => self.agents.summary.as_ref()
+                .map(|s| s.model_name.as_str())
+                .unwrap_or(self.agents.default.model_name.as_str()),
+            "memory" => self.agents.memory.as_ref()
+                .map(|s| s.model_name.as_str())
+                .unwrap_or(self.agents.default.model_name.as_str()),
+            _ => self.agents.default.model_name.as_str(),
+        };
+
+        let entry = self.model_list.iter()
+            .find(|m| m.model_name == model_name && m.enabled)
+            .or_else(|| self.model_list.iter().find(|m| m.enabled));
+
+        match entry {
+            Some(e) => LlmModelConfig {
+                model_purpose: purpose.to_string(),
+                model_provider: e.provider.clone(),
+                model_name: e.model.clone(),
+                api_key: e.api_key.clone(),
+                api_base_url: e.api_base.clone(),
+                max_tokens: e.max_tokens,
+                temperature: e.temperature,
+            },
+            None => LlmModelConfig {
+                model_purpose: purpose.to_string(),
+                ..Default::default()
+            },
         }
     }
 
-    /// 環境変数による設定値のオーバーライドを適用する
+    /// 環境変数による設定オーバーライド
     pub fn override_with_env(&mut self) {
-        if let Ok(val) = std::env::var("RUSTYCLAW_API_KEY") {
-            self.api_key = val.clone();
-            if let Some(m) = self.models.iter_mut().find(|m| m.model_purpose == "default") {
-                m.api_key = Some(val);
-            }
-        }
+        // RUSTYCLAW_MODEL_NAME: agents.default の model_name を上書き
         if let Ok(val) = std::env::var("RUSTYCLAW_MODEL_NAME") {
-            self.model_name = val.clone();
-            if let Some(m) = self.models.iter_mut().find(|m| m.model_purpose == "default") {
-                m.model_name = Some(val);
-            }
-        }
-        if let Ok(val) = std::env::var("RUSTYCLAW_API_BASE_URL") {
-            self.api_base_url = val.clone();
-            if let Some(m) = self.models.iter_mut().find(|m| m.model_purpose == "default") {
-                m.api_base_url = Some(val);
-            }
+            self.agents.default.model_name = val;
         }
     }
 
-    /// $vault: や $env: のプレフィックスを解決する
+    /// $vault: / $env: 参照を解決する
     pub fn resolve_secrets(&mut self) {
-        self.model_name = resolve_value(&self.model_name);
-        self.api_key = resolve_value(&self.api_key);
-        self.api_base_url = resolve_value(&self.api_base_url);
-        
-        for model in self.models.iter_mut() {
-            if let Some(ref name) = model.model_name {
-                model.model_name = Some(resolve_value(name));
-            }
-            if let Some(ref key) = model.api_key {
-                model.api_key = Some(resolve_value(key));
-            }
-            if let Some(ref url) = model.api_base_url {
-                model.api_base_url = Some(resolve_value(url));
-            }
+        for entry in self.model_list.iter_mut() {
+            entry.api_key = resolve_value(&entry.api_key);
+            entry.api_base = resolve_value(&entry.api_base);
+            entry.model = resolve_value(&entry.model);
         }
-
         if let Some(ref token) = self.discord_token {
             self.discord_token = Some(resolve_value(token));
         }
         if let Some(ref channel) = self.discord_home_channel_id {
             self.discord_home_channel_id = Some(resolve_value(channel));
         }
-        
         for server in self.mcp.values_mut() {
             for val in server.env.values_mut() {
                 *val = resolve_value(val);
@@ -212,12 +222,6 @@ impl Config {
 }
 
 /// システムの IANA タイムゾーン名を検出する。
-///
-/// 優先順位:
-///   1. /etc/timezone（Debian / Raspberry Pi OS）
-///   2. /etc/localtime シンボリックリンクから zoneinfo パスを抽出
-///   3. TZ 環境変数
-///   4. None（呼び出し側は chrono::Local にフォールバック）
 pub fn detect_timezone() -> Option<String> {
     if let Ok(tz) = std::fs::read_to_string("/etc/timezone") {
         let tz = tz.trim().to_string();
@@ -234,7 +238,7 @@ pub fn detect_timezone() -> Option<String> {
     std::env::var("TZ").ok()
 }
 
-/// 指定されたパスから `config.json` をロードする
+/// 指定されたパスから config.json をロードする
 pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     let file = File::open(&path)
         .with_context(|| format!("Failed to open config file at {:?}", path.as_ref()))?;
@@ -242,10 +246,7 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     let mut config: Config = serde_json::from_reader(reader)
         .with_context(|| "Failed to parse config.json schema")?;
 
-    // 環境変数によるオーバーライドの適用
     config.override_with_env();
-
-    // シークレットの解決
     config.resolve_secrets();
 
     Ok(config)
@@ -257,104 +258,131 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    fn make_test_config() -> Config {
+        Config {
+            model_list: vec![
+                ModelEntry {
+                    model_name: "test-8b".to_string(),
+                    provider: "openai".to_string(),
+                    model: "llama-3.1-8b-instant".to_string(),
+                    api_base: "https://api.test.com/v1".to_string(),
+                    api_key: "test-key".to_string(),
+                    max_tokens: Some(2048),
+                    temperature: Some(0.7),
+                    enabled: true,
+                },
+                ModelEntry {
+                    model_name: "test-70b".to_string(),
+                    provider: "openai".to_string(),
+                    model: "llama-3.3-70b-versatile".to_string(),
+                    api_base: "https://api.test.com/v1".to_string(),
+                    api_key: "test-key-70b".to_string(),
+                    max_tokens: Some(1500),
+                    temperature: Some(0.3),
+                    enabled: true,
+                },
+            ],
+            agents: AgentsConfig {
+                default: AgentPurposeConfig { model_name: "test-8b".to_string() },
+                summary: Some(AgentPurposeConfig { model_name: "test-70b".to_string() }),
+                memory: Some(AgentPurposeConfig { model_name: "test-70b".to_string() }),
+            },
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_load_config_success() -> Result<()> {
         let mut tmp_file = NamedTempFile::new()?;
         let json_data = r#"{
-            "model_provider": "openai",
-            "model_name": "gpt-4o-mini",
-            "api_key": "test_key",
-            "api_base_url": "https://api.openai.com/v1",
-            "max_tokens": 100,
-            "temperature": 0.5,
+            "model_list": [
+                {
+                    "model_name": "groq-8b",
+                    "provider": "openai",
+                    "model": "llama-3.1-8b-instant",
+                    "api_base": "https://api.groq.com/openai/v1",
+                    "api_key": "test_key",
+                    "max_tokens": 2048,
+                    "temperature": 0.7,
+                    "enabled": true
+                }
+            ],
+            "agents": {
+                "default": { "model_name": "groq-8b" }
+            },
             "debug_dump": true
         }"#;
         tmp_file.write_all(json_data.as_bytes())?;
 
         let config = load_config(tmp_file.path())?;
-        assert_eq!(config.model_provider, "openai");
-        assert_eq!(config.model_name, "gpt-4o-mini");
-        assert_eq!(config.api_key, "test_key");
-        assert_eq!(config.max_tokens, Some(100));
-        assert_eq!(config.temperature, Some(0.5));
+        assert_eq!(config.model_list.len(), 1);
+        assert_eq!(config.model_list[0].model_name, "groq-8b");
+        assert_eq!(config.agents.default.model_name, "groq-8b");
         assert!(config.debug_dump);
 
+        let model = config.get_model("default");
+        assert_eq!(model.model_name, "llama-3.1-8b-instant");
+        assert_eq!(model.model_provider, "openai");
+        assert_eq!(model.api_key, "test_key");
+
         Ok(())
     }
 
     #[test]
-    fn test_env_override() -> Result<()> {
-        let mut config = Config {
-            model_provider: "openai".to_string(),
-            model_name: "gpt-4o-mini".to_string(),
-            api_key: "original_key".to_string(),
-            api_base_url: "https://api.openai.com/v1".to_string(),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: HashMap::new(),
-            models: vec![],
-        };
+    fn test_get_model_purpose_fallback() {
+        let config = make_test_config();
 
-        unsafe {
-            std::env::set_var("RUSTYCLAW_API_KEY", "env_key");
-            std::env::set_var("RUSTYCLAW_MODEL_NAME", "env_model");
-        }
+        let default = config.get_model("default");
+        assert_eq!(default.model_name, "llama-3.1-8b-instant");
+
+        let summary = config.get_model("summary");
+        assert_eq!(summary.model_name, "llama-3.3-70b-versatile");
+        assert_eq!(summary.api_key, "test-key-70b");
+
+        let memory = config.get_model("memory");
+        assert_eq!(memory.model_name, "llama-3.3-70b-versatile");
+
+        // 未設定 purpose は default にフォールバック
+        let unknown = config.get_model("heartbeat");
+        assert_eq!(unknown.model_name, "llama-3.1-8b-instant");
+    }
+
+    #[test]
+    fn test_env_override() {
+        let mut config = make_test_config();
+        unsafe { std::env::set_var("RUSTYCLAW_MODEL_NAME", "test-70b"); }
         config.override_with_env();
-
-        assert_eq!(config.api_key, "env_key");
-        assert_eq!(config.model_name, "env_model");
-
-        unsafe {
-            std::env::remove_var("RUSTYCLAW_API_KEY");
-            std::env::remove_var("RUSTYCLAW_MODEL_NAME");
-        }
-        Ok(())
+        assert_eq!(config.agents.default.model_name, "test-70b");
+        let model = config.get_model("default");
+        assert_eq!(model.model_name, "llama-3.3-70b-versatile");
+        unsafe { std::env::remove_var("RUSTYCLAW_MODEL_NAME"); }
     }
 
     #[test]
-    fn test_resolve_secrets() -> Result<()> {
+    fn test_resolve_secrets() {
         let mut config = Config {
-            model_provider: "openai".to_string(),
-            model_name: "gpt-4o-mini".to_string(),
-            api_key: "$env:TEST_SECRET_API_KEY".to_string(),
-            api_base_url: "$vault:cf-base-url".to_string(),
-            max_tokens: None,
-            temperature: None,
-            debug_dump: false,
-            discord_token: None,
-            discord_home_channel_id: None,
-            discord_respond_in_channels: vec![],
-            mcp: HashMap::new(),
-            models: vec![],
+            model_list: vec![ModelEntry {
+                model_name: "test".to_string(),
+                provider: "openai".to_string(),
+                model: "gpt-4o".to_string(),
+                api_base: "https://api.openai.com/v1".to_string(),
+                api_key: "$env:TEST_API_KEY_CFG".to_string(),
+                max_tokens: Some(2048),
+                temperature: Some(0.7),
+                enabled: true,
+            }],
+            ..Default::default()
         };
-
-        unsafe {
-            std::env::set_var("TEST_SECRET_API_KEY", "resolved_env_key");
-            std::env::set_var("cf-base-url", "resolved_vault_base_url");
-        }
-
+        unsafe { std::env::set_var("TEST_API_KEY_CFG", "resolved_key"); }
         config.resolve_secrets();
-
-        assert_eq!(config.api_key, "resolved_env_key");
-        assert_eq!(config.api_base_url, "resolved_vault_base_url");
-
-        unsafe {
-            std::env::remove_var("TEST_SECRET_API_KEY");
-            std::env::remove_var("cf-base-url");
-        }
-        Ok(())
+        assert_eq!(config.model_list[0].api_key, "resolved_key");
+        unsafe { std::env::remove_var("TEST_API_KEY_CFG"); }
     }
 
     #[test]
     fn test_detect_timezone_returns_string() {
-        // 検出結果が Some の場合、空文字列でないこと
         if let Some(tz) = detect_timezone() {
             assert!(!tz.is_empty());
         }
-        // None の場合は chrono::Local にフォールバックするため問題なし
     }
 }
