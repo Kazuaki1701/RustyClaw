@@ -77,7 +77,7 @@ pub struct AgentPurposeConfig {
     pub model_name: String,
 }
 
-/// agents セクション（default 必須、summary/memory は省略時 default にフォールバック）
+/// agents セクション（default 必須、各 purpose は省略時 default にフォールバック）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentsConfig {
     pub default: AgentPurposeConfig,
@@ -85,6 +85,14 @@ pub struct AgentsConfig {
     pub summary: Option<AgentPurposeConfig>,
     #[serde(default)]
     pub memory: Option<AgentPurposeConfig>,
+    #[serde(default)]
+    pub tools: Option<AgentPurposeConfig>,
+    #[serde(default)]
+    pub discord: Option<AgentPurposeConfig>,
+    #[serde(default)]
+    pub line: Option<AgentPurposeConfig>,
+    #[serde(default)]
+    pub heartbeat: Option<AgentPurposeConfig>,
 }
 
 /// get_model() が返す解決済みモデル設定（$vault: 参照解決済み）
@@ -270,6 +278,18 @@ impl Config {
             "memory" => self.agents.memory.as_ref()
                 .map(|s| s.model_name.as_str())
                 .unwrap_or(self.agents.default.model_name.as_str()),
+            "tools" => self.agents.tools.as_ref()
+                .map(|s| s.model_name.as_str())
+                .unwrap_or(self.agents.default.model_name.as_str()),
+            "discord" => self.agents.discord.as_ref()
+                .map(|s| s.model_name.as_str())
+                .unwrap_or(self.agents.default.model_name.as_str()),
+            "line" => self.agents.line.as_ref()
+                .map(|s| s.model_name.as_str())
+                .unwrap_or(self.agents.default.model_name.as_str()),
+            "heartbeat" => self.agents.heartbeat.as_ref()
+                .map(|s| s.model_name.as_str())
+                .unwrap_or(self.agents.default.model_name.as_str()),
             _ => self.agents.default.model_name.as_str(),
         };
 
@@ -401,6 +421,10 @@ mod tests {
                 default: AgentPurposeConfig { model_name: "test-8b".to_string() },
                 summary: Some(AgentPurposeConfig { model_name: "test-70b".to_string() }),
                 memory: Some(AgentPurposeConfig { model_name: "test-70b".to_string() }),
+                tools: None,
+                discord: None,
+                line: None,
+                heartbeat: None,
             },
             ..Default::default()
         }
@@ -457,9 +481,27 @@ mod tests {
         let memory = config.get_model("memory");
         assert_eq!(memory.model_name, "llama-3.3-70b-versatile");
 
-        // 未設定 purpose は default にフォールバック
+        // heartbeat は明示設定なし → default にフォールバック（設定済みなら専用モデルを返す）
         let unknown = config.get_model("heartbeat");
         assert_eq!(unknown.model_name, "llama-3.1-8b-instant");
+    }
+
+    #[test]
+    fn test_get_model_new_purposes() {
+        let mut config = make_test_config();
+        // 未設定 → default にフォールバック
+        assert_eq!(config.get_model("tools").model_name,     "llama-3.1-8b-instant");
+        assert_eq!(config.get_model("discord").model_name,   "llama-3.1-8b-instant");
+        assert_eq!(config.get_model("line").model_name,      "llama-3.1-8b-instant");
+        assert_eq!(config.get_model("heartbeat").model_name, "llama-3.1-8b-instant");
+
+        // 明示設定した場合はそちらを返す
+        config.agents.discord   = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
+        config.agents.heartbeat = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
+        config.agents.tools     = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
+        assert_eq!(config.get_model("discord").model_name,   "llama-3.3-70b-versatile");
+        assert_eq!(config.get_model("heartbeat").model_name, "llama-3.3-70b-versatile");
+        assert_eq!(config.get_model("tools").model_name,     "llama-3.3-70b-versatile");
     }
 
     #[test]
