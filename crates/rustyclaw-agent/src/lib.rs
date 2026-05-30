@@ -482,10 +482,11 @@ Rules:
 
         self.dump_request(workspace_dir, &messages);
 
+        let heartbeat_model = self.config.get_model("heartbeat");
         let opts = CompletionOptions {
-            model: self.config.get_model("default").model_name,
-            max_tokens: self.config.get_model("default").max_tokens,
-            temperature: self.config.get_model("default").temperature,
+            model: heartbeat_model.model_name,
+            max_tokens: heartbeat_model.max_tokens,
+            temperature: heartbeat_model.temperature,
             timeout: Duration::from_secs(900),
         };
 
