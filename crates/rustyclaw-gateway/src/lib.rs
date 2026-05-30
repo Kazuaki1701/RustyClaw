@@ -13,6 +13,7 @@ pub mod health;
 pub mod watchdog;
 pub mod cron;
 pub mod heartbeat;
+pub(crate) mod skills;
 
 
 
@@ -464,6 +465,8 @@ impl LaneRegistry {
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                     let tool_reg = tool_registry.clone();
+                                    // スキルファイル注入（workspace/skills/<name>.md が存在すれば前置）
+                                    let content = crate::skills::inject_skill_content(&workspace_path, &content);
                                     let exec_res = if session_id.starts_with("cron:session-summary:") {
                                         let target_session_id = &session_id["cron:session-summary:".len()..];
                                         pipeline.generate_session_summary(&workspace_path, target_session_id)
