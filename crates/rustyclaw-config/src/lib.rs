@@ -20,6 +20,11 @@ pub fn get_app_dir() -> PathBuf {
     PathBuf::from(home).join(".rustyclaw")
 }
 
+/// 設定ファイルディレクトリを返す: {app_dir}/config/
+pub fn get_config_dir() -> PathBuf {
+    get_app_dir().join("config")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmModelConfig {
     pub model_purpose: String,
@@ -105,9 +110,9 @@ fn resolve_value(val: &str) -> String {
                 return v.clone();
             }
         }
-        // 3. 後方互換: 平文 vault.json ({app_dir}/vault.json)
+        // 3. 後方互換: 平文 vault.json ({config_dir}/vault.json)
         {
-            let json_path = get_app_dir().join("vault.json");
+            let json_path = get_config_dir().join("vault.json");
             if json_path.exists() {
                 if let Ok(file) = std::fs::File::open(json_path) {
                     if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {

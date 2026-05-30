@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
 use rustyclaw_agent::Pipeline;
-use rustyclaw_config::{get_app_dir, load_config};
+use rustyclaw_config::{get_app_dir, get_config_dir, load_config};
 use rustyclaw_config::vault;
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -20,7 +20,7 @@ struct Cli {
     command: Commands,
 
     /// 設定ファイルのパス
-    #[arg(short, long, global = true, default_value = "config.json")]
+    #[arg(short, long, global = true, default_value = "config/config.json")]
     config: PathBuf,
 
     /// ワークスペースのパス
@@ -215,7 +215,7 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
                 println!("Secrets : 0");
 
                 // 平文 vault.json が同ディレクトリに残っている場合は移行を促す
-                let legacy = get_app_dir().join("vault.json");
+                let legacy = get_config_dir().join("vault.json");
                 if legacy.exists() {
                     println!();
                     println!("⚠  Legacy vault.json found at {}", legacy.display());
@@ -294,7 +294,7 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
         }
 
         VaultCommands::ImportJson { path } => {
-            let json_path = path.unwrap_or_else(|| get_app_dir().join("vault.json"));
+            let json_path = path.unwrap_or_else(|| get_config_dir().join("vault.json"));
             if !json_path.exists() {
                 anyhow::bail!("vault.json not found: {}", json_path.display());
             }
