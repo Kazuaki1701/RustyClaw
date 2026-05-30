@@ -257,7 +257,7 @@
     },
     "brave-search": {
       "enabled": true,
-      "api_key": "$vault:BRAVE_SEARCH_API_KEY"
+      "api_key": "$vault:brave-search-api-key"
     },
     "google-workspace": {
       "enabled": true,
