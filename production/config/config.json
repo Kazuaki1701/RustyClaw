@@ -46,6 +46,71 @@
       "context_window": "131k"
     },
     {
+      "model_name": "or-deepseek-v4-flash",
+      "provider": "openai",
+      "model": "deepseek/deepseek-v4-flash:free",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key": "$vault:openrouter-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "rpm": 20,
+      "rpd": 200,
+      "context_window": "1M"
+    },
+    {
+      "model_name": "or-minimax-m2.5",
+      "provider": "openai",
+      "model": "minimax/minimax-m2.5:free",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key": "$vault:openrouter-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "rpm": 20,
+      "rpd": 200,
+      "context_window": "205k"
+    },
+    {
+      "model_name": "or-gemma-4-31b",
+      "provider": "openai",
+      "model": "google/gemma-4-31b-it:free",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key": "$vault:openrouter-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "rpm": 20,
+      "rpd": 200,
+      "context_window": "262k"
+    },
+    {
+      "model_name": "or-nemotron-120b",
+      "provider": "openai",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key": "$vault:openrouter-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "rpm": 20,
+      "rpd": 200,
+      "context_window": "1M"
+    },
+    {
+      "model_name": "or-gpt-oss-120b",
+      "provider": "openai",
+      "model": "openai/gpt-oss-120b:free",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key": "$vault:openrouter-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "rpm": 20,
+      "rpd": 200,
+      "context_window": "131k"
+    },
+    {
       "model_name": "or-llama-3.3-free",
       "provider": "openai",
       "model": "meta-llama/llama-3.3-70b-instruct:free",
@@ -55,7 +120,7 @@
       "temperature": 0.7,
       "enabled": false,
       "rpm": 20,
-      "rpd": 1000,
+      "rpd": 200,
       "context_window": "131k"
     }
   ],
