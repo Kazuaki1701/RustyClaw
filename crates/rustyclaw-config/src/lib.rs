@@ -93,6 +93,8 @@ pub struct AgentsConfig {
     pub line: Option<AgentPurposeConfig>,
     #[serde(default)]
     pub heartbeat: Option<AgentPurposeConfig>,
+    #[serde(default)]
+    pub patrol: Option<AgentPurposeConfig>,
 }
 
 /// get_model() が返す解決済みモデル設定（$vault: 参照解決済み）
@@ -298,6 +300,9 @@ impl Config {
                 .map(|s| s.model_name.as_str())
                 .unwrap_or(self.agents.default.model_name.as_str()),
             "heartbeat" => self.agents.heartbeat.as_ref()
+                .map(|s| s.model_name.as_str())
+                .unwrap_or(self.agents.default.model_name.as_str()),
+            "patrol" => self.agents.patrol.as_ref()
                 .map(|s| s.model_name.as_str())
                 .unwrap_or(self.agents.default.model_name.as_str()),
             _ => self.agents.default.model_name.as_str(),

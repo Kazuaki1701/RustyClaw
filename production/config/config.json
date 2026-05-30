@@ -226,6 +226,7 @@
     "discord":   { "model_name": "groq-llama-70b" },
     "line":      { "model_name": "groq-llama-70b" },
     "heartbeat": { "model_name": "groq-llama-8b" },
+    "patrol":    { "model_name": "groq-llama-70b" },
     "summary":   { "model_name": "cf-gemma-4-26b" },
     "memory":    { "model_name": "cf-qwen3-30b" }
   },

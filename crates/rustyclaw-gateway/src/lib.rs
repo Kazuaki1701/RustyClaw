@@ -477,7 +477,8 @@ impl LaneRegistry {
                                                 tool_calls: None,
                                             })
                                     } else {
-                                        pipeline.execute_with_tools(&workspace_path, &session_id, &content, &tool_reg, "discord").await
+                                        let run_purpose = if session_id == "cron:topic-patrol" { "patrol" } else { "discord" };
+                                        pipeline.execute_with_tools(&workspace_path, &session_id, &content, &tool_reg, run_purpose).await
                                     };
                                     match exec_res {
                                         Ok(response) => {
