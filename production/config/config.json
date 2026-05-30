@@ -255,6 +255,10 @@
       "host": "192.168.1.2",
       "api_key": "$vault:obsidian-api-key"
     },
+    "brave-search": {
+      "enabled": true,
+      "api_key": "$vault:BRAVE_SEARCH_API_KEY"
+    },
     "google-workspace": {
       "enabled": true,
       "writable_calendar_ids": [

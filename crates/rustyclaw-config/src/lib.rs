@@ -183,6 +183,14 @@ pub struct ObsidianConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BraveSearchConfig {
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GoogleWorkspaceConfig {
     #[serde(default = "bool_true")]
     pub enabled: bool,
@@ -205,6 +213,8 @@ pub struct ToolsConfig {
     pub obsidian: Option<ObsidianConfig>,
     #[serde(default, rename = "google-workspace")]
     pub google_workspace: Option<GoogleWorkspaceConfig>,
+    #[serde(default, rename = "brave-search")]
+    pub brave_search: Option<BraveSearchConfig>,
 }
 
 // ─────────────────────────────────────────────
@@ -343,6 +353,9 @@ impl Config {
         if let Some(ref mut o) = self.tools.obsidian {
             o.host = resolve_value(&o.host);
             o.api_key = resolve_value(&o.api_key);
+        }
+        if let Some(ref mut b) = self.tools.brave_search {
+            b.api_key = resolve_value(&b.api_key);
         }
         for server in self.mcp.values_mut() {
             for val in server.env.values_mut() {

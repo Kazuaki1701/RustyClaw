@@ -635,6 +635,21 @@ impl Gateway {
             }
         }
 
+        // Brave Search ネイティブツール登録
+        if let Some(b) = config.tools.brave_search.as_ref().filter(|b| b.enabled) {
+            if !b.api_key.is_empty() {
+                tool_registry.register(Arc::new(rustyclaw_tools::WebSearchTool::new(b.api_key.clone())));
+                tracing::info!("Registered WebSearchTool (Brave Search).");
+            }
+        }
+        // WebFetchTool は常時登録（APIキー不要）
+        tool_registry.register(Arc::new(rustyclaw_tools::WebFetchTool::new()));
+
+        // WorkspaceReadTool / WorkspaceWriteTool 登録
+        tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone())));
+        tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone())));
+        tracing::info!("Registered Workspace I/O tools.");
+
         // Google Workspace ネイティブツール登録
         if let Some(gws) = config.tools.google_workspace.as_ref().filter(|g| g.enabled) {
             let gws_path = gws.gws_path.clone().unwrap_or_else(|| {
