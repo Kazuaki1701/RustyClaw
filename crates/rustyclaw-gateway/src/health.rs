@@ -247,535 +247,455 @@ fn get_latest_app_log() -> Option<PathBuf> {
 
 // ── ダッシュボード HTML ────────────────────────────────────────────────────────
 
+
 fn get_dashboard_html() -> String {
-    r#"<!DOCTYPE html>
+    r##"<!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RustyClaw Runtime Control Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg:           #0b0f19;
-            --panel-bg:     rgba(15, 23, 42, 0.55);
-            --border:       rgba(255, 255, 255, 0.08);
-            --text:         #f8fafc;
-            --muted:        #94a3b8;
-            --purple:       #c084fc;
-            --blue:         #60a5fa;
-            --green:        #34d399;
-            --cyan:         #22d3ee;
-            --amber:        #fbbf24;
-            --pink:         #f472b6;
-            --term-bg:      #05070c;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            font-family: 'Outfit', sans-serif;
-            background: var(--bg);
-            background-image:
-                radial-gradient(at 0% 0%,   rgba(168,85,247,.15) 0, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(59,130,246,.15) 0, transparent 50%);
-            color: var(--text);
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        /* ── HEADER ─────────────────────────────────── */
-        header {
-            background: rgba(15,23,42,.8);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            padding: 14px 28px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-shrink: 0;
-        }
-        header h1 {
-            font-size: 20px; font-weight: 800;
-            background: linear-gradient(135deg, var(--purple), var(--blue));
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        }
-        .status-badge {
-            display: flex; align-items: center; gap: 8px;
-            font-size: 13px; font-weight: 600; color: var(--green);
-            background: rgba(52,211,153,.1); padding: 5px 12px;
-            border-radius: 20px; border: 1px solid rgba(52,211,153,.25);
-        }
-        .status-dot {
-            width: 8px; height: 8px; background: var(--green);
-            border-radius: 50%; animation: pulse 1.5s infinite;
-        }
-
-        /* ── MAIN LAYOUT ────────────────────────────── */
-        main {
-            flex: 1;
-            display: flex;
-            padding: 16px;
-            gap: 16px;
-            overflow: hidden;
-            min-height: 0;
-        }
-
-        /* ── CHAT PANE (left) ───────────────────────── */
-        .chat-pane {
-            flex: 4;
-            background: var(--panel-bg);
-            backdrop-filter: blur(16px);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            display: flex; flex-direction: column;
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,.3);
-        }
-        .chat-header {
-            padding: 13px 18px; border-bottom: 1px solid var(--border);
-            display: flex; align-items: center; gap: 10px; flex-shrink: 0;
-        }
-        .avatar {
-            width: 30px; height: 30px; border-radius: 50%;
-            background: linear-gradient(135deg, #a855f7, #3b82f6); flex-shrink: 0;
-        }
-        .chat-header-info h2 { font-size: 15px; font-weight: 600; }
-        .chat-header-info p  { font-size: 11px; color: var(--muted); }
-
-        .chat-messages {
-            flex: 1; padding: 16px;
-            overflow-y: auto;
-            display: flex; flex-direction: column; gap: 12px;
-            min-height: 0;
-        }
-        .message {
-            max-width: 82%; padding: 10px 14px;
-            border-radius: 12px; font-size: 14px; line-height: 1.55;
-            animation: slideUp .25s ease forwards;
-        }
-        .message.user {
-            align-self: flex-end;
-            background: linear-gradient(135deg, rgba(168,85,247,.18), rgba(59,130,246,.18));
-            border: 1px solid rgba(168,85,247,.2); border-bottom-right-radius: 3px;
-        }
-        .message.assistant {
-            align-self: flex-start;
-            background: rgba(255,255,255,.05);
-            border: 1px solid var(--border); border-bottom-left-radius: 3px;
-        }
-        .chat-input-area {
-            padding: 12px 16px; border-top: 1px solid var(--border);
-            display: flex; gap: 8px; flex-shrink: 0;
-        }
-        .chat-input {
-            flex: 1; background: rgba(0,0,0,.2); border: 1px solid var(--border);
-            border-radius: 8px; padding: 10px 14px; color: var(--text);
-            font-family: inherit; font-size: 14px; outline: none; transition: border-color .2s;
-        }
-        .chat-input:focus { border-color: var(--purple); }
-        .send-btn {
-            background: linear-gradient(135deg, #a855f7, #3b82f6);
-            border: none; border-radius: 8px; color: #fff;
-            padding: 0 18px; font-weight: 600; font-size: 14px;
-            cursor: pointer; transition: opacity .2s;
-        }
-        .send-btn:hover { opacity: .88; }
-        .loading-dots { display: flex; gap: 4px; padding: 10px 14px; align-self: flex-start; }
-        .dot {
-            width: 5px; height: 5px; background: var(--muted);
-            border-radius: 50%; animation: blink 1.4s infinite both;
-        }
-        .dot:nth-child(2) { animation-delay: .2s; }
-        .dot:nth-child(3) { animation-delay: .4s; }
-
-        /* ── RIGHT COLUMN ───────────────────────────── */
-        .right-col {
-            flex: 6;
-            display: flex; flex-direction: column;
-            gap: 14px;
-            min-height: 0; overflow: hidden;
-        }
-
-        /* ── TERMINAL PANEL (shared base) ───────────── */
-        .panel {
-            background: var(--term-bg);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            display: flex; flex-direction: column;
-            overflow: hidden;
-            box-shadow: 0 6px 20px rgba(0,0,0,.35);
-            min-height: 0;
-        }
-        .panel.memory         { border-color: rgba(192,132,252,.18); flex: 3; }
-        .panel.heartbeat-wrap { flex: 3; display: flex; gap: 14px; background: transparent;
-                                border: none; box-shadow: none; overflow: hidden; }
-        .panel.digest         { border-color: rgba(52,211,153,.18); flex: 6; }
-        .panel.hb-state       { border-color: rgba(251,191,36,.18);  flex: 4; }
-        .panel.queue          { border-color: rgba(244,114,182,.18);  flex: 3; }
-        .panel.applog         { border-color: rgba(34,211,238,.18);  flex: 4; }
-
-        .panel-header {
-            background: rgba(255,255,255,.02);
-            padding: 7px 14px; border-bottom: 1px solid var(--border);
-            display: flex; align-items: center; justify-content: space-between;
-            flex-shrink: 0;
-        }
-        .panel-title {
-            font-size: 11px; font-family: 'Fira Code', monospace; font-weight: 600;
-            display: flex; align-items: center; gap: 7px;
-        }
-        .panel.memory   .panel-title { color: var(--purple); }
-        .panel.digest   .panel-title { color: var(--green);  }
-        .panel.hb-state .panel-title { color: var(--amber);  }
-        .panel.queue    .panel-title { color: var(--pink);   }
-        .panel.applog   .panel-title { color: var(--cyan);   }
-
-        .panel-dots { display: flex; gap: 5px; }
-        .pd { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.1); }
-
-        .panel-body {
-            flex: 1; padding: 12px 14px;
-            overflow-y: auto; min-height: 0;
-            font-family: 'Fira Code', monospace;
-            font-size: 12px; line-height: 1.65;
-            white-space: pre-wrap; word-break: break-word;
-        }
-        .panel.memory   .panel-body { color: #d8b4fe; }
-        .panel.digest   .panel-body { color: #a7f3d0; }
-        .panel.hb-state .panel-body { color: #fde68a; }
-        .panel.queue    .panel-body { color: #fbcfe8; }
-        .panel.applog   .panel-body { color: #bae6fd; }
-
-        /* ── SCROLLBAR ──────────────────────────────── */
-        ::-webkit-scrollbar { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); }
-
-        /* ── ANIMATIONS ─────────────────────────────── */
-        @keyframes pulse {
-            0%   { transform: scale(.95); box-shadow: 0 0 0 0 rgba(52,211,153,.5); }
-            70%  { transform: scale(1);   box-shadow: 0 0 0 6px rgba(52,211,153,0); }
-            100% { transform: scale(.95); box-shadow: 0 0 0 0 rgba(52,211,153,0); }
-        }
-        @keyframes slideUp {
-            from { opacity: 0; transform: translateY(8px); }
-            to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes blink {
-            0%   { opacity: .2; }
-            20%  { opacity: 1;  }
-            100% { opacity: .2; }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RustyClaw — Runtime Controller</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #000810;
+  --panel-bg: rgba(0,12,28,.88);
+  --border:   rgba(0,200,255,.12);
+  --text:     #e2f4ff;
+  --muted:    #4a7a9b;
+  --purple:   #bf00ff;
+  --blue:     #00d4ff;
+  --green:    #00ff9f;
+  --cyan:     #00e5ff;
+  --amber:    #ffaa00;
+  --pink:     #ff006e;
+  --red:      #ff2244;
+  --term-bg:  #000510;
+  --radius:   6px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Outfit',sans-serif;
+  background:var(--bg);
+  background-image:radial-gradient(ellipse at 0% 0%,rgba(0,80,180,.18) 0,transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(120,0,255,.14) 0,transparent 55%);
+  color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;position:relative;
+}
+body::after{
+  content:'';position:fixed;inset:0;
+  background:repeating-linear-gradient(0deg,transparent 0px,transparent 3px,rgba(0,0,0,.04) 3px,rgba(0,0,0,.04) 4px);
+  pointer-events:none;z-index:9999;
+}
+header{
+  background:rgba(0,8,20,.92);backdrop-filter:blur(16px);
+  border-bottom:1px solid rgba(0,212,255,.15);
+  box-shadow:0 1px 20px rgba(0,212,255,.06);
+  padding:9px 18px;display:flex;align-items:center;gap:18px;flex-shrink:0;
+}
+.logo{
+  font-size:17px;font-weight:800;letter-spacing:.02em;color:var(--blue);
+  text-shadow:0 0 12px rgba(0,212,255,.6),0 0 30px rgba(0,212,255,.3);
+  white-space:nowrap;position:relative;
+}
+.logo::before{
+  content:attr(data-text);position:absolute;inset:0;color:var(--pink);
+  text-shadow:0 0 8px var(--pink);clip-path:inset(100% 0 0 0);
+  animation:glitch 6s infinite;
+}
+@keyframes glitch{
+  0%,89%,100%{clip-path:inset(100% 0 0 0);transform:translate(0)}
+  90%{clip-path:inset(30% 0 60% 0);transform:translate(-2px,0);opacity:.7}
+  92%{clip-path:inset(60% 0 20% 0);transform:translate(2px,0);opacity:.9}
+  94%{clip-path:inset(10% 0 80% 0);transform:translate(-1px,0);opacity:.6}
+}
+.tabs{display:flex;gap:2px;background:rgba(0,212,255,.04);padding:3px;border-radius:var(--radius);border:1px solid rgba(0,212,255,.1)}
+.tab{
+  padding:5px 18px;border-radius:4px;font-size:12px;font-weight:700;letter-spacing:.05em;
+  cursor:pointer;border:none;background:transparent;color:var(--muted);
+  font-family:'Fira Code',monospace;transition:all .15s;
+}
+.tab.active{background:rgba(0,212,255,.12);color:var(--cyan);border:1px solid rgba(0,212,255,.25);box-shadow:0 0 10px rgba(0,212,255,.15)}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.status-badge{
+  display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.06em;
+  color:var(--green);background:rgba(0,255,159,.07);
+  padding:4px 12px;border-radius:20px;border:1px solid rgba(0,255,159,.2);
+  box-shadow:0 0 10px rgba(0,255,159,.1);font-family:'Fira Code',monospace;
+}
+.status-dot{width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 6px var(--green);animation:pulse 1.5s infinite}
+@keyframes pulse{0%{transform:scale(.9);box-shadow:0 0 0 0 rgba(0,255,159,.6)}70%{transform:scale(1);box-shadow:0 0 0 6px rgba(0,255,159,0)}100%{transform:scale(.9);box-shadow:0 0 0 0 rgba(0,255,159,0)}}
+.page{display:none;flex:1;overflow:hidden;min-height:0}
+.page.active{display:flex;flex-direction:column}
+/* MONITOR */
+.monitor-grid{flex:1;display:grid;grid-template-rows:130px 1fr 1fr;gap:8px;padding:8px 10px;overflow:hidden;min-height:0}
+.row1{display:grid;grid-template-columns:2.2fr 1fr 1fr;gap:8px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:0}
+.row3{display:grid;grid-template-columns:3fr 2fr;gap:8px;min-height:0}
+.panel{background:var(--term-bg);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.panel.queue   {border-color:rgba(255,0,110,.25);box-shadow:0 0 12px rgba(255,0,110,.06),inset 0 0 20px rgba(255,0,110,.02)}
+.panel.concur  {border-color:rgba(0,212,255,.25);box-shadow:0 0 12px rgba(0,212,255,.06),inset 0 0 20px rgba(0,212,255,.02)}
+.panel.neurons {border-color:rgba(0,229,255,.25);box-shadow:0 0 12px rgba(0,229,255,.06),inset 0 0 20px rgba(0,229,255,.02)}
+.panel.request {border-color:rgba(191,0,255,.25);box-shadow:0 0 12px rgba(191,0,255,.06),inset 0 0 20px rgba(191,0,255,.02)}
+.panel.response{border-color:rgba(0,255,159,.25);box-shadow:0 0 12px rgba(0,255,159,.06),inset 0 0 20px rgba(0,255,159,.02)}
+.panel.applog  {border-color:rgba(0,212,255,.2);box-shadow:0 0 12px rgba(0,212,255,.04)}
+.panel.chat-p  {border-color:rgba(191,0,255,.2);box-shadow:0 0 12px rgba(191,0,255,.06);background:rgba(0,12,28,.9)}
+.panel-head{
+  padding:5px 12px;border-bottom:1px solid rgba(255,255,255,.05);
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:rgba(0,0,0,.3);
+}
+.panel-label{font-size:10px;font-weight:700;letter-spacing:.1em;font-family:'Fira Code',monospace}
+.panel.queue    .panel-label{color:var(--pink);  text-shadow:0 0 8px rgba(255,0,110,.5)}
+.panel.concur   .panel-label{color:var(--blue);  text-shadow:0 0 8px rgba(0,212,255,.5)}
+.panel.neurons  .panel-label{color:var(--cyan);  text-shadow:0 0 8px rgba(0,229,255,.5)}
+.panel.request  .panel-label{color:var(--purple);text-shadow:0 0 8px rgba(191,0,255,.5)}
+.panel.response .panel-label{color:var(--green); text-shadow:0 0 8px rgba(0,255,159,.5)}
+.panel.applog   .panel-label{color:var(--cyan);  text-shadow:0 0 8px rgba(0,212,255,.4)}
+.panel.chat-p   .panel-label{color:var(--purple);text-shadow:0 0 8px rgba(191,0,255,.5)}
+.panel-body{flex:1;padding:8px 10px;overflow-y:auto;min-height:0;font-family:'Fira Code',monospace;font-size:11px;line-height:1.7}
+.rts{font-size:9px;color:var(--muted);font-family:'Fira Code',monospace}
+.q-item{display:flex;align-items:center;gap:7px;padding:4px 0;font-size:11.5px;border-bottom:1px solid rgba(255,255,255,.03)}
+.q-item:last-child{border-bottom:none}
+.q-pill{font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:.06em;flex-shrink:0}
+.pill-exec{background:rgba(0,255,159,.12);color:var(--green);border:1px solid rgba(0,255,159,.3);box-shadow:0 0 6px rgba(0,255,159,.2)}
+.pill-wait{background:rgba(0,212,255,.10);color:var(--blue); border:1px solid rgba(0,212,255,.3);box-shadow:0 0 6px rgba(0,212,255,.15)}
+.pill-cool{background:rgba(255,170,0,.10);color:var(--amber);border:1px solid rgba(255,170,0,.3);box-shadow:0 0 6px rgba(255,170,0,.15)}
+.q-sid {color:var(--text);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.q-desc{color:var(--muted);font-size:10px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+.q-time{color:var(--muted);font-size:10px;flex-shrink:0}
+.cool-bar{height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:2px;overflow:hidden}
+.cool-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--amber),#ff6600);box-shadow:0 0 4px var(--amber);transition:width .5s}
+.slot-row{display:flex;gap:4px;margin:6px 0 8px}
+.slot{flex:1;height:16px;border-radius:3px;border:1px solid rgba(0,212,255,.15);background:rgba(255,255,255,.03)}
+.slot.active{background:rgba(0,212,255,.25);border-color:var(--blue);box-shadow:0 0 6px rgba(0,212,255,.4)}
+.stat-line{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03);font-size:11.5px}
+.stat-line:last-child{border-bottom:none}
+.sk{color:var(--muted)}.sv{color:var(--text);font-weight:600}
+.sv.ok  {color:var(--green);text-shadow:0 0 8px rgba(0,255,159,.4)}
+.sv.busy{color:var(--amber);text-shadow:0 0 8px rgba(255,170,0,.4)}
+.sv.warn{color:var(--pink); text-shadow:0 0 8px rgba(255,0,110,.4)}
+.n-gauge{margin:6px 0 8px;height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden}
+.n-fill {height:100%;border-radius:3px;background:linear-gradient(90deg,var(--cyan),var(--blue));box-shadow:0 0 6px var(--cyan);transition:width .5s}
+.log-line{display:flex;gap:8px;align-items:baseline;padding:1px 0}
+.log-ts{color:var(--muted);font-size:10px;flex-shrink:0}
+.log-lv{font-size:9px;font-weight:700;flex-shrink:0;letter-spacing:.04em}
+.log-lv.info {color:var(--cyan)}
+.log-lv.warn {color:var(--amber);text-shadow:0 0 6px rgba(255,170,0,.5)}
+.log-lv.error{color:var(--red);  text-shadow:0 0 6px rgba(255,34,68,.5)}
+.log-msg{color:var(--text);font-size:10.5px;word-break:break-all}
+.chat-msgs{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:0}
+.bubble{max-width:86%;padding:8px 12px;border-radius:var(--radius);font-size:13px;line-height:1.55;font-family:'Outfit',sans-serif}
+.bubble.user{align-self:flex-end;background:rgba(191,0,255,.12);border:1px solid rgba(191,0,255,.2);border-bottom-right-radius:1px;box-shadow:0 0 10px rgba(191,0,255,.08)}
+.bubble.ai  {align-self:flex-start;background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.12);border-bottom-left-radius:1px}
+.chat-in-area{padding:8px 10px;border-top:1px solid rgba(255,255,255,.05);display:flex;gap:6px;flex-shrink:0}
+.chat-in{flex:1;background:rgba(0,0,0,.4);border:1px solid rgba(0,212,255,.15);border-radius:var(--radius);padding:7px 12px;color:var(--text);font-size:13px;font-family:'Outfit',sans-serif;outline:none;transition:border-color .2s,box-shadow .2s}
+.chat-in:focus{border-color:rgba(0,212,255,.45);box-shadow:0 0 8px rgba(0,212,255,.15)}
+.send-btn{background:linear-gradient(135deg,rgba(191,0,255,.7),rgba(0,212,255,.7));border:none;border-radius:var(--radius);color:#fff;padding:0 16px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 0 12px rgba(0,212,255,.2);transition:opacity .2s,box-shadow .2s;font-family:'Fira Code',monospace;letter-spacing:.04em}
+.send-btn:hover{opacity:.88;box-shadow:0 0 20px rgba(0,212,255,.35)}
+.loading-dots{display:flex;gap:4px;padding:10px 14px;align-self:flex-start}
+.dot{width:5px;height:5px;background:var(--muted);border-radius:50%;animation:blink 1.4s infinite both}
+.dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
+/* STATS */
+.stats-layout{flex:1;display:flex;flex-direction:column;gap:8px;padding:10px;overflow-y:auto;min-height:0}
+.stats-top{display:flex;align-items:center;justify-content:space-between}
+.stats-title{font-size:11px;color:var(--muted);font-family:'Fira Code',monospace;letter-spacing:.08em}
+.period-bar{display:flex;gap:3px}
+.period-btn{padding:4px 14px;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid rgba(255,255,255,.08);background:transparent;color:var(--muted);font-family:'Fira Code',monospace;transition:all .15s}
+.period-btn.active{background:rgba(0,212,255,.12);color:var(--blue);border-color:rgba(0,212,255,.3);box-shadow:0 0 8px rgba(0,212,255,.12)}
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.kpi{background:var(--panel-bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.kpi.runs   {border-color:rgba(0,212,255,.25);box-shadow:0 0 10px rgba(0,212,255,.06)}
+.kpi.tokens {border-color:rgba(191,0,255,.25);box-shadow:0 0 10px rgba(191,0,255,.06)}
+.kpi.avg    {border-color:rgba(0,255,159,.25);box-shadow:0 0 10px rgba(0,255,159,.06)}
+.kpi.cf     {border-color:rgba(0,229,255,.25);box-shadow:0 0 10px rgba(0,229,255,.06)}
+.kpi-lbl{font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.06em;font-family:'Fira Code',monospace}
+.kpi-val{font-size:24px;font-weight:800;margin:4px 0 2px}
+.kpi.runs   .kpi-val{color:var(--blue);  text-shadow:0 0 12px rgba(0,212,255,.4)}
+.kpi.tokens .kpi-val{color:var(--purple);text-shadow:0 0 12px rgba(191,0,255,.4)}
+.kpi.avg    .kpi-val{color:var(--green); text-shadow:0 0 12px rgba(0,255,159,.4)}
+.kpi.cf     .kpi-val{color:var(--cyan);  text-shadow:0 0 12px rgba(0,229,255,.4)}
+.kpi-sub{font-size:10.5px;color:var(--muted)}
+.chart-wrap{background:var(--term-bg);border:1px solid rgba(191,0,255,.2);border-radius:var(--radius);padding:12px 14px;box-shadow:0 0 12px rgba(191,0,255,.05)}
+.chart-lbl{font-size:10px;font-weight:700;color:var(--purple);letter-spacing:.08em;font-family:'Fira Code',monospace;margin-bottom:8px}
+.x-axis{display:flex;justify-content:space-between;margin-top:4px}
+.x-axis span{font-size:9px;color:var(--muted);font-family:'Fira Code',monospace}
+.chart-legend{display:flex;gap:14px;margin-top:6px}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);font-family:'Fira Code',monospace}
+.leg-dot{width:8px;height:3px;border-radius:1px}
+.stats-bottom{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.breakdown{background:var(--term-bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.bd-title{font-size:10px;font-weight:700;letter-spacing:.08em;font-family:'Fira Code',monospace;margin-bottom:8px}
+.bd-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03);font-size:11px}
+.bd-row:last-child{border-bottom:none}
+.bd-name{width:150px;font-family:'Fira Code',monospace;font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bd-bar-bg{flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden}
+.bd-bar{height:100%;border-radius:2px}
+.bd-cnt{font-size:10px;color:var(--muted);text-align:right;min-width:55px}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(0,212,255,.15);border-radius:2px}
+::-webkit-scrollbar-thumb:hover{background:rgba(0,212,255,.3)}
+</style>
 </head>
 <body>
-
 <header>
-    <h1>🐈‍⬛ RustyClaw Runtime Controller</h1>
-    <div class="status-badge">
-        <span class="status-dot"></span>ACTIVE GATEWAY RUNNING
-    </div>
+  <span class="logo" data-text="🐈‍⬛ RustyClaw">🐈‍⬛ RustyClaw</span>
+  <nav class="tabs">
+    <button class="tab active" onclick="switchTab('monitor',this)">MONITOR</button>
+    <button class="tab"        onclick="switchTab('stats',  this)">STATS</button>
+  </nav>
+  <div class="header-right">
+    <span style="font-size:10px;color:var(--muted);font-family:'Fira Code',monospace">:8080</span>
+    <div class="status-badge"><span class="status-dot"></span>ACTIVE</div>
+  </div>
 </header>
-
-<main>
-    <!-- ── LEFT: CHAT ── -->
-    <div class="chat-pane">
-        <div class="chat-header">
-            <div class="avatar"></div>
-            <div class="chat-header-info">
-                <h2>GEMI アシスタント</h2>
-                <p>RustyClaw Gateway 連携対話</p>
-            </div>
-        </div>
-        <div class="chat-messages" id="chatMessages">
-            <div class="message assistant">
-                こんにちは。RustyClaw Dashboard です。何かお手伝いできますか？
-            </div>
-        </div>
-        <div class="chat-input-area">
-            <input class="chat-input" id="chatInput" type="text"
-                   placeholder="メッセージを入力..." onkeydown="handleKey(event)">
-            <button class="send-btn" id="sendBtn" onclick="sendMessage()">送信</button>
-        </div>
+<div id="page-monitor" class="page active">
+<div class="monitor-grid">
+  <div class="row1">
+    <div class="panel queue">
+      <div class="panel-head"><span class="panel-label">◈ LANE QUEUE</span><span class="rts" id="queue-ts">—</span></div>
+      <div class="panel-body" id="queuePanel" style="padding:6px 8px;"><div style="color:var(--muted);text-align:center;padding:10px;font-family:'Fira Code',monospace;font-size:11px;">キューは空（稼働タスクなし）</div></div>
     </div>
-
-    <!-- ── RIGHT COLUMN ── -->
-    <div class="right-col">
-
-        <!-- MEMORY.md -->
-        <div class="panel memory">
-            <div class="panel-header">
-                <div class="panel-title"><span>🟣</span> MEMORY.md</div>
-                <div class="panel-dots"><span class="pd"></span><span class="pd"></span><span class="pd"></span></div>
-            </div>
-            <div class="panel-body" id="memoryLog">読み込み中...</div>
-        </div>
-
-        <!-- HEARTBEAT ROW: digest (left) + state (right) -->
-        <div class="panel heartbeat-wrap">
-            <div class="panel digest">
-                <div class="panel-header">
-                    <div class="panel-title"><span>🟢</span> heartbeat-digest.md</div>
-                    <div class="panel-dots"><span class="pd"></span><span class="pd"></span><span class="pd"></span></div>
-                </div>
-                <div class="panel-body" id="hbDigest">読み込み中...</div>
-            </div>
-            <div class="panel hb-state">
-                <div class="panel-header">
-                    <div class="panel-title"><span>🟡</span> heartbeat-state.json</div>
-                    <div class="panel-dots"><span class="pd"></span><span class="pd"></span><span class="pd"></span></div>
-                </div>
-                <div class="panel-body" id="hbState">読み込み中...</div>
-            </div>
-        </div>
-
-        <!-- CLOUDFLARE NEURONS QUOTA -->
-        <div class="panel neurons" style="background: rgba(251,191,36,0.02); border: 1px solid rgba(251,191,36,0.15); border-radius: 12px; margin-bottom: 16px; padding: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
-            <div class="panel-header" style="border-bottom: 1px solid rgba(251,191,36,0.1); padding-bottom: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-                <div class="panel-title" style="color: #fbbf24; font-weight: bold; font-family: Outfit, sans-serif; font-size: 14px; display: flex; align-items: center; gap: 6px;">
-                    <span>⚡</span> Cloudflare Workers AI Quota
-                </div>
-                <div style="font-size: 10px; color: rgba(251,191,36,0.7); background: rgba(251,191,36,0.1); padding: 2px 6px; border-radius: 4px; font-weight: bold; border: 1px solid rgba(251,191,36,0.2);">
-                    FREE TIER
-                </div>
-            </div>
-            <div class="panel-body" id="neuronQuota" style="display: flex; flex-direction: column; gap: 10px; font-family: Outfit, sans-serif;">
-                <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--text);">
-                    <span>本日使用済み:</span>
-                    <strong style="color: #fbbf24; font-size: 14px;" id="neuronsUsed">0.00 / 10,000.0 Neurons</strong>
-                </div>
-                <div style="background: rgba(255,255,255,0.05); border-radius: 6px; height: 10px; width: 100%; overflow: hidden; border: 1px solid rgba(251,191,36,0.1);">
-                    <div id="neuronsProgress" style="background: linear-gradient(90deg, #fbbf24, #f59e0b); height: 100%; width: 0%; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);"></div>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px;">
-                    <span id="neuronsRemaining">残り: 10,000.0 Neurons</span>
-                    <span id="neuronsReset">次回リセットまで: 0h 0m</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- QUEUE STATE -->
-        <div class="panel queue">
-            <div class="panel-header">
-                <div class="panel-title"><span>🔄</span> gmn API Pipeline Queue</div>
-                <div class="panel-dots"><span class="pd"></span><span class="pd"></span><span class="pd"></span></div>
-            </div>
-            <div class="panel-body" id="queueState" style="overflow-y: auto;">読み込み中...</div>
-        </div>
-
-        <!-- APP LOG -->
-        <div class="panel applog">
-            <div class="panel-header">
-                <div class="panel-title"><span>🔵</span> rustyclaw.log</div>
-                <div class="panel-dots"><span class="pd"></span><span class="pd"></span><span class="pd"></span></div>
-            </div>
-            <div class="panel-body" id="appLog">読み込み中...</div>
-        </div>
-
-    </div><!-- /right-col -->
-</main>
-
+    <div class="panel concur">
+      <div class="panel-head"><span class="panel-label">◈ CONCURRENCY</span><span class="rts" id="concur-ts">—</span></div>
+      <div class="panel-body">
+        <div class="slot-row" id="slotRow"></div>
+        <div class="stat-line"><span class="sk">Active</span><span class="sv" id="cActive">—</span></div>
+        <div class="stat-line"><span class="sk">Queue depth</span><span class="sv" id="cDepth">—</span></div>
+        <div class="stat-line"><span class="sk">Cooldown</span><span class="sv" id="cCool">—</span></div>
+        <div class="stat-line"><span class="sk">Global limit</span><span class="sv" id="cGlobal">—</span></div>
+      </div>
+    </div>
+    <div class="panel neurons">
+      <div class="panel-head"><span class="panel-label">◈ CF NEURONS</span><span class="rts" id="neuron-ts">—</span></div>
+      <div class="panel-body">
+        <div class="n-gauge"><div class="n-fill" id="nFill" style="width:0%"></div></div>
+        <div class="stat-line"><span class="sk">Today</span><span class="sv" id="nToday" style="color:var(--cyan)">—</span></div>
+        <div class="stat-line"><span class="sk">Limit</span><span class="sv">10,000</span></div>
+        <div class="stat-line"><span class="sk">Remaining</span><span class="sv ok" id="nRem">—</span></div>
+        <div class="stat-line"><span class="sk">Usage</span><span class="sv" id="nPct">—</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="row2">
+    <div class="panel request">
+      <div class="panel-head"><span class="panel-label">◈ LLM REQUEST</span><span class="rts" id="req-ts">—</span></div>
+      <div class="panel-body" id="reqPanel" style="white-space:pre-wrap;word-break:break-all;font-size:10.5px;color:rgba(180,210,230,.65);">読み込み中...</div>
+    </div>
+    <div class="panel response">
+      <div class="panel-head"><span class="panel-label">◈ LLM RESPONSE</span><span class="rts" id="res-ts">—</span></div>
+      <div class="panel-body" id="resPanel" style="white-space:pre-wrap;word-break:break-all;font-size:10.5px;color:rgba(0,255,159,.7);">読み込み中...</div>
+    </div>
+  </div>
+  <div class="row3">
+    <div class="panel applog">
+      <div class="panel-head"><span class="panel-label">◈ APP LOG</span><span class="rts">↻ 2s</span></div>
+      <div class="panel-body" id="appLog">読み込み中...</div>
+    </div>
+    <div class="panel chat-p">
+      <div class="panel-head"><span class="panel-label">◈ CHAT</span><span style="font-size:9px;color:var(--muted);font-family:'Fira Code',monospace">http-dashboard</span></div>
+      <div class="chat-msgs" id="chatMessages"><div class="bubble ai">こんにちは。RustyClaw Dashboard です。何かお手伝いできますか？</div></div>
+      <div class="chat-in-area">
+        <input class="chat-in" id="chatInput" type="text" placeholder="メッセージを入力..." onkeydown="handleKey(event)">
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()">SEND</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+<div id="page-stats" class="page">
+<div class="stats-layout">
+  <div class="stats-top">
+    <span class="stats-title">TOKEN USAGE STATISTICS</span>
+    <div class="period-bar">
+      <button class="period-btn" onclick="setPeriod(7,this)">7D</button>
+      <button class="period-btn active" onclick="setPeriod(30,this)">30D</button>
+      <button class="period-btn" onclick="setPeriod(0,this)">ALL</button>
+    </div>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi runs"><div class="kpi-lbl">TOTAL RUNS</div><div class="kpi-val" id="kpiRuns">—</div><div class="kpi-sub" id="kpiRunsSub">loading...</div></div>
+    <div class="kpi tokens"><div class="kpi-lbl">TOTAL TOKENS</div><div class="kpi-val" id="kpiTokens">—</div><div class="kpi-sub" id="kpiTokensSub">loading...</div></div>
+    <div class="kpi avg"><div class="kpi-lbl">AVG / RUN</div><div class="kpi-val" id="kpiAvg">—</div><div class="kpi-sub">tokens per execution</div></div>
+    <div class="kpi cf"><div class="kpi-lbl">CF NEURONS TODAY</div><div class="kpi-val" id="kpiCf">—</div><div class="kpi-sub" id="kpiCfSub">loading...</div></div>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-lbl">DAILY TOKEN USAGE</div>
+    <svg id="timelineChart" viewBox="0 0 900 130" width="100%" height="130" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+      <text x="4" y="20" fill="#1e3a5f" font-size="8" font-family="Fira Code">No data yet</text>
+    </svg>
+    <div class="x-axis" id="chartXAxis"></div>
+    <div class="chart-legend">
+      <div class="leg-item"><div class="leg-dot" style="background:#bf00ff"></div>Input</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#00d4ff"></div>Output</div>
+    </div>
+  </div>
+  <div class="stats-bottom">
+    <div class="breakdown" style="border-color:rgba(191,0,255,.2)"><div class="bd-title" style="color:var(--purple)">BY MODEL</div><div id="modelBreakdown"><div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div></div></div>
+    <div class="breakdown" style="border-color:rgba(0,229,255,.2)"><div class="bd-title" style="color:var(--cyan)">BY TRIGGER</div><div id="triggerBreakdown"><div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div></div></div>
+  </div>
+</div>
+</div>
 <script>
-    const chatMessages = document.getElementById('chatMessages');
-    const chatInput    = document.getElementById('chatInput');
-    const sendBtn      = document.getElementById('sendBtn');
-
-    // ── チャット ─────────────────────────────────────────────
-    async function sendMessage() {
-        const message = chatInput.value.trim();
-        if (!message) return;
-
-        appendMessage(message, 'user');
-        chatInput.value = '';
-
-        const loadingId = appendLoading();
-        chatInput.disabled = true;
-        sendBtn.disabled   = true;
-
-        try {
-            const res = await fetch('/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message })
-            });
-            removeLoading(loadingId);
-            appendMessage(res.ok ? await res.text() : 'エラー: 返答の取得に失敗しました。', 'assistant');
-        } catch {
-            removeLoading(loadingId);
-            appendMessage('通信エラー: Gateway と通信できません。', 'assistant');
-        } finally {
-            chatInput.disabled = false;
-            sendBtn.disabled   = false;
-            chatInput.focus();
-        }
-    }
-
-    function handleKey(e) {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    }
-
-    function appendMessage(text, role) {
-        const d = document.createElement('div');
-        d.className = `message ${role}`;
-        d.innerHTML = text.replace(/\n/g, '<br>');
-        chatMessages.appendChild(d);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
-    function appendLoading() {
-        const id  = 'loading-' + Date.now();
-        const el  = document.createElement('div');
-        el.className = 'loading-dots'; el.id = id;
-        el.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-        chatMessages.appendChild(el);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-        return id;
-    }
-
-    function removeLoading(id) {
-        const el = document.getElementById(id);
-        if (el) el.remove();
-    }
-
-    // ── ログポーリング ────────────────────────────────────────
-    function updatePanel(el, text) {
-        const atBottom = el.scrollHeight - el.clientHeight <= el.scrollTop + 60;
-        el.textContent = text;
-        if (atBottom) el.scrollTop = el.scrollHeight;
-    }
-
-    const memoryLog = document.getElementById('memoryLog');
-    const hbDigest  = document.getElementById('hbDigest');
-    const hbState   = document.getElementById('hbState');
-    const appLog    = document.getElementById('appLog');
-
-    // MEMORY.md / heartbeat 系は変化が緩やかなので 5 秒間隔で十分
-    async function fetchSlowLogs() {
-        try {
-            const [rMem, rDigest, rState] = await Promise.all([
-                fetch('/logs/memory'),
-                fetch('/logs/heartbeat-digest'),
-                fetch('/logs/heartbeat-state'),
-            ]);
-            if (rMem.ok)    updatePanel(memoryLog, await rMem.text());
-            if (rDigest.ok) updatePanel(hbDigest,  await rDigest.text());
-            if (rState.ok)  updatePanel(hbState,   await rState.text());
-        } catch { /* ネットワーク断は無視 */ }
-    }
-
-    // App ログは 2 秒間隔でポーリング
-    async function fetchAppLog() {
-        try {
-            const r = await fetch('/logs/app');
-            if (r.ok) updatePanel(appLog, await r.text());
-        } catch { /* 無視 */ }
-    }
-
-    async function updateQueue() {
-        try {
-            const res = await fetch('/api/queue');
-            if (!res.ok) return;
-            const items = await res.json();
-            
-            const container = document.getElementById('queueState');
-            if (items.length === 0) {
-                container.innerHTML = '<div style="color: var(--muted); text-align: center; padding: 12px; font-family: Outfit, sans-serif;">キューは空です（稼働タスクなし）</div>';
-                return;
-            }
-            
-            let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
-            items.forEach((item, index) => {
-                let badgeColor = 'var(--muted)';
-                let pulseStyle = '';
-                let progressHtml = '';
-                
-                if (item.status === 'Executing') {
-                    badgeColor = 'var(--green)';
-                    pulseStyle = 'background: var(--green); box-shadow: 0 0 8px var(--green);';
-                } else if (item.status === 'Waiting') {
-                    badgeColor = 'var(--blue)';
-                    pulseStyle = 'background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: pulse 1.5s infinite;';
-                } else if (item.status === 'Cooldown') {
-                    badgeColor = 'var(--amber)';
-                    pulseStyle = 'background: var(--amber); box-shadow: 0 0 8px var(--amber);';
-                    
-                    // プログレスバー
-                    const totalDur = 47.0;
-                    const pct = Math.min(100, Math.max(0, (item.cooldown_left_secs / totalDur) * 100));
-                    progressHtml = `
-                        <div style="background: rgba(255,255,255,0.05); border-radius: 4px; height: 5px; width: 100%; margin-top: 6px; overflow: hidden; border: 1px solid rgba(251,191,36,0.15);">
-                            <div style="background: var(--amber); height: 100%; width: ${pct}%; transition: width 0.5s ease;"></div>
-                        </div>
-                    `;
-                }
-                
-                const elapsedSecs = Math.floor((Date.now() - item.enqueued_at_ms) / 1000);
-                const elapsedText = elapsedSecs >= 0 ? `${elapsedSecs}s` : '0s';
-                
-                const subText = item.status === 'Cooldown'
-                    ? `解除まで: ${item.cooldown_left_secs.toFixed(1)}s`
-                    : `待機時間: ${elapsedText}`;
-                
-                html += `
-                    <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 4px;">
-                        <div style="display: flex; align-items: center; justify-content: space-between;">
-                            <div style="display: flex; align-items: center; font-weight: 600;">
-                                <span style="width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; ${pulseStyle}"></span>
-                                <span style="font-size: 13px; font-family: 'Fira Code', monospace; color: var(--text);">${item.session_id}</span>
-                            </div>
-                            <span style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: ${badgeColor}; background: rgba(255,255,255,0.03); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border);">
-                                ${item.status}
-                            </span>
-                        </div>
-                        <div style="font-size: 11px; color: #fbbf24; background: rgba(251,191,36,0.03); padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(251,191,36,0.1); margin-top: 4px; word-break: break-all; font-family: Outfit, sans-serif;">
-                            ${item.description || '処理タスクを分析中...'}
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px;">
-                            <span>順位: #${index + 1}</span>
-                            <span>${subText}</span>
-                        </div>
-                        ${progressHtml}
-                    </div>
-                `;
-            });
-            html += '</div>';
-            container.innerHTML = html;
-        } catch { /* 無視 */ }
-    }
-
-    async function updateNeurons() {
-        try {
-            const res = await fetch('/api/neurons');
-            if (!res.ok) return;
-            const data = await res.json();
-            
-            const used = data.neurons_used || 0.0;
-            const limit = data.quota_limit || 10000.0;
-            const remaining = data.remaining || 10000.0;
-            const resetIn = data.reset_in || '0h 0m';
-            
-            document.getElementById('neuronsUsed').innerText = `${used.toFixed(2)} / ${limit.toLocaleString()} Neurons`;
-            document.getElementById('neuronsRemaining').innerText = `残り: ${remaining.toFixed(2)} Neurons`;
-            document.getElementById('neuronsReset').innerText = `次回リセットまで: ${resetIn}`;
-            
-            const pct = Math.min(100, Math.max(0, (used / limit) * 100));
-            document.getElementById('neuronsProgress').style.width = `${pct}%`;
-        } catch { /* 無視 */ }
-    }
-
-    fetchSlowLogs();
-    fetchAppLog();
-    updateQueue();
-    updateNeurons();
-    setInterval(fetchSlowLogs, 5000);
-    setInterval(fetchAppLog,   2000);
-    setInterval(updateQueue,   2000);
-    setInterval(updateNeurons, 5000);
+function switchTab(id,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  btn.classList.add('active');
+  if(id==='stats')loadStats();
+}
+function fmtK(n){if(n>=1e6)return(n/1e6).toFixed(2)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return n.toString()}
+function now(){return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+async function updateQueue(){
+  try{
+    const r=await fetch('/api/queue');if(!r.ok)return;
+    const items=await r.json();
+    document.getElementById('queue-ts').textContent='↻ '+now();
+    const panel=document.getElementById('queuePanel');
+    if(items.length===0){panel.innerHTML='<div style="color:var(--muted);text-align:center;padding:10px;font-family:\'Fira Code\',monospace;font-size:11px;">キューは空（稼働タスクなし）</div>';return}
+    let html='';
+    items.forEach((item,i)=>{
+      const cls=item.status==='Executing'?'pill-exec':item.status==='Waiting'?'pill-wait':'pill-cool';
+      const lbl=item.status==='Executing'?'EXEC':item.status==='Waiting'?'WAIT':'COOL';
+      const elapsed=Math.floor((Date.now()-item.enqueued_at_ms)/1000);
+      html+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span><span class="q-sid">${item.session_id}</span><span class="q-desc">${item.description||''}</span><span class="q-time">${elapsed}s</span></div>`;
+      if(item.status==='Cooldown'&&item.cooldown_left_secs>0){const pct=Math.min(100,(item.cooldown_left_secs/60)*100);html+=`<div class="cool-bar"><div class="cool-fill" style="width:${pct}%"></div></div>`}
+    });
+    panel.innerHTML=html;
+  }catch{}
+}
+async function updateConcurrency(){
+  try{
+    const r=await fetch('/api/concurrency');if(!r.ok)return;
+    const d=await r.json();
+    document.getElementById('concur-ts').textContent='↻ '+now();
+    const slots=document.getElementById('slotRow');slots.innerHTML='';
+    for(let i=0;i<d.capacity;i++){const s=document.createElement('div');s.className='slot'+(i<d.active?' active':'');slots.appendChild(s)}
+    document.getElementById('cActive').textContent=d.active+' / '+d.capacity;
+    document.getElementById('cActive').className='sv '+(d.active>=d.capacity?'busy':'ok');
+    document.getElementById('cDepth').textContent=d.queue_depth;
+    document.getElementById('cCool').textContent=d.cooldown_secs>0?d.cooldown_secs.toFixed(1)+'s':'none';
+    document.getElementById('cCool').className='sv '+(d.cooldown_secs>0?'warn':'ok');
+    document.getElementById('cGlobal').textContent=d.global_cooldown?d.global_cooldown.toFixed(1)+'s':'none';
+    document.getElementById('cGlobal').className='sv '+(d.global_cooldown?'warn':'ok');
+  }catch{}
+}
+async function updateNeurons(){
+  try{
+    const r=await fetch('/api/neurons');if(!r.ok)return;
+    const d=await r.json();
+    document.getElementById('neuron-ts').textContent='↻ '+now();
+    const today=d.today_used??0;const limit=10000;const pct=Math.min(100,(today/limit)*100).toFixed(1);
+    document.getElementById('nFill').style.width=pct+'%';
+    document.getElementById('nToday').textContent=today.toLocaleString();
+    document.getElementById('nRem').textContent=(limit-today).toLocaleString();
+    document.getElementById('nPct').textContent=pct+'%';
+  }catch{}
+}
+async function updateInspector(){
+  try{
+    const[rq,rs]=await Promise.all([fetch('/debug/request'),fetch('/debug/response')]);
+    const ts=now();
+    if(rq.ok){const txt=await rq.text();document.getElementById('req-ts').textContent=ts;document.getElementById('reqPanel').textContent=txt.length>4000?txt.substring(0,4000)+'\n...(truncated)':txt}
+    if(rs.ok){const txt=await rs.text();document.getElementById('res-ts').textContent=ts;document.getElementById('resPanel').textContent=txt.length>3000?txt.substring(0,3000)+'\n...(truncated)':txt}
+  }catch{}
+}
+async function updateLog(){
+  try{
+    const r=await fetch('/logs/app');if(!r.ok)return;const txt=await r.text();
+    const el=document.getElementById('appLog');
+    const atBottom=el.scrollHeight-el.clientHeight<=el.scrollTop+60;
+    const lines=txt.trim().split('\n').slice(-100);
+    el.innerHTML=lines.map(line=>{
+      const lvl=line.includes(' INFO ')?'info':line.includes(' WARN ')?'warn':line.includes(' ERROR ')?'error':'info';
+      const tsM=line.match(/\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})/);
+      const ts=tsM?tsM[1]:'';
+      const msg=line.replace(/^\S+\s+(INFO|WARN|ERROR)\s+\S+:\s*/,'').trim();
+      return`<div class="log-line"><span class="log-ts">${ts}</span><span class="log-lv ${lvl}">${lvl.toUpperCase()}</span><span class="log-msg">${msg}</span></div>`;
+    }).join('');
+    if(atBottom)el.scrollTop=el.scrollHeight;
+  }catch{}
+}
+function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}}
+async function sendMessage(){
+  const inp=document.getElementById('chatInput');const msg=inp.value.trim();if(!msg)return;
+  addBubble(msg,'user');inp.value='';
+  const lid=addLoading();inp.disabled=true;document.getElementById('sendBtn').disabled=true;
+  try{const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});removeLoading(lid);addBubble(r.ok?await r.text():'エラー: 返答の取得に失敗しました。','ai')}
+  catch{removeLoading(lid);addBubble('通信エラー','ai')}
+  finally{inp.disabled=false;document.getElementById('sendBtn').disabled=false;inp.focus()}
+}
+function addBubble(text,role){const d=document.createElement('div');d.className='bubble '+role;d.innerHTML=text.replace(/\n/g,'<br>');const m=document.getElementById('chatMessages');m.appendChild(d);m.scrollTop=m.scrollHeight}
+function addLoading(){const id='ld-'+Date.now();const el=document.createElement('div');el.className='loading-dots';el.id=id;el.innerHTML='<span class="dot"></span><span class="dot"></span><span class="dot"></span>';const m=document.getElementById('chatMessages');m.appendChild(el);m.scrollTop=m.scrollHeight;return id}
+function removeLoading(id){const el=document.getElementById(id);if(el)el.remove()}
+let currentPeriodDays=30;
+function setPeriod(days,btn){currentPeriodDays=days;document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');loadStats()}
+async function loadStats(){
+  const since=currentPeriodDays>0?new Date(Date.now()-currentPeriodDays*86400000).toISOString().slice(0,10):undefined;
+  const qs=since?'?since='+since:'';
+  try{
+    const[rSum,rTl,rTr,rN]=await Promise.all([fetch('/api/usage/summary'+qs),fetch('/api/usage/timeline'+qs),fetch('/api/usage/by-trigger'+qs),fetch('/api/neurons')]);
+    if(rSum.ok)renderSummary(await rSum.json());
+    if(rTl.ok) renderTimeline(await rTl.json());
+    if(rTr.ok) renderTriggers(await rTr.json());
+    if(rN.ok)  renderNeuronsKpi(await rN.json());
+  }catch{}
+}
+function renderSummary(d){
+  document.getElementById('kpiRuns').textContent=(d.total_runs??0).toLocaleString();
+  document.getElementById('kpiRunsSub').textContent='total executions';
+  document.getElementById('kpiTokens').textContent=fmtK(d.total_tokens??0);
+  document.getElementById('kpiTokensSub').textContent='input '+fmtK(d.total_input_tokens??0)+' / output '+fmtK(d.total_completion_tokens??0);
+  const avg=d.total_runs>0?Math.round((d.total_tokens??0)/d.total_runs):0;
+  document.getElementById('kpiAvg').textContent=avg.toLocaleString();
+  const models=Object.entries(d.by_model??{}).sort((a,b)=>b[1].tokens-a[1].tokens);
+  const totalTok=d.total_tokens||1;
+  const colors=['#bf00ff','#00d4ff','#00ff9f','#ffaa00','#ff006e'];
+  document.getElementById('modelBreakdown').innerHTML=models.slice(0,6).map(([m,v],i)=>{
+    const pct=Math.round((v.tokens/totalTok)*100);
+    return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${m}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${fmtK(v.tokens)}</span></div>`;
+  }).join('')||'<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
+}
+function renderNeuronsKpi(d){
+  const today=d.today_used??0;
+  document.getElementById('kpiCf').textContent=today.toLocaleString();
+  document.getElementById('kpiCfSub').textContent=((today/10000)*100).toFixed(1)+'% of 10,000 limit';
+}
+function renderTimeline(rows){
+  if(!rows.length){document.getElementById('timelineChart').innerHTML='<text x="4" y="20" fill="#1e3a5f" font-size="8" font-family="Fira Code">No data yet</text>';return}
+  const maxT=Math.max(...rows.map(r=>r.total_tokens??r.tokens??0));
+  if(maxT===0)return;
+  const W=900,H=120,PAD=20;
+  const xStep=(W-PAD*2)/Math.max(rows.length-1,1);
+  const scale=v=>PAD+((H-PAD*2)*(1-v/maxT));
+  const inputPts=rows.map((r,i)=>`${PAD+i*xStep},${scale(r.input_tokens??0)}`).join(' ');
+  const outPts  =rows.map((r,i)=>`${PAD+i*xStep},${scale(r.completion_tokens??0)}`).join(' ');
+  const last=PAD+(rows.length-1)*xStep;
+  const ia='M'+inputPts.replace(/ /g,' L')+` L${last},${H} L${PAD},${H} Z`;
+  const oa='M'+outPts.replace(/ /g,' L')  +` L${last},${H} L${PAD},${H} Z`;
+  document.getElementById('timelineChart').innerHTML=`
+    <defs>
+      <linearGradient id="ig" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#bf00ff" stop-opacity=".35"/><stop offset="100%" stop-color="#bf00ff" stop-opacity=".02"/></linearGradient>
+      <linearGradient id="og" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#00d4ff" stop-opacity=".25"/><stop offset="100%" stop-color="#00d4ff" stop-opacity=".02"/></linearGradient>
+    </defs>
+    <line x1="${PAD}" y1="${PAD}" x2="${PAD}" y2="${H}" stroke="rgba(0,212,255,.1)" stroke-width="1"/>
+    <line x1="${PAD}" y1="${H}" x2="${W-PAD}" y2="${H}" stroke="rgba(0,212,255,.1)" stroke-width="1"/>
+    <path d="${ia}" fill="url(#ig)"/><polyline points="${inputPts}" fill="none" stroke="#bf00ff" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="${oa}" fill="url(#og)"/><polyline points="${outPts}"   fill="none" stroke="#00d4ff" stroke-width="1.5" stroke-linejoin="round"/>`;
+  const step=Math.max(1,Math.floor(rows.length/7));
+  document.getElementById('chartXAxis').innerHTML=rows.filter((_,i)=>i%step===0||i===rows.length-1).map(r=>`<span>${r.date}</span>`).join('');
+}
+function renderTriggers(rows){
+  const maxT=Math.max(...rows.map(r=>r.tokens??0),1);
+  const colors=['#bf00ff','#00ff9f','#00d4ff','#ffaa00','#ff006e'];
+  document.getElementById('triggerBreakdown').innerHTML=rows.slice(0,6).map((r,i)=>{
+    const pct=Math.round((r.tokens/maxT)*100);
+    return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${r.trigger}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${r.runs} runs</span></div>`;
+  }).join('')||'<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
+}
+updateQueue();updateConcurrency();updateNeurons();updateInspector();updateLog();
+setInterval(updateQueue,1000);setInterval(updateConcurrency,1000);setInterval(updateNeurons,5000);setInterval(updateInspector,2000);setInterval(updateLog,2000);
 </script>
 </body>
 </html>
-"#.to_string()
+"##.to_string()
 }
