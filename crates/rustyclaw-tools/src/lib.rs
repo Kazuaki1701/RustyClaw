@@ -904,4 +904,32 @@ mod tests {
         assert!(tool.description().contains("AI AGENT"));
         assert!(tool.description().contains("学習計画カレンダー"));
     }
+
+    #[tokio::test]
+    async fn test_gws_calendar_write_blocks_personal_calendar() {
+        // 本番設定と同等の許可リスト
+        let tool = GwsCalendarWriteTool::new(
+            "/usr/local/bin/gws".to_string(),
+            vec![
+                (
+                    "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com".to_string(),
+                    "AI AGENT".to_string(),
+                ),
+                (
+                    "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com".to_string(),
+                    "学習計画カレンダー".to_string(),
+                ),
+            ],
+        );
+
+        // 個人カレンダーへの書き込みはブロックされる
+        let result = tool.execute(serde_json::json!({
+            "calendar_id": "ayabe.kazuaki@gmail.com",
+            "summary": "不正書き込みテスト",
+            "start_datetime": "2026-06-01T10:00:00+09:00",
+            "end_datetime":   "2026-06-01T11:00:00+09:00"
+        })).await;
+        assert!(result.is_error, "個人カレンダーへの書き込みはブロックされるべき");
+        assert!(result.content.contains("WRITE BLOCKED"), "エラー内容: {}", result.content);
+    }
 }
