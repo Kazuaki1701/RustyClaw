@@ -54,6 +54,18 @@ impl Pipeline {
             context.push_str(&format!("# {}\n\n{}\n\n", filename, Self::strip_comments(&content)));
         }
 
+        // proactive-posts.md を注入（存在する場合のみ）
+        let posts_path = workspace_dir.join("memory").join("proactive-posts.md");
+        if let Ok(posts) = fs::read_to_string(&posts_path) {
+            let trimmed = posts.trim();
+            if !trimmed.is_empty() {
+                context.push_str(&format!(
+                    "# Recent AI Proactive Posts\n\n{}\n\n",
+                    trimmed
+                ));
+            }
+        }
+
         Ok(context)
     }
 
@@ -1506,6 +1518,28 @@ mod tests {
 
         let _ = server_task.await;
         Ok(())
+    }
+
+    #[test]
+    fn test_build_system_context_injects_proactive_posts() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        let memory_dir = ws.join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        for f in &["SOUL.md", "AGENTS.md", "MEMORY.md", "USER.md"] {
+            std::fs::write(ws.join(f), "").unwrap();
+        }
+        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string();
+        std::fs::write(
+            memory_dir.join("proactive-posts.md"),
+            format!("[{}] 傘を持ってください。", now),
+        ).unwrap();
+
+        let config = rustyclaw_config::Config::default();
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+        let ctx = pipeline.build_system_context(ws).unwrap();
+        assert!(ctx.contains("傘を持ってください"), "proactive-posts が注入されるべき");
     }
 
     #[test]
