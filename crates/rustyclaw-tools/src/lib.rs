@@ -876,6 +876,89 @@ impl Tool for WorkspaceWriteTool {
     }
 }
 
+// ─── WebSearchTool ───────────────────────────────────────────────────────────
+
+pub struct WebSearchTool {
+    api_key: String,
+}
+
+impl WebSearchTool {
+    pub fn new(api_key: String) -> Self {
+        Self { api_key }
+    }
+}
+
+#[async_trait]
+impl Tool for WebSearchTool {
+    fn name(&self) -> &str { "web_search" }
+
+    fn description(&self) -> &str {
+        "Search the web using Brave Search. Returns titles, URLs, and snippets. Use site: prefix for HN/Reddit (e.g. 'site:news.ycombinator.com rust')."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query" },
+                "count": {
+                    "anyOf": [{"type": "integer"}, {"type": "string"}],
+                    "description": "Number of results (default: 5, max: 10)"
+                }
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let query = match args["query"].as_str() {
+            Some(q) => q.to_string(),
+            None => return ToolResult { content: "Missing query".into(), is_error: true },
+        };
+        let count = match &args["count"] {
+            Value::Number(n) => n.as_u64().unwrap_or(5),
+            Value::String(s) => s.parse::<u64>().unwrap_or(5),
+            _ => 5,
+        }.min(10);
+
+        let client = reqwest::Client::new();
+        match client
+            .get("https://api.search.brave.com/res/v1/web/search")
+            .header("X-Subscription-Token", &self.api_key)
+            .header("Accept", "application/json")
+            .query(&[("q", &query), ("count", &count.to_string())])
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<Value>().await {
+                    Ok(json) => {
+                        let results = json["web"]["results"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter().map(|r| {
+                                    let title = r["title"].as_str().unwrap_or("(no title)");
+                                    let url   = r["url"].as_str().unwrap_or("");
+                                    let desc  = r["description"].as_str().unwrap_or("");
+                                    format!("**{}**\n{}\n{}", title, url, desc)
+                                }).collect::<Vec<_>>().join("\n\n")
+                            })
+                            .unwrap_or_else(|| "No results".to_string());
+                        ToolResult { content: results, is_error: false }
+                    }
+                    Err(e) => ToolResult { content: format!("JSON parse error: {}", e), is_error: true },
+                }
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                ToolResult { content: format!("Brave Search error {}: {}", status, body), is_error: true }
+            }
+            Err(e) => ToolResult { content: format!("Request failed: {}", e), is_error: true },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1291,5 +1374,22 @@ mod tests {
         let tool = WorkspaceReadTool::new(dir.path().to_path_buf());
         let res = tool.execute(serde_json::json!({"path": "../etc/passwd"})).await;
         assert!(res.is_error);
+    }
+
+    #[tokio::test]
+    async fn test_web_search_tool_schema() {
+        let tool = WebSearchTool::new("dummy-key".to_string());
+        assert_eq!(tool.name(), "web_search");
+        let params = tool.parameters();
+        assert!(params["properties"]["query"].is_object());
+        assert_eq!(params["required"][0], "query");
+    }
+
+    #[tokio::test]
+    async fn test_web_search_missing_query() {
+        let tool = WebSearchTool::new("dummy-key".to_string());
+        let res = tool.execute(serde_json::json!({})).await;
+        assert!(res.is_error);
+        assert!(res.content.contains("Missing"));
     }
 }
