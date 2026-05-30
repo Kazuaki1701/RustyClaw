@@ -111,14 +111,18 @@ impl Tool for KarakeepListTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "limit": { "type": "integer", "description": "Max bookmarks (default: 20)" }
+                "limit": { "anyOf": [{"type": "integer"}, {"type": "string"}], "description": "Max bookmarks (default: 20)" }
             },
             "required": []
         })
     }
 
     async fn execute(&self, args: Value) -> ToolResult {
-        let limit = args["limit"].as_u64().unwrap_or(20).min(50);
+        let limit = match &args["limit"] {
+            Value::Number(n) => n.as_u64().unwrap_or(20),
+            Value::String(s) => s.parse::<u64>().unwrap_or(20),
+            _ => 20,
+        }.min(50);
         let client = reqwest::Client::new();
         let url = format!("{}/api/v1/bookmarks?limit={}", self.server_addr, limit);
         match client
@@ -262,7 +266,7 @@ impl Tool for ObsidianSearchTool {
             "type": "object",
             "properties": {
                 "query": { "type": "string" },
-                "limit": { "type": "integer", "description": "Max results (default: 10)" }
+                "limit": { "anyOf": [{"type": "integer"}, {"type": "string"}], "description": "Max results (default: 10)" }
             },
             "required": ["query"]
         })
@@ -273,7 +277,11 @@ impl Tool for ObsidianSearchTool {
             Some(q) => q.to_string(),
             None => return ToolResult { content: "Missing query".to_string(), is_error: true },
         };
-        let limit = args["limit"].as_u64().unwrap_or(10) as usize;
+        let limit = match &args["limit"] {
+            Value::Number(n) => n.as_u64().unwrap_or(10),
+            Value::String(s) => s.parse::<u64>().unwrap_or(10),
+            _ => 10,
+        } as usize;
         let client = reqwest::Client::new();
         let url = format!(
             "http://{}:27123/search/simple/?query={}&contextLength=100",
@@ -753,6 +761,121 @@ impl Tool for GwsGmailDeleteTool {
     }
 }
 
+// ─── WorkspaceReadTool ───────────────────────────────────────────────────────
+
+pub struct WorkspaceReadTool {
+    workspace_path: std::path::PathBuf,
+}
+
+impl WorkspaceReadTool {
+    pub fn new(workspace_path: std::path::PathBuf) -> Self {
+        Self { workspace_path }
+    }
+}
+
+#[async_trait]
+impl Tool for WorkspaceReadTool {
+    fn name(&self) -> &str { "workspace_read" }
+
+    fn description(&self) -> &str {
+        "Read a text file from the agent workspace (e.g. patrol/state.json, patrol/findings.md)."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path within workspace (e.g. patrol/state.json)"
+                }
+            },
+            "required": ["path"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let rel = match args["path"].as_str() {
+            Some(p) => p,
+            None => return ToolResult { content: "Missing path".into(), is_error: true },
+        };
+        if rel.contains("..") || rel.starts_with('/') {
+            return ToolResult { content: "Invalid path".into(), is_error: true };
+        }
+        match std::fs::read_to_string(self.workspace_path.join(rel)) {
+            Ok(c)  => ToolResult { content: c, is_error: false },
+            Err(e) => ToolResult { content: format!("Cannot read {}: {}", rel, e), is_error: true },
+        }
+    }
+}
+
+// ─── WorkspaceWriteTool ──────────────────────────────────────────────────────
+
+pub struct WorkspaceWriteTool {
+    workspace_path: std::path::PathBuf,
+}
+
+impl WorkspaceWriteTool {
+    pub fn new(workspace_path: std::path::PathBuf) -> Self {
+        Self { workspace_path }
+    }
+}
+
+#[async_trait]
+impl Tool for WorkspaceWriteTool {
+    fn name(&self) -> &str { "workspace_write" }
+
+    fn description(&self) -> &str {
+        "Write or append to a text file in the agent workspace (patrol/, memory/logs/ etc.)."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path":    { "type": "string", "description": "Relative path within workspace" },
+                "content": { "type": "string", "description": "Text to write" },
+                "mode":    {
+                    "anyOf": [{"type": "string"}, {"type": "string"}],
+                    "description": "\"write\" (overwrite, default) or \"append\""
+                }
+            },
+            "required": ["path", "content"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let rel = match args["path"].as_str() {
+            Some(p) => p,
+            None => return ToolResult { content: "Missing path".into(), is_error: true },
+        };
+        let body = match args["content"].as_str() {
+            Some(c) => c,
+            None => return ToolResult { content: "Missing content".into(), is_error: true },
+        };
+        if rel.contains("..") || rel.starts_with('/') {
+            return ToolResult { content: "Invalid path: traversal not allowed".into(), is_error: true };
+        }
+        let full = self.workspace_path.join(rel);
+        if let Some(parent) = full.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return ToolResult { content: format!("mkdir failed: {}", e), is_error: true };
+            }
+        }
+        let result = if args["mode"].as_str() == Some("append") {
+            use std::io::Write;
+            std::fs::OpenOptions::new().append(true).create(true).open(&full)
+                .and_then(|mut f| f.write_all(body.as_bytes()))
+        } else {
+            std::fs::write(&full, body.as_bytes())
+        };
+        match result {
+            Ok(_)  => ToolResult { content: format!("OK: wrote to {}", rel), is_error: false },
+            Err(e) => ToolResult { content: format!("Write failed {}: {}", rel, e), is_error: true },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1128,5 +1251,45 @@ mod tests {
         let result = tool.execute(serde_json::json!({})).await;
         assert!(result.is_error);
         assert!(result.content.contains("message_id") || result.content.contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_read_write_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let read_tool  = WorkspaceReadTool::new(dir.path().to_path_buf());
+        let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
+
+        let res = write_tool.execute(serde_json::json!({
+            "path": "patrol/state.json",
+            "content": "{\"lastRun\":null,\"rotationIndex\":0}"
+        })).await;
+        assert!(!res.is_error);
+
+        let res = read_tool.execute(serde_json::json!({
+            "path": "patrol/state.json"
+        })).await;
+        assert!(!res.is_error);
+        assert!(res.content.contains("rotationIndex"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_write_append_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
+
+        tool.execute(serde_json::json!({"path": "patrol/findings.md", "content": "line1\n"})).await;
+        tool.execute(serde_json::json!({"path": "patrol/findings.md", "content": "line2\n", "mode": "append"})).await;
+
+        let content = std::fs::read_to_string(dir.path().join("patrol/findings.md")).unwrap();
+        assert!(content.contains("line1"));
+        assert!(content.contains("line2"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_read_blocks_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WorkspaceReadTool::new(dir.path().to_path_buf());
+        let res = tool.execute(serde_json::json!({"path": "../etc/passwd"})).await;
+        assert!(res.is_error);
     }
 }
