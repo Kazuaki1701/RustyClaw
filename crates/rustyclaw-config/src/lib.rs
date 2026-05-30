@@ -86,7 +86,7 @@ fn resolve_value(val: &str) -> String {
         if let Ok(env_val) = std::env::var(format!("RUSTYCLAW_VAULT_{}", vault_key.to_uppercase())) {
             return env_val;
         }
-        // 2. 暗号化 vault.enc (~/.config/rustyclaw/vault.enc)
+        // 2. 暗号化 vault.enc (~/.rustyclaw/vault.enc)
         if let Ok(secrets) = vault::load_vault(None) {
             if let Some(v) = secrets.get(vault_key) {
                 return v.clone();
