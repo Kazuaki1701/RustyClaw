@@ -479,51 +479,47 @@
 
 ---
 
-## Phase 19: LLM 用途別モデル割り当て最適化（Provider 分散）
+## Phase 19: LLM 用途別モデル割り当て最適化（Provider 分散）✅ 完了 (2026-05-30)
 
 > 調査結果: `docs/specs/llm-provider-model-selection.md`  
-> 方針: Groq / Cloudflare / OpenRouter / HuggingFace の特性を活かし、用途ごとに最適なモデルへ分散
+> 実装計画: `docs/superpowers/plans/2026-05-30-phase19-purpose-model-assignment.md`
 
-### purpose 一覧と割り当てモデル
+### 確定した purpose 割り当て
 
 | purpose | モデル | Provider | 根拠 |
 |---------|--------|---------|------|
 | `default` | groq-llama-8b | Groq | 高速・RPD 14,400。対話頻度を吸収 |
-| `tools` | groq-qwen3-32b | Groq | 内部ツール実行・推論特化。RPD 1,000 を全振り |
-| `discord` | hf-qwen2.5-7b | HF | Chat Agent #1（完全無料・5M tokens/月）・日本語特化 |
-| `line` | hf-qwen2.5-7b | HF | discord と共用。LINE 実装まで予約（`enabled: false`）|
-| `heartbeat` | groq-llama-8b | Groq | 48回/日の高頻度。CF neurons 超過を回避。default と共用 |
-| `summary` | cf-gemma-4-26b | CF | 1日数回・256k context・neurons 消費小（~177/日）|
-| `memory` | cf-qwen3-30b | CF | 1日数回・超安価・neurons 消費小（~150/日）|
+| `tools` | groq-qwen3-32b | Groq | ツール呼び出し・推論特化。RPD 1,000（tools 専用）|
+| `discord` | groq-llama-70b | Groq | 70B 品質・日本語対話。RPD 1,000（discord/line 専用）|
+| `line` | groq-llama-70b | Groq | discord と共用。LINE 実装まで予約 |
+| `heartbeat` | groq-llama-8b | Groq | 48回/日の高頻度。default と RPD 共用 |
+| `summary` | cf-gemma-4-26b | CF | 1日数回・256k context・neurons ~177/日 |
+| `memory` | cf-qwen3-30b | CF | 1日数回・超安価・neurons ~150/日 |
 
-> **CF neurons 日次試算**: summary ~177 + memory ~150 = **~327 neurons/日**（上限 10,000 に十分余裕）  
-> **groq-llama-8b 日次試算**: default ~50K + heartbeat ~144K = **~194K tokens/日**（TPD 500K に余裕）  
-> **Groq→HF 移行**: 検討済みだが速度・品質・予算の観点から現状維持を選択
+> **CF neurons 日次試算**: summary + memory = **~327 neurons/日**（上限 10,000 に十分余裕）  
+> **groq-llama-8b 日次試算**: default + heartbeat = **~194K tokens/日**（TPD 500K に余裕）
 
-### タスク
+### 実装済みタスク
 
-- `[ ]` **1. `agents` config に全 purpose を追加**
-  - `config.json` の `agents` セクションに `tools`・`discord`・`line`・`heartbeat` エントリを追加
-  - `line` は `enabled: false` モデルを割り当て（LINE 実装まで予約のみ）
+- `[x]` **1. `AgentsConfig` 拡張** — tools / discord / line / heartbeat フィールド追加（fallback: default）
+- `[x]` **2. `execute_with_tools()` に purpose 引数追加** — Discord dispatch は `"discord"` を渡す
+- `[x]` **3. `execute_heartbeat()` → `get_model("heartbeat")`** に変更
+- `[x]` **4. `get_model()` fallback ロジック拡張** — 全 purpose が未設定時 default にフォールバック
+- `[x]` **5. config.json 更新** — agents 全 7 purpose 設定・CF モデル有効化・discord/line → groq-llama-70b
+- `[x]` **6. Pi へのデプロイ・本番稼働確認**
 
-- `[ ]` **2. `execute_with_tools()` を Discord 由来は `get_model("discord")` に変更**
-  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（Discord メッセージ dispatch 箇所）
-  - Discord 経由: `get_model("discord")` / それ以外: `get_model("tools")`
+### 調査で判明した知見（HF 戦略の修正）
 
-- `[ ]` **3. `execute_heartbeat()` を `get_model("heartbeat")` に変更**
-  - 対象: `crates/rustyclaw-agent/src/lib.rs`
-  - `get_model("default")` → `get_model("heartbeat")` に変更（3箇所）
+- **HF hf-inference は現代 LLM 非対応**: Qwen2.5・Llama 3.2 等は $0.10/月クレジット必須
+- **HF 実質 context は 2k〜4k**: モデル本来の context window は使えない
+- **discord → groq-llama-70b に変更**: HF 戦略失敗を受け、groq-llama-70b（70B・別 RPD バケット）を採用
+- **新規発見 Provider**: Google AI Studio（Gemma 3 27B・14,400 RPD）・Cerebras（gpt-oss-120b・14,400 RPD）
 
-- `[ ]` **4. `get_model()` の fallback ロジックに全 purpose を追加**
-  - 対象: `crates/rustyclaw-config/src/lib.rs`
-  - `tools` / `discord` / `line` / `heartbeat` 未設定時はすべて `default` にフォールバック
+### 今後の検討課題
 
-- `[ ]` **5. CF・HF モデルを有効化・agents 設定を反映**
-  - `cf-gemma-4-26b`・`cf-qwen3-30b` を `enabled: true` に変更
-  - `hf-qwen2.5-7b` を `enabled: true` に変更
-  - `agents` の全 purpose の model_name を上記テーブルに従い更新
-  - `summary`: `groq-llama-70b` → `cf-gemma-4-26b` に変更
-  - `heartbeat`: `cf-gemma-4-26b` → `groq-llama-8b` に変更（default と同モデル）
+- `[ ]` **Cerebras 導入検討**: gpt-oss-120b（14,400 RPD・60k TPM）を discord/line の将来移行先として評価
+- `[ ]` **Google AI Studio 評価**: データ学習ポリシー（日本は対象）の許容判断後に導入検討
+- `[ ]` **OR 新モデル追加**: qwen3-coder:free（1M ctx）・qwen3-next-80b:free（262k ctx）等を config に登録
 
 ---
 
