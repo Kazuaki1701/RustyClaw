@@ -48,8 +48,9 @@ echo -e "${GREEN}✓ 開発機用バイナリを作成しました: production/b
 
 # 2. RPi4 (aarch64) 向けクロスビルド
 echo -e "\n${YELLOW}[2/4] RPi4 (aarch64) 向けクロスコンパイルを実行中...${NC}"
-check_command cross
-cross build --release --target aarch64-unknown-linux-gnu
+check_command aarch64-linux-gnu-gcc
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    cargo build --release --target aarch64-unknown-linux-gnu
 
 # バイナリの複製・リネーム
 cp "$PROJECT_ROOT/target/aarch64-unknown-linux-gnu/release/rustyclaw-cli" "$PROD_BIN_DIR/rustyclaw-rpi4"

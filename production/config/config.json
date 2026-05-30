@@ -4,8 +4,8 @@
       "model_name": "groq-llama-8b",
       "provider": "openai",
       "model": "llama-3.1-8b-instant",
-      "api_base": "$vault:grok-base-url",
-      "api_key": "$vault:grok-api-key",
+      "api_base": "https://api.groq.com/openai/v1",
+      "api_key": "$vault:groq-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
       "enabled": true,
@@ -19,8 +19,8 @@
       "model_name": "groq-llama-70b",
       "provider": "openai",
       "model": "llama-3.3-70b-versatile",
-      "api_base": "$vault:grok-base-url",
-      "api_key": "$vault:grok-api-key",
+      "api_base": "https://api.groq.com/openai/v1",
+      "api_key": "$vault:groq-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
       "enabled": true,
@@ -34,8 +34,8 @@
       "model_name": "groq-qwen3-32b",
       "provider": "openai",
       "model": "qwen/qwen3-32b",
-      "api_base": "$vault:grok-base-url",
-      "api_key": "$vault:grok-api-key",
+      "api_base": "https://api.groq.com/openai/v1",
+      "api_key": "$vault:groq-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
       "enabled": true,
@@ -55,7 +55,7 @@
       "temperature": 0.7,
       "enabled": false,
       "rpm": 20,
-      "rpd": 200,
+      "rpd": 50,
       "context_window": "1M"
     },
     {
@@ -68,7 +68,7 @@
       "temperature": 0.7,
       "enabled": false,
       "rpm": 20,
-      "rpd": 200,
+      "rpd": 50,
       "context_window": "205k"
     },
     {
@@ -81,7 +81,7 @@
       "temperature": 0.7,
       "enabled": false,
       "rpm": 20,
-      "rpd": 200,
+      "rpd": 50,
       "context_window": "262k"
     },
     {
@@ -94,7 +94,7 @@
       "temperature": 0.7,
       "enabled": false,
       "rpm": 20,
-      "rpd": 200,
+      "rpd": 50,
       "context_window": "1M"
     },
     {
@@ -107,7 +107,7 @@
       "temperature": 0.7,
       "enabled": false,
       "rpm": 20,
-      "rpd": 200,
+      "rpd": 50,
       "context_window": "131k"
     },
     {
@@ -120,7 +120,43 @@
       "temperature": 0.7,
       "enabled": false,
       "rpm": 20,
-      "rpd": 200,
+      "rpd": 50,
+      "context_window": "131k"
+    },
+    {
+      "model_name": "cf-qwen3-30b",
+      "provider": "openai",
+      "model": "@cf/qwen/qwen3-30b-a3b-fp8",
+      "api_base": "https://api.cloudflare.com/client/v4/accounts/a10120209a7dae1fcc497a5adf4be5d9/ai/v1",
+      "api_key": "$vault:cf-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "rpm": 300,
+      "context_window": "32k"
+    },
+    {
+      "model_name": "cf-gemma-4-26b",
+      "provider": "openai",
+      "model": "@cf/google/gemma-4-26b-a4b-it",
+      "api_base": "https://api.cloudflare.com/client/v4/accounts/a10120209a7dae1fcc497a5adf4be5d9/ai/v1",
+      "api_key": "$vault:cf-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "rpm": 300,
+      "context_window": "256k"
+    },
+    {
+      "model_name": "cf-granite-micro",
+      "provider": "openai",
+      "model": "@cf/ibm-granite/granite-4.0-h-micro",
+      "api_base": "https://api.cloudflare.com/client/v4/accounts/a10120209a7dae1fcc497a5adf4be5d9/ai/v1",
+      "api_key": "$vault:cf-api-key",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "rpm": 300,
       "context_window": "131k"
     }
   ],
@@ -131,40 +167,38 @@
   },
   "debug_dump": true,
   "timezone": "Asia/Tokyo",
-  "discord_token": "$vault:discord-token",
-  "discord_home_channel_id": "1485590891489005749",
-  "mcp": {
-    "google-calendar": {
-      "enabled": false,
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/mcp-server-google-calendar"],
-      "env": {
-        "GWS_WRITABLE_CALENDAR_IDS": "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com,d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com"
-      }
+  "channels": {
+    "discord": {
+      "enabled": true,
+      "token": "$vault:discord-token",
+      "home_channel_id": "1485590891489005749",
+      "respond_in_channels": []
     },
-    "gmail": {
+    "line": {
       "enabled": false,
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/mcp-server-gmail"],
-      "env": { "GWS_GMAIL_DELETABLE_LABEL": "_ai-agent" }
-    },
+      "channel_access_token": "$vault:line-channel-token",
+      "channel_secret": "$vault:line-channel-secret"
+    }
+  },
+  "tools": {
     "karakeep": {
-      "enabled": false,
-      "command": "npx",
-      "args": ["-y", "@karakeep/mcp"],
-      "env": {
-        "KARAKEEP_API_KEY": "$vault:karakeep-api-key",
-        "KARAKEEP_SERVER_ADDR": "http://192.168.1.2:33000"
-      }
+      "enabled": true,
+      "server_addr": "http://192.168.1.2:33000",
+      "api_key": "$vault:karakeep-api-key"
     },
     "obsidian": {
-      "enabled": false,
-      "command": "uvx",
-      "args": ["mcp-obsidian"],
-      "env": {
-        "OBSIDIAN_API_KEY": "$vault:obsidian-api-key",
-        "OBSIDIAN_HOST": "192.168.1.2"
-      }
+      "enabled": true,
+      "host": "192.168.1.2",
+      "api_key": "$vault:obsidian-api-key"
+    },
+    "google-workspace": {
+      "enabled": true,
+      "writable_calendar_ids": [
+        "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com",
+        "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com"
+      ],
+      "gmail_deletable_label": "_ai-agent"
     }
-  }
+  },
+  "mcp": {}
 }

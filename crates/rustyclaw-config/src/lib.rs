@@ -100,7 +100,7 @@ pub struct LlmModelConfig {
 }
 
 // ─────────────────────────────────────────────
-// MCP
+// MCP（stdio プロトコル経由のサーバー専用）
 // ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -111,6 +111,92 @@ pub struct McpServerConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+}
+
+// ─────────────────────────────────────────────
+// Channels（入力チャネル設定）
+// ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DiscordConfig {
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub home_channel_id: Option<String>,
+    #[serde(default)]
+    pub respond_in_channels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LineConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub channel_access_token: String,
+    #[serde(default)]
+    pub channel_secret: String,
+    /// Webhook 受信ポート（デフォルト 8443）
+    #[serde(default)]
+    pub webhook_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelsConfig {
+    #[serde(default)]
+    pub discord: Option<DiscordConfig>,
+    #[serde(default)]
+    pub line: Option<LineConfig>,
+}
+
+// ─────────────────────────────────────────────
+// Tools（ネイティブ実装ツールの接続設定）
+// ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KarakeepConfig {
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub server_addr: String,
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ObsidianConfig {
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GoogleWorkspaceConfig {
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+    /// gws CLI バイナリのパス（省略時は既定パスを自動探索）
+    #[serde(default)]
+    pub gws_path: Option<String>,
+    /// 書き込みを許可するカレンダー ID リスト
+    #[serde(default)]
+    pub writable_calendar_ids: Vec<String>,
+    /// このラベルを持つスレッドを削除可能とする Gmail ラベル名
+    #[serde(default)]
+    pub gmail_deletable_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolsConfig {
+    #[serde(default)]
+    pub karakeep: Option<KarakeepConfig>,
+    #[serde(default)]
+    pub obsidian: Option<ObsidianConfig>,
+    #[serde(default, rename = "google-workspace")]
+    pub google_workspace: Option<GoogleWorkspaceConfig>,
 }
 
 // ─────────────────────────────────────────────
@@ -127,12 +213,13 @@ pub struct Config {
     pub agents: AgentsConfig,
     #[serde(default)]
     pub debug_dump: bool,
+    /// 入力チャネル設定（Discord・LINE など）
     #[serde(default)]
-    pub discord_token: Option<String>,
+    pub channels: ChannelsConfig,
+    /// ネイティブツールの接続設定
     #[serde(default)]
-    pub discord_home_channel_id: Option<String>,
-    #[serde(default)]
-    pub discord_respond_in_channels: Vec<String>,
+    pub tools: ToolsConfig,
+    /// MCP stdio プロトコル経由のサーバー設定
     #[serde(default)]
     pub mcp: HashMap<String, McpServerConfig>,
 }
@@ -222,11 +309,20 @@ impl Config {
             entry.api_base = resolve_value(&entry.api_base);
             entry.model = resolve_value(&entry.model);
         }
-        if let Some(ref token) = self.discord_token {
-            self.discord_token = Some(resolve_value(token));
+        if let Some(ref mut d) = self.channels.discord {
+            d.token = resolve_value(&d.token);
         }
-        if let Some(ref channel) = self.discord_home_channel_id {
-            self.discord_home_channel_id = Some(resolve_value(channel));
+        if let Some(ref mut l) = self.channels.line {
+            l.channel_access_token = resolve_value(&l.channel_access_token);
+            l.channel_secret = resolve_value(&l.channel_secret);
+        }
+        if let Some(ref mut k) = self.tools.karakeep {
+            k.server_addr = resolve_value(&k.server_addr);
+            k.api_key = resolve_value(&k.api_key);
+        }
+        if let Some(ref mut o) = self.tools.obsidian {
+            o.host = resolve_value(&o.host);
+            o.api_key = resolve_value(&o.api_key);
         }
         for server in self.mcp.values_mut() {
             for val in server.env.values_mut() {

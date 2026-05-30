@@ -19,7 +19,8 @@ pub struct HeartbeatService {
 
 impl HeartbeatService {
     pub fn new(config: Config, workspace_path: PathBuf, bus: std::sync::Arc<MessageBus>) -> Self {
-        let home_channel_id = config.discord_home_channel_id.clone();
+        let home_channel_id = config.channels.discord.as_ref()
+            .and_then(|d| d.home_channel_id.clone());
         Self { _config: config, workspace_path, bus, home_channel_id }
     }
 

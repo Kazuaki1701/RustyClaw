@@ -609,50 +609,35 @@ impl Gateway {
             tool_registry.register(mcp_tool);
         }
 
-        // Karakeep ネイティブツール登録（MCP 無効化後の代替）
-        let karakeep_addr = config.mcp.get("karakeep")
-            .and_then(|c| c.env.get("KARAKEEP_SERVER_ADDR"))
-            .cloned()
-            .unwrap_or_default();
-        let karakeep_key = config.mcp.get("karakeep")
-            .and_then(|c| c.env.get("KARAKEEP_API_KEY"))
-            .cloned()
-            .unwrap_or_default();
-        if !karakeep_addr.is_empty() && !karakeep_key.is_empty() {
-            tool_registry.register(Arc::new(rustyclaw_tools::KarakeepListTool::new(
-                karakeep_addr.clone(), karakeep_key.clone(),
-            )));
-            tool_registry.register(Arc::new(rustyclaw_tools::KarakeepTagTool::new(
-                karakeep_addr, karakeep_key,
-            )));
-            tracing::info!("Registered native Karakeep tools.");
+        // Karakeep ネイティブツール登録
+        if let Some(k) = config.tools.karakeep.as_ref().filter(|k| k.enabled) {
+            if !k.server_addr.is_empty() && !k.api_key.is_empty() {
+                tool_registry.register(Arc::new(rustyclaw_tools::KarakeepListTool::new(
+                    k.server_addr.clone(), k.api_key.clone(),
+                )));
+                tool_registry.register(Arc::new(rustyclaw_tools::KarakeepTagTool::new(
+                    k.server_addr.clone(), k.api_key.clone(),
+                )));
+                tracing::info!("Registered native Karakeep tools.");
+            }
         }
 
-        // Obsidian ネイティブツール登録（MCP 無効化後の代替）
-        let obsidian_host = config.mcp.get("obsidian")
-            .and_then(|c| c.env.get("OBSIDIAN_HOST"))
-            .cloned()
-            .unwrap_or_default();
-        let obsidian_key = config.mcp.get("obsidian")
-            .and_then(|c| c.env.get("OBSIDIAN_API_KEY"))
-            .cloned()
-            .unwrap_or_default();
-        if !obsidian_host.is_empty() && !obsidian_key.is_empty() {
-            tool_registry.register(Arc::new(rustyclaw_tools::ObsidianSearchTool::new(
-                obsidian_host.clone(), obsidian_key.clone(),
-            )));
-            tool_registry.register(Arc::new(rustyclaw_tools::ObsidianReadTool::new(
-                obsidian_host, obsidian_key,
-            )));
-            tracing::info!("Registered native Obsidian tools.");
+        // Obsidian ネイティブツール登録
+        if let Some(o) = config.tools.obsidian.as_ref().filter(|o| o.enabled) {
+            if !o.host.is_empty() && !o.api_key.is_empty() {
+                tool_registry.register(Arc::new(rustyclaw_tools::ObsidianSearchTool::new(
+                    o.host.clone(), o.api_key.clone(),
+                )));
+                tool_registry.register(Arc::new(rustyclaw_tools::ObsidianReadTool::new(
+                    o.host.clone(), o.api_key.clone(),
+                )));
+                tracing::info!("Registered native Obsidian tools.");
+            }
         }
 
-        // gws (Google Workspace) ネイティブツール登録
-        let gws_path = config.mcp.get("google-calendar")
-            .and_then(|c| c.env.get("GWS_PATH"))
-            .cloned()
-            .unwrap_or_else(|| {
-                // デフォルトパスを順番に探索
+        // Google Workspace ネイティブツール登録
+        if let Some(gws) = config.tools.google_workspace.as_ref().filter(|g| g.enabled) {
+            let gws_path = gws.gws_path.clone().unwrap_or_else(|| {
                 for p in &["/home/pi/.local/bin/gws", "/home/kazuaki/.local/bin/gws", "/usr/local/bin/gws"] {
                     if std::path::Path::new(p).exists() {
                         return p.to_string();
@@ -660,74 +645,60 @@ impl Gateway {
                 }
                 String::new()
             });
-        if !gws_path.is_empty() {
-            tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
+            if !gws_path.is_empty() {
+                tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
 
-            // 書き込み許可カレンダー ID リストをパース
-            // config 形式: "GWS_WRITABLE_CALENDAR_IDS": "id1,id2,..."
-            let writable_ids: Vec<String> = config.mcp
-                .get("google-calendar")
-                .and_then(|c| c.env.get("GWS_WRITABLE_CALENDAR_IDS"))
-                .map(|s| s.split(',').map(|id| id.trim().to_string()).filter(|id| !id.is_empty()).collect())
-                .unwrap_or_default();
-            if !writable_ids.is_empty() {
-                // 起動時に gws API からカレンダー名・説明を取得
-                let mut writable_calendars: Vec<(String, String, String)> = Vec::new();
-                for cal_id in &writable_ids {
-                    let params = serde_json::json!({ "calendarId": cal_id }).to_string();
-                    match tokio::process::Command::new(&gws_path)
-                        .args(["calendar", "calendarList", "get", "--params", &params, "--format", "json"])
-                        .output()
-                        .await
-                    {
-                        Ok(out) if out.status.success() => {
-                            let body = String::from_utf8_lossy(&out.stdout);
-                            if let Ok(d) = serde_json::from_str::<serde_json::Value>(&body) {
-                                let name = d["summary"].as_str().unwrap_or(cal_id).to_string();
-                                let desc = d["description"].as_str().unwrap_or("").to_string();
-                                tracing::info!("Calendar resolved: '{}' ({})", name, cal_id);
-                                writable_calendars.push((cal_id.clone(), name, desc));
+                if !gws.writable_calendar_ids.is_empty() {
+                    let mut writable_calendars: Vec<(String, String, String)> = Vec::new();
+                    for cal_id in &gws.writable_calendar_ids {
+                        let params = serde_json::json!({ "calendarId": cal_id }).to_string();
+                        match tokio::process::Command::new(&gws_path)
+                            .args(["calendar", "calendarList", "get", "--params", &params, "--format", "json"])
+                            .output()
+                            .await
+                        {
+                            Ok(out) if out.status.success() => {
+                                let body = String::from_utf8_lossy(&out.stdout);
+                                if let Ok(d) = serde_json::from_str::<serde_json::Value>(&body) {
+                                    let name = d["summary"].as_str().unwrap_or(cal_id).to_string();
+                                    let desc = d["description"].as_str().unwrap_or("").to_string();
+                                    tracing::info!("Calendar resolved: '{}' ({})", name, cal_id);
+                                    writable_calendars.push((cal_id.clone(), name, desc));
+                                }
+                            }
+                            _ => {
+                                tracing::warn!("Failed to fetch calendar info for {}. Using ID as name.", cal_id);
+                                writable_calendars.push((cal_id.clone(), cal_id.clone(), String::new()));
                             }
                         }
-                        _ => {
-                            tracing::warn!("Failed to fetch calendar info for {}. Using ID as name.", cal_id);
-                            writable_calendars.push((cal_id.clone(), cal_id.clone(), String::new()));
-                        }
+                    }
+                    if !writable_calendars.is_empty() {
+                        let allowed: Vec<(String, String)> = writable_calendars.iter()
+                            .map(|(id, name, desc)| {
+                                let label = if desc.is_empty() { name.clone() } else { format!("{} — {}", name, desc) };
+                                (id.clone(), label)
+                            })
+                            .collect();
+                        tracing::info!("Registering gws writable calendar tool ({} calendars).", allowed.len());
+                        tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarWriteTool::new(
+                            gws_path.clone(), allowed,
+                        )));
                     }
                 }
-                if !writable_calendars.is_empty() {
-                    let allowed: Vec<(String, String)> = writable_calendars.iter()
-                        .map(|(id, name, desc)| {
-                            let label = if desc.is_empty() {
-                                name.clone()
-                            } else {
-                                format!("{} — {}", name, desc)
-                            };
-                            (id.clone(), label)
-                        })
-                        .collect();
-                    tracing::info!("Registering gws writable calendar tool ({} calendars).", allowed.len());
-                    tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarWriteTool::new(
-                        gws_path.clone(), allowed,
-                    )));
+
+                tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path.clone())));
+
+                if let Some(ref label) = gws.gmail_deletable_label {
+                    if !label.is_empty() {
+                        tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailDeleteTool::new(
+                            gws_path.clone(), label.clone(),
+                        )));
+                        tracing::info!("Registered gws Gmail delete tool (label: {}).", label);
+                    }
                 }
+
+                tracing::info!("Registered native gws Google Workspace tools.");
             }
-
-            tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailTool::new(gws_path.clone())));
-
-            // Gmail 削除ツール: config の GWS_GMAIL_DELETABLE_LABEL が設定されている場合のみ登録
-            let deletable_label = config.mcp.get("gmail")
-                .and_then(|c| c.env.get("GWS_GMAIL_DELETABLE_LABEL"))
-                .cloned()
-                .unwrap_or_default();
-            if !deletable_label.is_empty() {
-                tool_registry.register(Arc::new(rustyclaw_tools::GwsGmailDeleteTool::new(
-                    gws_path.clone(), deletable_label.clone(),
-                )));
-                tracing::info!("Registered gws Gmail delete tool (label: {}).", deletable_label);
-            }
-
-            tracing::info!("Registered native gws Google Workspace tools.");
         }
 
         let tool_registry = Arc::new(tool_registry);
@@ -743,13 +714,16 @@ impl Gateway {
         ));
 
         // 4. DiscordConnector コネクタの起動
-        // トークンは config.discord_token を優先、次に環境変数 DISCORD_TOKEN、なければ dummy
-        let discord_token = config.discord_token.clone()
+        let discord_cfg = config.channels.discord.as_ref();
+        let discord_enabled = discord_cfg.map(|d| d.enabled).unwrap_or(false);
+        let discord_token = discord_cfg
+            .map(|d| d.token.clone())
+            .filter(|t| !t.is_empty())
             .or_else(|| std::env::var("DISCORD_TOKEN").ok())
             .unwrap_or_else(|| "dummy".to_string());
-        
+
         let mut discord = DiscordConnector::new(&discord_token);
-        
+
         // メッセージ受信時に MessageBus へパブリッシュするコールバックを設定
         let bus_clone = bus.clone();
         discord.register_callback(Arc::new(move |msg| {
@@ -758,12 +732,20 @@ impl Gateway {
                 user_id: msg.user_id,
                 channel_id: msg.channel_id,
                 content: msg.content,
-                priority: Priority::Normal, // 通常対話メッセージは Normal 枠
+                priority: Priority::Normal,
             });
         }));
 
-        discord.set_respond_in_channels(config.discord_respond_in_channels.clone());
-        discord.start().await.context("Failed to start DiscordConnector")?;
+        let respond_in = discord_cfg
+            .map(|d| d.respond_in_channels.clone())
+            .unwrap_or_default();
+        discord.set_respond_in_channels(respond_in);
+
+        if discord_enabled {
+            discord.start().await.context("Failed to start DiscordConnector")?;
+        } else {
+            tracing::info!("Discord channel disabled — skipping connector startup.");
+        }
         let discord_client = Arc::new(discord);
 
         // 5. MessageBus イベント監視ループ (MessageBus -> LaneRegistry)

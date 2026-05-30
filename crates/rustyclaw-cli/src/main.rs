@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 use rustyclaw_agent::Pipeline;
 use rustyclaw_config::{get_app_dir, get_config_dir, load_config};
 use rustyclaw_config::vault;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -51,6 +52,8 @@ enum Commands {
         #[command(subcommand)]
         command: DebugCommands,
     },
+    /// config.json の内容を点検し、エラー・警告を報告する
+    CheckConfig,
 }
 
 #[derive(Subcommand)]
@@ -175,6 +178,397 @@ fn read_secret() -> Result<String> {
         io::stdin().read_line(&mut s)?;
         Ok(s.trim().to_string())
     }
+}
+
+fn add_vault_ref(map: &mut HashMap<String, (bool, Vec<String>)>, key: &str, source: String, critical: bool) {
+    let entry = map.entry(key.to_string()).or_insert((false, Vec::new()));
+    if critical { entry.0 = true; }
+    entry.1.push(source);
+}
+
+async fn run_check_config(config_path: &PathBuf) -> Result<()> {
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+
+    println!("=== Config Check: {} ===\n", config_path.display());
+
+    // ── 1. ファイル読み込み ────────────────────────────────────────────
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(c) => { println!("[OK]   file readable"); c }
+        Err(e) => {
+            println!("[ERR]  file: {} — {}", config_path.display(), e);
+            println!("\nResult: 1 error(s)");
+            return Ok(());
+        }
+    };
+
+    // ── 2. JSON parse ─────────────────────────────────────────────────
+    if let Err(e) = serde_json::from_str::<serde_json::Value>(&content) {
+        println!("[ERR]  JSON parse: {}", e);
+        println!("\nResult: 1 error(s)");
+        return Ok(());
+    }
+    println!("[OK]   JSON valid");
+
+    // ── 3. Config schema ──────────────────────────────────────────────
+    let config: rustyclaw_config::Config = match serde_json::from_str(&content) {
+        Ok(c) => { println!("[OK]   schema valid"); c }
+        Err(e) => {
+            println!("[ERR]  schema: {}", e);
+            println!("\nResult: 1 error(s)");
+            return Ok(());
+        }
+    };
+
+    // ── 4. model_list ────────────────────────────────────────────────
+    println!();
+    let total = config.model_list.len();
+    let enabled_count = config.model_list.iter().filter(|m| m.enabled).count();
+
+    if total == 0 {
+        println!("[ERR]  model_list: empty");
+        errors += 1;
+    } else if enabled_count == 0 {
+        println!("[ERR]  model_list: {} entries, 0 enabled — no usable model", total);
+        errors += 1;
+    } else {
+        println!("[OK]   model_list: {} entries, {} enabled", total, enabled_count);
+    }
+
+    let mut seen_names: HashSet<&str> = HashSet::new();
+    for m in &config.model_list {
+        if !seen_names.insert(m.model_name.as_str()) {
+            println!("[ERR]  model_name '{}': duplicate", m.model_name);
+            errors += 1;
+        }
+        if m.model.is_empty() {
+            println!("[ERR]  model_list[{}].model: empty string", m.model_name);
+            errors += 1;
+        }
+        let base = &m.api_base;
+        let is_ref = base.starts_with("$vault:") || base.starts_with("$env:");
+        let is_url = base.starts_with("http://") || base.starts_with("https://");
+        if !base.is_empty() && !is_ref && !is_url {
+            println!("[ERR]  model_list[{}].api_base: not a URL or $ref: {}", m.model_name, base);
+            errors += 1;
+        }
+    }
+
+    // ── 5. agents ────────────────────────────────────────────────────
+    println!();
+    let all_names: HashSet<&str> = config.model_list.iter()
+        .map(|m| m.model_name.as_str()).collect();
+    let enabled_names: HashSet<&str> = config.model_list.iter()
+        .filter(|m| m.enabled).map(|m| m.model_name.as_str()).collect();
+
+    let check_agent_ref = |purpose: &str, name: &str, errors: &mut usize| {
+        if !all_names.contains(name) {
+            println!("[ERR]  agents.{:<8} → '{}': not found in model_list", purpose, name);
+            *errors += 1;
+        } else if !enabled_names.contains(name) {
+            println!("[ERR]  agents.{:<8} → '{}': model is disabled", purpose, name);
+            *errors += 1;
+        } else {
+            println!("[OK]   agents.{:<8} → '{}' (enabled)", purpose, name);
+        }
+    };
+
+    check_agent_ref("default", &config.agents.default.model_name.clone(), &mut errors);
+    if let Some(ref s) = config.agents.summary {
+        check_agent_ref("summary", &s.model_name.clone(), &mut errors);
+    }
+    if let Some(ref m) = config.agents.memory {
+        check_agent_ref("memory", &m.model_name.clone(), &mut errors);
+    }
+
+    // ── 6. vault references ──────────────────────────────────────────
+    println!();
+    let mut vault_map: HashMap<String, (bool, Vec<String>)> = HashMap::new();
+
+    for m in &config.model_list {
+        if let Some(k) = m.api_key.strip_prefix("$vault:") {
+            add_vault_ref(&mut vault_map, k, format!("{}.api_key", m.model_name), m.enabled);
+        }
+        if let Some(k) = m.api_base.strip_prefix("$vault:") {
+            add_vault_ref(&mut vault_map, k, format!("{}.api_base", m.model_name), m.enabled);
+        }
+    }
+    if let Some(ref d) = config.channels.discord {
+        if let Some(k) = d.token.strip_prefix("$vault:") {
+            add_vault_ref(&mut vault_map, k, "channels.discord.token".to_string(), d.enabled);
+        }
+    }
+    if let Some(ref l) = config.channels.line {
+        if let Some(k) = l.channel_access_token.strip_prefix("$vault:") {
+            add_vault_ref(&mut vault_map, k, "channels.line.channel_access_token".to_string(), l.enabled);
+        }
+        if let Some(k) = l.channel_secret.strip_prefix("$vault:") {
+            add_vault_ref(&mut vault_map, k, "channels.line.channel_secret".to_string(), l.enabled);
+        }
+    }
+    if let Some(ref k) = config.tools.karakeep {
+        if let Some(key) = k.api_key.strip_prefix("$vault:") {
+            add_vault_ref(&mut vault_map, key, "tools.karakeep.api_key".to_string(), k.enabled);
+        }
+    }
+    if let Some(ref o) = config.tools.obsidian {
+        if let Some(key) = o.api_key.strip_prefix("$vault:") {
+            add_vault_ref(&mut vault_map, key, "tools.obsidian.api_key".to_string(), o.enabled);
+        }
+    }
+    for (sname, srv) in &config.mcp {
+        for (ekey, eval) in &srv.env {
+            if let Some(k) = eval.strip_prefix("$vault:") {
+                add_vault_ref(&mut vault_map, k, format!("mcp.{}.env.{}", sname, ekey), srv.enabled);
+            }
+        }
+    }
+
+    // vault を読み込み、後続の疎通確認でも使う
+    let secrets: HashMap<String, String> = if vault_map.is_empty() {
+        println!("[OK]   vault references: none");
+        HashMap::new()
+    } else {
+        println!("vault references ({} unique key(s)):", vault_map.len());
+        let passphrase = prompt_passphrase()?;
+        let loaded = vault::load_vault(Some(&passphrase)).unwrap_or_default();
+
+        let mut sorted: Vec<&String> = vault_map.keys().collect();
+        sorted.sort();
+        for key in sorted {
+            let (critical, sources) = &vault_map[key];
+            if loaded.contains_key(key.as_str()) {
+                println!("[OK]   {} ({})", key, sources.join(", "));
+            } else if *critical {
+                println!("[ERR]  {} — not found in vault ({})", key, sources.join(", "));
+                errors += 1;
+            } else {
+                println!("[WARN] {} — not found in vault; all referencing models disabled ({})", key, sources.join(", "));
+                warnings += 1;
+            }
+        }
+        loaded
+    };
+
+    // $vault:KEY / $env:KEY → 実値に解決するヘルパー
+    let resolve = |val: &str| -> String {
+        if let Some(k) = val.strip_prefix("$vault:") {
+            secrets.get(k).cloned().unwrap_or_else(|| val.to_string())
+        } else if let Some(k) = val.strip_prefix("$env:") {
+            std::env::var(k).unwrap_or_else(|_| val.to_string())
+        } else {
+            val.to_string()
+        }
+    };
+
+    // ── 7. api_base 疎通確認 ─────────────────────────────────────────
+    println!();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    // enabled モデルのユニーク (api_base_resolved, api_key_resolved) ペア
+    let mut seen_bases: HashSet<String> = HashSet::new();
+    let enabled_models: Vec<_> = config.model_list.iter().filter(|m| m.enabled).collect();
+
+    if enabled_models.is_empty() {
+        println!("api_base 疎通確認: (enabled model なし)");
+    } else {
+        println!("api_base 疎通確認:");
+        for m in &enabled_models {
+            let base = resolve(&m.api_base);
+            if !seen_bases.insert(base.clone()) { continue; }
+            let url = format!("{}/models", base.trim_end_matches('/'));
+            let api_key = resolve(&m.api_key);
+            match http.get(&url).bearer_auth(&api_key).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() || status.is_client_error() {
+                        // 4xx はサーバー到達済み（認証エラー等は想定内）
+                        println!("[OK]   {} → {}", base, status.as_u16());
+                    } else {
+                        println!("[WARN] {} → {} (unexpected status)", base, status.as_u16());
+                        warnings += 1;
+                    }
+                }
+                Err(e) if e.is_timeout() => {
+                    println!("[ERR]  {} — timeout (5s)", base);
+                    errors += 1;
+                }
+                Err(e) => {
+                    println!("[ERR]  {} — {}", base, e);
+                    errors += 1;
+                }
+            }
+        }
+    }
+
+    // ── 8. tools 疎通確認 ────────────────────────────────────────────
+    println!();
+    println!("tools 疎通確認:");
+
+    // karakeep
+    match config.tools.karakeep.as_ref() {
+        Some(k) if k.enabled => {
+            let url = resolve(&k.server_addr);
+            match http.get(&url).send().await {
+                Ok(resp) if resp.status().as_u16() < 500 =>
+                    println!("[OK]   karakeep: {} → {}", url, resp.status().as_u16()),
+                Ok(resp) => {
+                    println!("[WARN] karakeep: {} → {} (server error)", url, resp.status().as_u16());
+                    warnings += 1;
+                }
+                Err(e) if e.is_timeout() => {
+                    println!("[ERR]  karakeep: {} — timeout", url);
+                    errors += 1;
+                }
+                Err(e) => {
+                    println!("[ERR]  karakeep: {} — {}", url, e);
+                    errors += 1;
+                }
+            }
+        }
+        Some(_) => println!("[SKIP] karakeep: disabled"),
+        None    => println!("[SKIP] karakeep: not configured"),
+    }
+
+    // obsidian
+    match config.tools.obsidian.as_ref() {
+        Some(o) if o.enabled => {
+            let url = format!("http://{}:27123", resolve(&o.host));
+            match http.get(&url).send().await {
+                Ok(resp) if resp.status().as_u16() < 500 =>
+                    println!("[OK]   obsidian: {} → {}", url, resp.status().as_u16()),
+                Ok(resp) => {
+                    println!("[WARN] obsidian: {} → {} (server error)", url, resp.status().as_u16());
+                    warnings += 1;
+                }
+                Err(e) if e.is_timeout() => {
+                    println!("[ERR]  obsidian: {} — timeout", url);
+                    errors += 1;
+                }
+                Err(e) => {
+                    println!("[ERR]  obsidian: {} — {}", url, e);
+                    errors += 1;
+                }
+            }
+        }
+        Some(_) => println!("[SKIP] obsidian: disabled"),
+        None    => println!("[SKIP] obsidian: not configured"),
+    }
+
+    // google-workspace: gws コマンドの存在確認
+    match config.tools.google_workspace.as_ref() {
+        Some(g) if g.enabled => {
+            let gws_path = g.gws_path.as_deref().unwrap_or("gws");
+            let cmd_found = std::process::Command::new("which")
+                .arg(gws_path)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if cmd_found {
+                println!("[OK]   google-workspace: gws command found ({})", gws_path);
+            } else {
+                // デフォルト探索パスも試す
+                let default_paths = ["/home/pi/.local/bin/gws", "/home/kazuaki/.local/bin/gws", "/usr/local/bin/gws"];
+                let found = default_paths.iter().any(|p| std::path::Path::new(p).exists());
+                if found {
+                    println!("[OK]   google-workspace: gws command found (default path)");
+                } else {
+                    println!("[ERR]  google-workspace: gws command not found");
+                    errors += 1;
+                }
+            }
+        }
+        Some(_) => println!("[SKIP] google-workspace: disabled"),
+        None    => println!("[SKIP] google-workspace: not configured"),
+    }
+
+    // MCP stdio サーバー（enabled なものがあれば command 確認）
+    let enabled_mcp: Vec<_> = config.mcp.iter().filter(|(_, s)| s.enabled).collect();
+    if !enabled_mcp.is_empty() {
+        println!("MCP stdio 疎通確認 ({} server(s)):", enabled_mcp.len());
+        for (name, srv) in &enabled_mcp {
+            let cmd_exists = std::process::Command::new("which")
+                .arg(&srv.command)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if cmd_exists {
+                println!("[OK]   {}: command '{}' found", name, srv.command);
+            } else {
+                println!("[ERR]  {}: command '{}' not found in PATH", name, srv.command);
+                errors += 1;
+            }
+        }
+    }
+
+    // ── 9. API 疎通確認 ──────────────────────────────────────────────
+    println!();
+    if enabled_models.is_empty() {
+        println!("API 疎通確認: (enabled model なし)");
+    } else {
+        println!("API 疎通確認 ({} model(s)):", enabled_models.len());
+        let http_api = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?;
+
+        for m in &enabled_models {
+            let base = resolve(&m.api_base);
+            let api_key = resolve(&m.api_key);
+            let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+            let body = serde_json::json!({
+                "model": m.model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 1,
+                "stream": false
+            });
+            let start = std::time::Instant::now();
+            match http_api.post(&url).bearer_auth(&api_key).json(&body).send().await {
+                Ok(resp) => {
+                    let elapsed = start.elapsed().as_millis();
+                    let status = resp.status();
+                    if status.is_success() {
+                        println!("[OK]   {} ({}) → {} ({}ms)", m.model_name, m.model, status.as_u16(), elapsed);
+                    } else {
+                        let body_text = resp.text().await.unwrap_or_default();
+                        let hint = if status.as_u16() == 401 || status.as_u16() == 403 {
+                            "auth error — API key invalid?"
+                        } else if status.as_u16() == 404 {
+                            "model not found"
+                        } else if status.as_u16() == 429 {
+                            "rate limit / quota exceeded"
+                        } else {
+                            "API error"
+                        };
+                        println!("[ERR]  {} ({}) → {} {} — {}", m.model_name, m.model, status.as_u16(), hint, body_text.chars().take(120).collect::<String>());
+                        errors += 1;
+                    }
+                }
+                Err(e) if e.is_timeout() => {
+                    println!("[ERR]  {} — timeout (15s)", m.model_name);
+                    errors += 1;
+                }
+                Err(e) => {
+                    println!("[ERR]  {} — {}", m.model_name, e);
+                    errors += 1;
+                }
+            }
+        }
+    }
+
+    // ── Summary ──────────────────────────────────────────────────────
+    println!();
+    if errors == 0 && warnings == 0 {
+        println!("Result: All checks passed.");
+    } else {
+        println!("Result: {} error(s), {} warning(s)", errors, warnings);
+    }
+
+    if errors > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 fn run_debug(cmd: DebugCommands, workspace: &PathBuf) -> Result<()> {
@@ -406,12 +800,15 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // vault / debug コマンドはログ初期化不要
+    // vault / debug / check-config コマンドはログ初期化不要
     if let Commands::Vault { command } = cli.command {
         return run_vault(command, &cli.config);
     }
     if let Commands::Debug { command } = cli.command {
         return run_debug(command, &cli.workspace);
+    }
+    if let Commands::CheckConfig = cli.command {
+        return run_check_config(&cli.config).await;
     }
 
     // --no-agent フラグを環境変数に伝播（Gateway 内の create_provider にも届く）
@@ -459,7 +856,7 @@ async fn main() -> Result<()> {
             let gateway = rustyclaw_gateway::Gateway::new(&cli.config, &cli.workspace);
             gateway.run().await?;
         }
-        Commands::Vault { .. } | Commands::Debug { .. } => unreachable!(),
+        Commands::Vault { .. } | Commands::Debug { .. } | Commands::CheckConfig => unreachable!(),
     }
 
     Ok(())

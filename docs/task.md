@@ -479,6 +479,54 @@
 
 ---
 
+## Phase 19: LLM 用途別モデル割り当て最適化（Provider 分散）
+
+> 調査結果: `docs/specs/llm-provider-model-selection.md`  
+> 方針: Groq / Cloudflare / OpenRouter / HuggingFace の特性を活かし、用途ごとに最適なモデルへ分散
+
+### purpose 一覧と割り当てモデル
+
+| purpose | モデル | Provider | 根拠 |
+|---------|--------|---------|------|
+| `default` | groq-llama-8b | Groq | 高速・RPD 14,400。対話頻度を吸収 |
+| `tools` | groq-qwen3-32b | Groq | 内部ツール実行・推論特化。RPD 1,000 を全振り |
+| `discord` | hf-qwen2.5-7b | HF | Chat Agent #1（完全無料・5M tokens/月）・日本語特化 |
+| `line` | hf-qwen2.5-7b | HF | discord と共用。LINE 実装まで予約（`enabled: false`）|
+| `heartbeat` | groq-llama-8b | Groq | 48回/日の高頻度。CF neurons 超過を回避。default と共用 |
+| `summary` | cf-gemma-4-26b | CF | 1日数回・256k context・neurons 消費小（~177/日）|
+| `memory` | cf-qwen3-30b | CF | 1日数回・超安価・neurons 消費小（~150/日）|
+
+> **CF neurons 日次試算**: summary ~177 + memory ~150 = **~327 neurons/日**（上限 10,000 に十分余裕）  
+> **groq-llama-8b 日次試算**: default ~50K + heartbeat ~144K = **~194K tokens/日**（TPD 500K に余裕）  
+> **Groq→HF 移行**: 検討済みだが速度・品質・予算の観点から現状維持を選択
+
+### タスク
+
+- `[ ]` **1. `agents` config に全 purpose を追加**
+  - `config.json` の `agents` セクションに `tools`・`discord`・`line`・`heartbeat` エントリを追加
+  - `line` は `enabled: false` モデルを割り当て（LINE 実装まで予約のみ）
+
+- `[ ]` **2. `execute_with_tools()` を Discord 由来は `get_model("discord")` に変更**
+  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（Discord メッセージ dispatch 箇所）
+  - Discord 経由: `get_model("discord")` / それ以外: `get_model("tools")`
+
+- `[ ]` **3. `execute_heartbeat()` を `get_model("heartbeat")` に変更**
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`
+  - `get_model("default")` → `get_model("heartbeat")` に変更（3箇所）
+
+- `[ ]` **4. `get_model()` の fallback ロジックに全 purpose を追加**
+  - 対象: `crates/rustyclaw-config/src/lib.rs`
+  - `tools` / `discord` / `line` / `heartbeat` 未設定時はすべて `default` にフォールバック
+
+- `[ ]` **5. CF・HF モデルを有効化・agents 設定を反映**
+  - `cf-gemma-4-26b`・`cf-qwen3-30b` を `enabled: true` に変更
+  - `hf-qwen2.5-7b` を `enabled: true` に変更
+  - `agents` の全 purpose の model_name を上記テーブルに従い更新
+  - `summary`: `groq-llama-70b` → `cf-gemma-4-26b` に変更
+  - `heartbeat`: `cf-gemma-4-26b` → `groq-llama-8b` に変更（default と同モデル）
+
+---
+
 ## 保留中課題
 
 ### 本番環境の自動バックアップ体制の確立 【保留中】
