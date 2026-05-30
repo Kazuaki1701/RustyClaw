@@ -382,6 +382,55 @@
 
 ---
 
+## Phase 16: GeminiClaw 未移植機能の実装（2026-05-30 特定）
+
+> GeminiClaw 時代に存在していたが RustyClaw では未実装の機能。優先度順に記載。
+
+### 🔴 最優先（今すぐ影響あり）
+
+- `[ ]` **heartbeat-digest.md が常に空 → 増分生成ロジックの修正**
+  - 現状: `memory/heartbeat-digest.md` が 0 バイトのまま。Heartbeat Step 1 の活動レビューが機能しない
+  - 原因: `HeartbeatService::generate_digest()` の増分スキャン条件が常にスキップしている可能性
+  - 対策: `last_run` タイムスタンプ管理・JSONL 差分スキャンのロジックを点検・修正
+  - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`
+
+- `[ ]` **Skills ファイルロード機構の実装**
+  - 現状: `workspace/skills/` ディレクトリが存在しない。cron.json の "Run the vitals-coach skill" が素のテキストとして LLM に渡るだけで、スキル定義ファイルが注入されない
+  - 対策: `workspace/skills/<skill-name>.md` を読み込んでプロンプトに前置する仕組みを実装
+  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（cron job 実行前にスキルファイルを探索・注入）
+
+- `[ ]` **Proactive Posts 注入**
+  - 現状: Heartbeat が Discord に送った投稿が翌ターンの会話履歴に反映されない。エージェントが「自分が言ったこと」を忘れる
+  - 対策: Heartbeat の発言を `cron:heartbeat` セッションに記録し、ユーザー会話の ContextBuilder でそれを注入する
+  - 参照: GeminiClaw `src/agent/context-builder.ts`（Proactive Posts 注入実装）
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`（`build_system_context()` または `execute_with_tools()`）
+
+### 🟡 中優先（品質向上）
+
+- `[ ]` **tantivy 検索ツールの LLM 公開**
+  - 現状: `SearchIndexManager` は実装済みでサマリー indexing も動作しているが、LLM から検索するツールが `ToolRegistry` に未登録
+  - 対策: `MemorySearchTool` を `rustyclaw-tools` に追加し Gateway で登録
+  - 旧称: GeminiClaw では `qmd_query` / `qmd_get` として提供
+
+- `[ ]` **Obsidian 書き込み・追記ツールの追加**
+  - 現状: 検索（`obsidian_search`）・読み取り（`obsidian_read_note`）のみ実装。ノートの作成・追記・更新が不可
+  - 対策: `ObsidianWriteTool`（新規作成・追記）を `rustyclaw-tools` に追加
+  - Obsidian Local REST API: `PUT /vault/{path}` で書き込み可能
+
+- `[ ]` **Interest Patrol の外部ソース巡回**
+  - 現状: Topic Patrol は Karakeep 内の既存ブックマークしか見ない
+  - 対策: `USER.md` の Interests に基づいて HN・Reddit 等の外部ソースを巡回する仕組みを検討
+  - （実装難度高・後回しで可）
+
+### 🟢 低優先（将来拡張）
+
+- `[ ]` **Google Drive / Sheets / Docs ツール**
+  - gws CLI 経由で実装可能。ユースケースが明確になった時点で追加
+- `[ ]` **天気チェック（Step 4）**
+  - HEARTBEAT.md でスキップ明記済み。天気 API（Open-Meteo 等）との連携が確定した時点で実装
+
+---
+
 ## 保留中課題
 
 ### 本番環境の自動バックアップ体制の確立 【保留中】
