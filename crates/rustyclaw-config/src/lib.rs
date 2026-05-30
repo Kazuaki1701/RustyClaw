@@ -3,9 +3,22 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub mod vault;
+
+/// アプリケーションホームディレクトリを返す。
+///
+/// 解決順:
+/// 1. `RUSTYCLAW_HOME` 環境変数
+/// 2. `~/.rustyclaw`（デフォルト）
+pub fn get_app_dir() -> PathBuf {
+    if let Ok(custom) = std::env::var("RUSTYCLAW_HOME") {
+        return PathBuf::from(custom);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    PathBuf::from(home).join(".rustyclaw")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmModelConfig {
@@ -92,9 +105,9 @@ fn resolve_value(val: &str) -> String {
                 return v.clone();
             }
         }
-        // 3. 後方互換: 平文 vault.json (~/.rustyclaw/vault.json)
-        if let Ok(home) = std::env::var("HOME") {
-            let json_path = std::path::PathBuf::from(home).join(".rustyclaw").join("vault.json");
+        // 3. 後方互換: 平文 vault.json ({app_dir}/vault.json)
+        {
+            let json_path = get_app_dir().join("vault.json");
             if json_path.exists() {
                 if let Ok(file) = std::fs::File::open(json_path) {
                     if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {

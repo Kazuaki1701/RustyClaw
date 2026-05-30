@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
 use rustyclaw_agent::Pipeline;
-use rustyclaw_config::load_config;
+use rustyclaw_config::{get_app_dir, load_config};
 use rustyclaw_config::vault;
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -87,8 +87,7 @@ enum VaultCommands {
 
 /// デバッグログ（tracing）のセットアップを行う
 fn setup_logging() -> Result<()> {
-    let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let log_dir = home_dir.join(".rustyclaw");
+    let log_dir = get_app_dir();
     std::fs::create_dir_all(&log_dir)?;
 
     let file_appender = tracing_appender::rolling::daily(&log_dir, "rustyclaw.log");
@@ -216,8 +215,7 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
                 println!("Secrets : 0");
 
                 // 平文 vault.json が同ディレクトリに残っている場合は移行を促す
-                let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-                let legacy = home.join(".rustyclaw").join("vault.json");
+                let legacy = get_app_dir().join("vault.json");
                 if legacy.exists() {
                     println!();
                     println!("⚠  Legacy vault.json found at {}", legacy.display());
@@ -296,12 +294,7 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
         }
 
         VaultCommands::ImportJson { path } => {
-            let json_path = path.unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".rustyclaw")
-                    .join("vault.json")
-            });
+            let json_path = path.unwrap_or_else(|| get_app_dir().join("vault.json"));
             if !json_path.exists() {
                 anyhow::bail!("vault.json not found: {}", json_path.display());
             }

@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use std::io::BufRead;
+use rustyclaw_config::get_app_dir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -78,7 +79,7 @@ impl HealthServer {
                                     let logs = if let Some(log_path) = get_latest_app_log() {
                                         read_last_lines(&log_path, 100)
                                     } else {
-                                        "No application logs found under ~/.rustyclaw/".to_string()
+                                        format!("No application logs found under {}/", get_app_dir().display())
                                     };
                                     ("200 OK".to_string(), logs, "text/plain; charset=utf-8")
 
@@ -199,7 +200,7 @@ fn read_last_lines(path: &Path, limit: usize) -> String {
 }
 
 fn get_latest_app_log() -> Option<PathBuf> {
-    let log_dir = dirs::home_dir()?.join(".rustyclaw");
+    let log_dir = get_app_dir();
     if !log_dir.exists() {
         return None;
     }

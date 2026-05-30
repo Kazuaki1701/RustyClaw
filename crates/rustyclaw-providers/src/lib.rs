@@ -1,7 +1,7 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
-use rustyclaw_config::Config;
+use rustyclaw_config::{get_app_dir, Config};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::time::Duration;
@@ -1206,8 +1206,8 @@ mod tests {
 }
 
 fn record_neuron_usage(neurons: f64) {
-    if let Ok(home) = std::env::var("HOME") {
-        let neuron_path = std::path::PathBuf::from(home).join(".rustyclaw").join("neuron_usage.json");
+    {
+        let neuron_path = get_app_dir().join("neuron_usage.json");
         let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
         
         let mut neurons_used = 0.0;
@@ -1243,8 +1243,8 @@ pub fn get_neuron_stats() -> serde_json::Value {
     let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let mut neurons_used = 0.0;
     
-    if let Ok(home) = std::env::var("HOME") {
-        let neuron_path = std::path::PathBuf::from(home).join(".rustyclaw").join("neuron_usage.json");
+    {
+        let neuron_path = get_app_dir().join("neuron_usage.json");
         if neuron_path.exists() {
             if let Ok(file) = std::fs::File::open(&neuron_path) {
                 if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {

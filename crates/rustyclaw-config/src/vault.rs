@@ -13,10 +13,9 @@ const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const PBKDF2_ROUNDS: u32 = 100_000;
 
-/// vault.enc の格納先: ~/.rustyclaw/vault.enc
+/// vault.enc の格納先: {app_dir}/vault.enc
 pub fn get_vault_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    PathBuf::from(home).join(".rustyclaw").join("vault.enc")
+    crate::get_app_dir().join("vault.enc")
 }
 
 /// パスフレーズ解決順:
