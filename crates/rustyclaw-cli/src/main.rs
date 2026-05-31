@@ -81,6 +81,9 @@ enum VaultCommands {
     Get {
         /// シークレットのキー名
         key: String,
+        /// パスフレーズ入力をスキップし、空文字を自動採用する
+        #[arg(long)]
+        skip_passphrase: bool,
     },
     /// 保存済みキー一覧を表示する（値は非表示）
     List,
@@ -663,8 +666,12 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
             println!("Secret '{}' stored in {}.", key, vault::get_vault_path().display());
         }
 
-        VaultCommands::Get { key } => {
-            let passphrase = prompt_passphrase()?;
+        VaultCommands::Get { key, skip_passphrase } => {
+            let passphrase = if skip_passphrase {
+                String::new()
+            } else {
+                prompt_passphrase()?
+            };
             let secrets = vault::load_vault(Some(&passphrase))?;
             match secrets.get(&key) {
                 Some(v) => println!("{}", v),
