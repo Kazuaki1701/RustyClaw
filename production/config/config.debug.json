@@ -228,7 +228,7 @@
       "max_tokens": 2048,
       "temperature": 0.7,
       "enabled": true,
-      "context_window": "128k"
+      "context_window": "16k"
     }
   ],
   "agents": {
