@@ -225,6 +225,25 @@ impl Pipeline {
         });
     }
 
+    /// FU-4: 補助 LLM 呼び出し（memory-flush / session-summary）のトークン消費を usage に計上する (fail-open)。
+    /// execute / execute_with_tools 以外の経路は従来 record_usage されず Stats が過少計上だった。
+    fn record_aux_usage(
+        db: &rustyclaw_storage::DbManager,
+        session_id: &str,
+        response: &LlmResponse,
+        trigger: &str,
+    ) {
+        let _ = db.record_usage(
+            session_id,
+            response.prompt_tokens.unwrap_or(0),
+            response.completion_tokens.unwrap_or(0),
+            response.total_tokens.unwrap_or(0),
+            response.model_used.as_deref().unwrap_or(""),
+            trigger,
+            0,
+        );
+    }
+
     async fn flush_memory(workspace_dir: &Path, session_id: &str, config: Config) -> Result<()> {
         let db_path = workspace_dir.join("memory.db");
         let db = rustyclaw_storage::DbManager::new(&db_path)
@@ -358,6 +377,9 @@ Rules:
 
         let response = provider.complete(&messages, &[], &opts).await
             .context("LLM call failed for memory flush")?;
+
+        // FU-4: memory flush の LLM 消費を usage テーブルへ計上（Stats 過少計上の解消）
+        Self::record_aux_usage(&db, session_id, &response, "memory-flush");
 
         let response_text = response.content;
 
@@ -512,7 +534,9 @@ Rules:
 
         let mut history = ConversationHistory::new(history_messages);
         let history_limit = self.get_history_limit("default");
-        history.compact_if_needed(history_limit);
+        // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
+        let overhead_tokens = (system_context.chars().count() * 3) / 2;
+        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
         let mut messages = Vec::new();
@@ -631,6 +655,9 @@ Rules:
             category: Some("summary".to_string()),
         };
 
+        // FU-4: summary 経路の LLM 消費を計上するため db を開く（fail-open）
+        let usage_db = rustyclaw_storage::DbManager::new(&workspace_dir.join("memory.db")).ok();
+
         let summary_content = if existing_turns > 0 && existing_turns < history.len() {
             // Incremental Summary
             let mut new_conversation_text = String::new();
@@ -673,7 +700,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
             let response = provider.complete(&messages, &[], &opts).await
                 .context("LLM call failed for incremental session summary generation")?;
-            
+            if let Some(db) = &usage_db {
+                Self::record_aux_usage(db, target_session_id, &response, "session-summary");
+            }
             response.content
         } else if existing_turns > 0 && existing_turns >= history.len() {
             existing_content
@@ -719,7 +748,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
             let response = provider.complete(&messages, &[], &opts).await
                 .context("LLM call failed for full session summary generation")?;
-            
+            if let Some(db) = &usage_db {
+                Self::record_aux_usage(db, target_session_id, &response, "session-summary");
+            }
             response.content
         };
 
@@ -917,7 +948,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         let mut history = ConversationHistory::new(history_messages);
         let history_limit = self.get_history_limit("default");
-        history.compact_if_needed(history_limit);
+        // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
+        let overhead_tokens = (system_context.chars().count() * 3) / 2;
+        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
         let mut messages = Vec::new();

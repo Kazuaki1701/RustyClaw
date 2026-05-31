@@ -202,12 +202,35 @@
   - `karakeep-cleanup`/`recommendation` cron が**存在しない `bash scripts/501,502` を前提に無言失敗**中。A) 既存 `karakeep_tag_bookmark` 等の API ツールで prompt 書換（軽・推奨）／ B) 制約付き shell 実行ツール新設（重・要セキュリティ）。
   - 対象: `cron.json`（prompt 書換）もしくは `rustyclaw-tools`（shell ツール）
 
-- `[ ]` **STEP 7: 設定・運用衛生（T5・個別着手可）** — ISSUE-08 / 11 / 12 / 15 / 16
-  - LM Studio context 長の運用手順化/自動整合(08)、config `debug/release` の DRY 化(11)、`config.json` symlink のコミット衛生(12)、rp1 への `sqlite3` 導入(15)、LM Studio 埋め込みモデルの preload(16)。
+- `[x]` **STEP 7: 設定・運用衛生（T5・個別着手可）** — ISSUE-08 / 11 / 12 / 15 / 16 ✅ 完了 (2026-05-31, merge `a18d639`)
+  - LM Studio context 長の運用手順化/自動整合(08, `scripts/check-lmstudio-context.sh`)、config `debug/release` の同期チェック(11, `scripts/check-config-sync.sh`)、`config.json` symlink の untrack 化(12, `9113834`)、rp1 への `sqlite3` 導入手順化(15, README §4)、LM Studio 埋め込みモデル preload 手順化(16, README §4)。
 
-- `[ ]` **STEP 8: 信頼性・安定性（既存 ISSUE 再整理）（T6）** — ISSUE-01 ✅解消済 / 02 / 03
-  - ISSUE-01（数値パラメータ文字列化）は **✅ 解消済み確認（2026-05-31）**: tools は `"type":"string"`＋`parse()` で安全化済み、`cargo test -p rustyclaw-tools` 44件 PASS（Phase 20 で対処・本STEPで検証）。残り 02（トークン予算/413）・03（daemon 初期化非同期化・SIGTERM 再起動）を判断。
+- `[x]` **STEP 8: 信頼性・安定性（既存 ISSUE 再整理）（T6）** — ISSUE-01 ✅ / 03 ✅ / 02 ⚠️一部 (2026-05-31)
+  - ISSUE-01（数値パラメータ文字列化）: **✅ 解消済み**（tools は `"type":"string"`＋`parse()`、`cargo test -p rustyclaw-tools` 44件 PASS）。
+  - ISSUE-03（daemon 初期化非同期化）: **✅ 完了**（GWS カレンダー解決を `tokio::spawn` で並列化, `8a1fe01`）。
+  - ISSUE-02（トークン予算/413）: **⚠️ 一部のみ**。overhead 考慮の圧縮（`compact_if_needed_with_overhead`）は `execute_with_tools` 経路のみ適用。→ 下記「再点検 FU-3」参照。
   - 詳細は `docs/rusty_claw_improvement_plan.md` §1〜§3。
+
+### Phase 31 — 再点検で判明した不足・不完全項目（2026-05-31 実装点検）
+> `docs/rusty_claw_improvement_plan.md` の各 ISSUE を実コードと照合した結果、production 側は修正済みだが
+> dev workspace 未同期・あるいは修正が一部経路に限定されている項目を検出。
+
+- `[x]` **FU-1: dev `workspace/cron.json` の karakeep ジョブ修正（STEP 6 / ISSUE-06 の dev 取りこぼし）** ✅ 完了 (2026-05-31)
+  - dev `workspace/cron.json` の `karakeep-recommendation`/`karakeep-cleanup` prompt を `bash scripts/501,502` 参照から `karakeep_list_bookmarks`/`karakeep_tag_bookmark`/`karakeep_delete_bookmark` ツール化（production と同等）へ同期。JSON 妥当性確認済。
+  - 対象: `workspace/cron.json`
+
+- `[x]` **FU-2: dev `workspace/` の SOUL.md / AGENTS.md 同期（STEP 5 / ISSUE-04・05 の dev 取りこぼし）** ✅ 完了 (2026-05-31)
+  - `workspace/SOUL.md` に「Capabilities & Fact-Checking」節（17+ native tools・`get_cron_schedule` 強制）を追記。`workspace/AGENTS.md` の「Karakeep Operation Scripts」(bash 501/502) を「Native Tools & Schedule Fact-Checking」（native ツール＋`get_cron_schedule`）へ差し替え。dev 既存スタイルは維持し、対象節のみ最小差分で同期。
+  - 対象: `workspace/SOUL.md`, `workspace/AGENTS.md`
+  - 備考: AGENTS.md は dev/production が広範に分岐（dev に固有の詳細節あり）。FU-2 スコープ外の差分は意図的相違の可能性があるため未変更。
+
+- `[x]` **FU-3: overhead 考慮の履歴圧縮を全経路へ拡張（STEP 8 / ISSUE-02 の残リスク）** ✅ 完了 (2026-05-31)
+  - `execute()`（`agent/src/lib.rs:515`）と `execute_stream()`（同:920）の `compact_if_needed` を `compact_if_needed_with_overhead`（system プロンプト分を `chars*3/2` で見積り加算）へ置換。これで全 LLM 経路が system オーバーヘッドを考慮し 413 残リスクを解消（`execute_stream` は現状 dead path だが将来配線時のため同時対応）。
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`
+
+- `[x]` **FU-4: memory-flush / session-summary のトークン計上（STEP 4 / 旧 Phase 28b-1 の未達分）** ✅ 完了 (2026-05-31)
+  - 共通ヘルパ `Pipeline::record_aux_usage(db, session_id, response, trigger)` を追加し、`flush_memory`（`trigger=memory-flush`、既存 db を流用）と `generate_session_summary`（`trigger=session-summary`、fail-open で db を開く）の LLM 応答トークンを `usage` テーブルへ計上。Stats の過少計上を解消（旧 Phase 28b-1 の約束を達成）。
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`
 
 ### Phase 31 — 保留（前提条件の解決後に着手）
 - `[ ]` **ISSUE-22: `gmn_sem` capacity の config 化＋書き込み直列化の責務分離**（capacity 引き上げ検討時。**旧 Phase 25-1 を統合**。メモリ `project_user_sem_concurrency` 参照）

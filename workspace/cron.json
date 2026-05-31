@@ -62,7 +62,7 @@
       "type": "cron",
       "expression": "04:45"
     },
-    "prompt": "Daily Karakeep recommendation:\n1. Fetch recent bookmarks (last 3 days) from $KARAKEEP_SERVER_ADDR/api/v1/bookmarks.\n2. Select items matching user interests (AI, LLM, CLI, Cloudflare, Obsidian, etc.) from USER.md.\n3. Apply '_recommended' tag to selected IDs using 'bash scripts/502_karakeep-tag-items.sh _recommended <ids...>'.\n4. Log results to memory/logs/YYYY-MM-DD.md.",
+    "prompt": "Daily Karakeep recommendation:\n1. Fetch recent bookmarks (last 3 days) using the `karakeep_list_bookmarks` tool.\n2. Select items matching user interests (AI, LLM, CLI, Cloudflare, Obsidian, etc.) from USER.md.\n3. Apply the '_recommended' tag to each selected ID using the `karakeep_tag_bookmark` tool sequentially.\n4. Log results to memory/logs/YYYY-MM-DD.md.",
     "channel_id": "1491909716945928392"
   },
   {
@@ -73,7 +73,7 @@
       "type": "cron",
       "expression": "04:00"
     },
-    "prompt": "Run Karakeep auto-cleanup:\n1. Execute 'bash scripts/501_karakeep-cleanup.sh'.\n2. Log the output and summary to memory/logs/YYYY-MM-DD.md.",
+    "prompt": "Run Karakeep auto-cleanup:\n1. Fetch recent bookmarks using the `karakeep_list_bookmarks` tool.\n2. Filter bookmarks that are older than 2 weeks (14 days) and have the 'rss' tag.\n3. Delete these stale bookmarks using the `karakeep_delete_bookmark` tool.\n4. Log the output and summary of deleted bookmark count/titles to memory/logs/YYYY-MM-DD.md.",
     "channel_id": "cron"
   }
 ]

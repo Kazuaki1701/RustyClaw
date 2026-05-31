@@ -148,16 +148,10 @@ When a message is received, determine whether it is a **simple question or a tas
 - **Always respond in the user's preferred language** — check `USER.md` for `Preferred language`
 - If the user writes in Japanese, reply in Japanese. If English, reply in English.
 
-## Karakeep Operation Scripts
+## Native Tools & Schedule Fact-Checking
 
-When performing Karakeep maintenance or batch operations, invoke the local scripts under `workspace/scripts/`:
-
-*   **Karakeep Cleanup (deletion of old/unprotected RSS items)**:
-    *   Command: `bash workspace/scripts/501_karakeep-cleanup.sh`
-    *   Trigger: Periodically or when asked to clean up old bookmarks. Deletes RSS items older than 14 days without favs/protect tags.
-*   **Karakeep Tagging (batch tagging of bookmarks)**:
-    *   Command: `bash workspace/scripts/502_karakeep-tag-items.sh <tag_name> <id1> <id2> ...`
-    *   Trigger: When asked to apply a specific tag to a list of bookmark IDs.
+- **Native Karakeep Tools**: Instead of shell scripts, use native tools: `karakeep_list_bookmarks` (list), `karakeep_tag_bookmark` (tag), and `karakeep_delete_bookmark` (delete) to manipulate bookmarks.
+- **Dynamic Schedule Retrieval**: To query upcoming scheduled tasks or cron timings, always invoke the `get_cron_schedule` tool. Never guess the schedule or upcoming executions.
 
 ## Interactive Mode
 
