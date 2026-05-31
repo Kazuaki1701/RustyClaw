@@ -64,15 +64,24 @@
 
 ---
 
-## Phase 25: 並行制御の最適化とフリーズ防止（Lane Queue 改善） 🔴 優先度高
+## Phase 25: 並行制御の最適化とフリーズ防止（Lane Queue 改善・回収） 🔴 優先度高
+
+- `[x]` **1. Lane Queue（Inngest 代替）の機能ギャップ分析とロードマップ策定**
+  - GeminiClaw との比較調査を行い、[2026-05-31-lane-queue-gap-analysis.md](file:///home/kazuaki/Projects/RustyClaw/docs/superpowers/plans/2026-05-31-lane-queue-gap-analysis.md) を作成。
 
 - `[ ]` **2. 実行キュー取得の安全待機タイムアウトの実装**
   - `crates/rustyclaw-gateway/src/lib.rs` におけるセマフォ取得処理への `tokio::time::timeout` 導入。
 
-- `[ ]` **3. Chat Progress Reporter (Typing... 送信) の実装**
-  - `crates/rustyclaw-channels` にツール実行中の Typing アクション定時送信機構を導入し、`execute_with_tools` のライフサイクルと結合。
+- `[x]` **3. Chat Progress Reporter (Typing... 送信) の実装 (Phase 1)**
+  - `rustyclaw-channels` にて `DiscordProgressReporter` トレイト、タイピングキープアライブ維持タスク、進捗メッセージライフサイクルを実装。`rustyclaw-agent` および `rustyclaw-gateway` に mpsc チャネルを用いた非同期イベント中継として完全統合。
 
-- `[ ]` **4. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[ ]` **4. 並行数 4 への拡張に向けたファイルロック機構の導入 (Phase 2)**
+  - `MEMORY.md` や `USER.md` 等への並列書き込み破損を防ぐため、`fd-lock` 等によるファイルレベルの排他制御を導入し、`gmn_sem` の容量を `4` に拡張可能にする。
+
+- `[ ]` **5. 実行ステップのチェックポイント化と Lossless Resume の導入 (Phase 3)**
+  - 途中でエラー（送信失敗など）が発生した際に、LLM API の再呼出を行わず失敗したフェーズから再試行できる中間状態の永続化と復旧機構。
+
+- `[ ]` **6. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
