@@ -276,7 +276,18 @@ impl Tool for KarakeepDeleteTool {
                 }
             }
         };
-        let client = reqwest::Client::new();
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return ToolResult {
+                    content: format!("Failed to build reqwest client: {}", e),
+                    is_error: true,
+                }
+            }
+        };
         let url = format!("{}/api/v1/bookmarks/{}", self.server_addr, bookmark_id);
         match client
             .delete(&url)

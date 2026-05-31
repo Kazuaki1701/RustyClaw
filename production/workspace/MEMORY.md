@@ -12,13 +12,14 @@ Remove outdated entries. Prefer facts over narratives.
 
 ## Ongoing Tasks
 - **FE Exam:** 2026-05-10 実施済み。結果要確認（3週間以上経過）。 [2026-05-11]
-- **Karakeep Auto Recommendation:** 毎朝 04:45 に `_recommended` タグを付与する Cron ジョブ運用中。 [2026-05-11]
+- **Karakeep Auto Recommendation:** 毎朝 04:45 にブックマークに対して `_recommended` タグを自動付与する Cron ジョブが運用されている。 [2026-05-31]
 
 ## Technical Insights
 - **Agent Runtime:** RustyClaw（Raspberry Pi 4, aarch64）。設定変更反映はサービス再起動 `sudo systemctl restart rustyclaw` が必要。 [2026-05-30]
 - **Tools Available:** Karakeep（list/tag）、Obsidian（search/read）、gws Calendar（read + AI AGENT書き込み）、gws Gmail（read/trash）。Obsidian は Local REST API への Rust 直実装（MCP 不使用）。 [2026-05-30]
 - **Vitals Schedule:** Garmin データ分析は毎日 06:00・22:00 の2回。Home Assistant (`http://192.168.1.2:30:8123`) 経由。 [2026-05-30]
 - **CF Neurons:** Cloudflare Workers AI の無料枠は 10,000 neurons/日。09:00 JST リセット。dev/prod で共有のため枯渇しやすい。 [2026-05-30]
+- **Calendar Access:** 現状、外部カレンダーの参照には具体的な名称やURLなど、詳細な識別子が必要。単なる名前だけではアクセスが困難な場合がある。 [新規追加: 2024-XX-XX]
 
 ## Important Context
 - **Knowledge Base:** `memory/GEMI/`、日次ログ: `memory/logs/`、要約: `memory/summaries/`。 [2026-05-29]

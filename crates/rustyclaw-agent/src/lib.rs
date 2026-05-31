@@ -1175,6 +1175,8 @@ mod tests {
         }
     }
 
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_build_system_context_injects_runtime_context() {
         let ws_dir = tempdir().unwrap();
@@ -1230,6 +1232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pipeline_execute() -> Result<()> {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let ws_dir = tempdir()?;
         fs::write(ws_dir.path().join("SOUL.md"), "Soul Content")?;
         fs::write(ws_dir.path().join("AGENTS.md"), "Agents Content")?;
@@ -1286,6 +1289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cron_session_ignores_history() -> Result<()> {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let ws_dir = tempdir()?;
         fs::write(ws_dir.path().join("SOUL.md"), "Soul Content")?;
         fs::write(ws_dir.path().join("AGENTS.md"), "Agents Content")?;
@@ -1370,6 +1374,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pipeline_execute_stream_leak_filter() -> Result<()> {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let ws_dir = tempdir()?;
         fs::write(ws_dir.path().join("SOUL.md"), "Soul Content")?;
         fs::write(ws_dir.path().join("AGENTS.md"), "Agents Content")?;
@@ -1405,7 +1410,14 @@ mod tests {
 
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        let mut stream_res = pipeline.execute_stream(ws_dir.path(), "session-stream-test", "hello").await?;
+        unsafe {
+            std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
+        }
+        let mut stream_res = pipeline.execute_stream(ws_dir.path(), "session-stream-test", "hello").await;
+        unsafe {
+            std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
+        }
+        let mut stream_res = stream_res?;
 
         let mut chunks = Vec::new();
         while let Some(chunk_res) = stream_res.next().await {
@@ -1426,6 +1438,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pipeline_execute_with_tools() -> Result<()> {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let ws_dir = tempdir()?;
         fs::write(ws_dir.path().join("SOUL.md"), "Soul Content")?;
         fs::write(ws_dir.path().join("AGENTS.md"), "Agents Content")?;
@@ -1508,7 +1521,14 @@ mod tests {
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(MockAddTool));
 
-        let resp = pipeline.execute_with_tools(ws_dir.path(), "session-tool-test", "calculate 5+10", &registry, "default").await?;
+        unsafe {
+            std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
+        }
+        let resp = pipeline.execute_with_tools(ws_dir.path(), "session-tool-test", "calculate 5+10", &registry, "default").await;
+        unsafe {
+            std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
+        }
+        let resp = resp?;
         assert_eq!(resp.content, "The calculation result is 15.");
 
         let logger = SessionLogger::new(ws_dir.path());
