@@ -129,7 +129,6 @@ pub fn import_from_json(json_path: &std::path::Path, passphrase: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
     use tempfile::TempDir;
 
     #[test]
