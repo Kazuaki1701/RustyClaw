@@ -8,8 +8,8 @@ MODEL="${2:?model id required}"
 CFG_CTX="${3:?config context tokens required}"
 
 json=$(curl -s -m 5 "http://${HOSTPORT}/api/v0/models") || { echo "ERROR: cannot reach LM Studio at ${HOSTPORT}"; exit 2; }
-loaded=$(echo "$json" | jq -r --arg m "$MODEL" '.data[]? | select(.id==$m) | .loaded_context_length // empty')
-state=$(echo "$json" | jq -r --arg m "$MODEL" '.data[]? | select(.id==$m) | .state // "unknown"')
+loaded=$(echo "$json" | jq -r --arg m "$MODEL" '[.data[]? | select(.id==$m) | .loaded_context_length // empty][0] // empty')
+state=$(echo "$json" | jq -r --arg m "$MODEL" '[.data[]? | select(.id==$m) | .state // "unknown"][0] // "unknown"')
 
 if [ -z "$loaded" ] || [ "$loaded" == "null" ]; then
   echo "[WARN] model '$MODEL' not loaded (state=$state). Load it in LM Studio first."
