@@ -498,7 +498,7 @@ impl LaneRegistry {
                                     let tool_reg = tool_registry.clone();
 
                                     // ProgressReporter（進捗表示とタイピング）のセットアップ
-                                    let is_user_channel = !session_id.starts_with("cron");
+                                    let is_user_channel = !session_id.starts_with("cron") && channel_id.parse::<u64>().is_ok();
                                     let progress_reporter = if is_user_channel {
                                         match discord_connector.create_progress_reporter(&channel_id) {
                                             Ok(rep) => {
@@ -747,7 +747,8 @@ impl Gateway {
         tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone())));
         tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone())));
         tool_registry.register(Arc::new(rustyclaw_tools::MemorySearchTool::new(self.workspace_path.clone())));
-        tracing::info!("Registered Workspace I/O and Memory Search tools.");
+        tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceExecuteScriptTool::new(self.workspace_path.clone())));
+        tracing::info!("Registered Workspace I/O, Memory Search, and Script Execution tools.");
 
         // Google Workspace ネイティブツール登録
         if let Some(gws) = config.tools.google_workspace.as_ref().filter(|g| g.enabled) {

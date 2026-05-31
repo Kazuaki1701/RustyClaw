@@ -150,7 +150,8 @@ When a message is received, determine whether it is a **simple question or a tas
 
 ## Native Tools & Schedule Fact-Checking
 
-- **Native Karakeep Tools**: Instead of shell scripts, use native tools: `karakeep_list_bookmarks` (list), `karakeep_tag_bookmark` (tag), and `karakeep_delete_bookmark` (delete) to manipulate bookmarks.
+- **Native Karakeep Tools**: For standard bookmark operations, use native tools (`karakeep_list_bookmarks`, `karakeep_tag_bookmark`, `karakeep_delete_bookmark`) to manipulate bookmarks.
+- **Workspace Scripts (Token & Time Saving)**: If you need to perform complex or bulk operations (e.g. bulk-tagging bookmarks, fetching Garmin vital sensors via Home Assistant, or running cleanup tasks), always execute the custom scripts located under `workspace/scripts/` using the `run_workspace_script` tool. Refer to [workspace/scripts/README.md](file:///home/kazuaki/Projects/RustyClaw/workspace/scripts/README.md) for the catalog and usage specifications of these scripts.
 - **Dynamic Schedule Retrieval**: To query upcoming scheduled tasks or cron timings, always invoke the `get_cron_schedule` tool. Never guess the schedule or upcoming executions.
 
 ## Interactive Mode

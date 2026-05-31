@@ -1332,6 +1332,144 @@ impl Tool for WebFetchTool {
     }
 }
 
+/// workspace/scripts/ 配下のスクリプトを実行するツール
+pub struct WorkspaceExecuteScriptTool {
+    workspace_dir: std::path::PathBuf,
+}
+
+impl WorkspaceExecuteScriptTool {
+    pub fn new(workspace_dir: std::path::PathBuf) -> Self {
+        Self { workspace_dir }
+    }
+}
+
+#[async_trait]
+impl Tool for WorkspaceExecuteScriptTool {
+    fn name(&self) -> &str {
+        "run_workspace_script"
+    }
+
+    fn description(&self) -> &str {
+        "Executes a custom script located strictly within the `workspace/scripts/` directory to run complex local computations, API interactions, or data operations, minimizing LLM roundtrips and token consumption."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "script_name": {
+                    "type": "string",
+                    "description": "The exact filename of the script inside `workspace/scripts/` (e.g. '500_get-vital-data-garmin.sh', '502_karakeep-tag-items.sh'). For security, path traversal sequences ('/', '\\', '..') are forbidden."
+                },
+                "args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Optional list of arguments to pass to the script."
+                }
+            },
+            "required": ["script_name"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let script_name = match args["script_name"].as_str() {
+            Some(s) => s,
+            None => return ToolResult {
+                content: "Error: Missing or invalid 'script_name' argument.".to_string(),
+                is_error: true,
+            },
+        };
+
+        // セキュリティチェック：パス走査対策
+        if script_name.contains('/') || script_name.contains('\\') || script_name.contains("..") {
+            return ToolResult {
+                content: "Error: Security violation. 'script_name' must not contain path traversal sequences ('/', '\\', '..'). Only filenames directly inside `workspace/scripts/` are allowed.".to_string(),
+                is_error: true,
+            };
+        }
+
+        let scripts_dir = self.workspace_dir.join("scripts");
+        let script_path = scripts_dir.join(script_name);
+
+        if !script_path.exists() {
+            return ToolResult {
+                content: format!("Error: Script '{}' does not exist in `workspace/scripts/`.", script_name),
+                is_error: true,
+            };
+        }
+
+        // 引数のパース
+        let mut cmd_args = Vec::new();
+        if let Some(args_array) = args["args"].as_array() {
+            for val in args_array {
+                if let Some(arg_str) = val.as_str() {
+                    cmd_args.push(arg_str.to_string());
+                }
+            }
+        }
+
+        // 拡張子から実行コマンドを判別
+        let ext = script_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let mut cmd = match ext {
+            "sh" => {
+                let mut c = tokio::process::Command::new("bash");
+                c.arg(&script_path);
+                c
+            }
+            "py" => {
+                let mut c = tokio::process::Command::new("python3");
+                c.arg(&script_path);
+                c
+            }
+            "js" => {
+                let mut c = tokio::process::Command::new("node");
+                c.arg(&script_path);
+                c
+            }
+            "ts" => {
+                let mut c = tokio::process::Command::new("bun"); // bun 優先
+                c.arg("run");
+                c.arg(&script_path);
+                c
+            }
+            _ => {
+                // その他の場合は直接実行（実行可能属性があると仮定）
+                tokio::process::Command::new(&script_path)
+            }
+        };
+
+        // 引数を追加
+        cmd.args(cmd_args);
+        cmd.current_dir(&scripts_dir);
+
+        // 実行
+        match cmd.output().await {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let is_success = output.status.success();
+
+                let mut content = format!("--- STDOUT ---\n{}", stdout);
+                if !stderr.is_empty() {
+                    content.push_str(&format!("\n--- STDERR ---\n{}", stderr));
+                }
+                content.push_str(&format!("\n--- EXIT STATUS ---\n{}", output.status));
+
+                ToolResult {
+                    content,
+                    is_error: !is_success,
+                }
+            }
+            Err(e) => ToolResult {
+                content: format!("Error: Failed to spawn script process: {:#}", e),
+                is_error: true,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1903,6 +2041,24 @@ mod tests {
         let res = tool.execute(serde_json::json!({"path": "Test/Note.md"})).await;
         assert!(res.is_error);
         assert!(res.content.contains("Missing content"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_execute_script_tool_schema() {
+        let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
+        assert_eq!(tool.name(), "run_workspace_script");
+        let params = tool.parameters();
+        assert!(params["properties"]["script_name"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_workspace_execute_script_path_traversal() {
+        let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
+        let res = tool.execute(serde_json::json!({
+            "script_name": "../etc/passwd"
+        })).await;
+        assert!(res.is_error);
+        assert!(res.content.contains("Security violation"));
     }
 }
 

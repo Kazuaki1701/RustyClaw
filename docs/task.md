@@ -3,56 +3,44 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
 > **最終更新日**: 2026-05-31  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md` に保存
+> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 22, 28, 31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md` に保存
+
+> **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
+> それ以外の独自機能・改善案件は一旦 🟢 に降格。GeminiClaw ギャップが解消され次第、改めて優先度を見直す。
 
 ---
 
-## Phase 22: GeminiClaw 移植ギャップの回収（Proactive Posts / heartbeat-digest 等） 🔴 優先度高
-
-- `[x]` **1. `Proactive Posts` 注入の実装**
-  - Heartbeat による自発メッセージ（Discord 等への声掛け）を、翌ターンの対話時に「会話履歴外の自分の発言」としてシステムプロンプトに差し戻すロジックの実装。
-  - 対象: `crates/rustyclaw-agent/src/lib.rs` (`execute` および `execute_with_tools` 内)
-
-- `[x]` **2. `heartbeat-digest.md` ロジックの点検・修正**
-  - CLIテスト等で無効化されている `heartbeat-digest.md` のタイムスタンプ・差分ロードロジックを修正し、増分スキャンおよびディープスキャンが正しく動作するように改修。
-  - 調査で判明した以下の潜在バグ・挙動差分の回収：
-    - `[x]` **a. ツール呼び出し（Tool-call）時の最終アシスタント返答抽出バグの修正** (空文字列が抽出される問題の解決)
-    - `[x]` **b. 差分スキャン時の既存マップ存在チェック不全の修正** (新規セッションを無視するバグの解決)
-    - `[x]` **c. Message 構造体へのタイムスタンプ追加に伴う動的 `[HH:MM]` 表示への変更** (固定 `[--:--]` の廃止)
-    - `[x]` **d. `# Heartbeat Digest` ヘッダー出力の追加** (GeminiClaw 同等のマークダウン構造化)
-  - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`
-
-- `[x]` **3. `tantivy` 全文検索および `Obsidian` 書き込みツールの LLM 公開**
-  - `MemorySearchTool` と `ObsidianWriteTool` (Vaultへの新規書き込み・追記) を実装して `rustyclaw-tools` に追加・登録。
-  - 対象: `crates/rustyclaw-tools/src/lib.rs` + `crates/rustyclaw-gateway/src/lib.rs` (登録)
-
-- `[x]` **5. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+## 🔴 GeminiClaw 機能ギャップ（最優先）
 
 ---
 
-## Phase 28b: ダッシュボード精度・起動最適化のフォローアップ 🟡 優先度中
-> 出典: 2026-05-31 の Phase 28 実機検証（`gateway --no-agent` 起動ログ点検）で判明した改善候補。
+## Phase 29: Skills ファイルロードシステムの実装 🔴
+> GeminiClaw は `workspace/skills/*.md` をロードしてプロンプトに注入する。RustyClaw ではこの仕組みが未実装であり、`daily-briefing`・`vitals-coach`・`topic-patrol` が ⚠️ の主原因。
 
-- `[ ]` **2. Gateway 起動時の設定ロード遅延（約11秒）の短縮検討** 🟢 優先度低
-  - `Initializing daemon` から `loaded configuration` まで約11秒を要する（`--no-agent` でも発生）。プロバイダ生成・vault 初期化まわりのコスト要因を特定し、遅延要素の遅延初期化（lazy）等で起動高速化を検討。
-  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（`Gateway::run` 初期化シーケンス）
+- `[ ]` **1. Skills ロードエンジンの実装**
+  - `workspace/skills/` 配下の `*.md` を読み込み、ContextBuilder のシステムプロンプトに注入するロジックを実装。
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`（`ContextBuilder` の `build` 相当関数）
 
----
+- `[ ]` **2. 基本 Skill 定義ファイルの作成**
+  - `daily-briefing.md`・`vitals-coach.md`・`topic-patrol.md` の Skill 定義を `production/workspace/skills/` に作成。
 
-## Phase 23: 安全ガードレールと構造化監査ログの構築 🔴 優先度高
-
-- `[ ]` **1. 自律レベル制御 (Autonomy Level) と承認ゲート (Confirmation Gate) の実装**
-  - `AutonomyLevel` (`Autonomous` / `Supervised` / `ReadOnly`) の導入。
-  - `supervised`（監視モード）時、書き込みや破壊的アクションに対して `ask-user` ファイル監視で実行を非同期ブロッキングする承認ゲートの実装。
-
-- `[ ]` **2. 構造化ツール監査ログ (Audit Logger) の実装**
-  - ツール実行結果をパラメータ切り詰めの上 `{workspace}/memory/audit.jsonl` に保存する仕組みの実装。
-
-- `[ ]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[ ]` **3. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
-## Phase 24: LLM 接続プロバイダ層の耐障害性（レジリエンス）強化 🔴 優先度高
+## Phase 32: 天気チェックツールの実装（Heartbeat Step 4） 🔴
+> `09_geminiclaw_feature_comparison.md` で ❌ 未実装。仕様書は `docs/specs/10_weather_yolp_spec.md` 済み。
+
+- `[ ]` **1. YOLP 雨雲レーダー API ツールの実装**
+  - `weather_get_rain_radar` ツールを `rustyclaw-tools` に実装・LLM 公開登録。
+  - 対象: `crates/rustyclaw-tools/src/lib.rs`、`crates/rustyclaw-gateway/src/lib.rs`（ツール登録）
+
+- `[ ]` **2. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
+
+---
+
+## Phase 24: LLM 接続プロバイダ層の耐障害性（レジリエンス）強化 🔴
+> GeminiClaw は 429 検知・バックオフおよびモデルフォールバックを実装済み。RustyClaw での同等機能。
 
 - `[ ]` **1. LLM プロバイダ層への指数バックオフ（Exponential Backoff）ネットワークリトライの実装**
   - 一過性接続エラーや 5xx エラーに対し、透過的リトライハンドラを導入。
@@ -64,28 +52,53 @@
 
 ---
 
-## Phase 25: 並行制御の最適化とフリーズ防止（Lane Queue 改善・回収） 🔴 優先度高
+## 🟢 その他の改善案件（独自機能・将来対応）
+
+---
+
+## Phase 33: ローカルスクリプト実行ツール (run_workspace_script) の新規実装 🟢
+> LLMエージェントが `workspace/scripts/` 内のスクリプトを安全に実行し、LLMトークン消費量を節約するための機能。
+
+- `[x]` **1. run_workspace_script ツールの実装**
+  - セキュリティ保護（パス走査 `/`, `\`, `..` 等のブロッキング）と拡張子別自動ランナーを備えた実行エンジンを `rustyclaw-tools` に実装。
+- `[x]` **2. ドキュメント整備と指示の統合（アプローチ2の適用）**
+  - `workspace/scripts/README.md` を作成し、スクリプト一覧と仕様を網羅。
+  - `workspace/AGENTS.md` にスクリプト実行ガイドを追加し、README を参照するよう指示。
+- `[x]` **3. ユニットテストによる検証**
+  - パス走査防御とスキーマ検証のテストを記述し、すべて正常パスすることを確認。
+
+---
+
+## Phase 25: 並行制御の最適化とフリーズ防止（Lane Queue 改善・回収）残り 🟢
+> ※ 完了済みの Phase 1〜2 はアーカイブ済み。残 2 件は独自安全改善。  
+> ※ **item 5（Lossless Resume）は GeminiClaw ギャップB に相当するため、GeminiClaw ギャップ回収完了後に 🔴 昇格を検討する。**
 
 - `[x]` **1. Lane Queue（Inngest 代替）の機能ギャップ分析とロードマップ策定**
-  - GeminiClaw との比較調査を行い、[2026-05-31-lane-queue-gap-analysis.md](file:///home/kazuaki/Projects/RustyClaw/docs/superpowers/plans/2026-05-31-lane-queue-gap-analysis.md) を作成。
 
 - `[ ]` **2. 実行キュー取得の安全待機タイムアウトの実装**
   - `crates/rustyclaw-gateway/src/lib.rs` におけるセマフォ取得処理への `tokio::time::timeout` 導入。
 
 - `[x]` **3. Chat Progress Reporter (Typing... 送信) の実装 (Phase 1)**
-  - `rustyclaw-channels` にて `DiscordProgressReporter` トレイト、タイピングキープアライブ維持タスク、進捗メッセージライフサイクルを実装。`rustyclaw-agent` および `rustyclaw-gateway` に mpsc チャネルを用いた非同期イベント中継として完全統合。
 
 - `[x]` **4. 並行数 4 への拡張に向けたファイルロック機構の導入 (Phase 2)**
-  - `MEMORY.md` や `USER.md` 等への並列書き込み破損を防ぐため、インプロセス非同期パスロックによる排他制御を導入し、`gmn_sem` の容量を `4` に拡張。
 
-- `[ ]` **5. 実行ステップのチェックポイント化と Lossless Resume の導入 (Phase 3)**
+- `[ ]` **5. 実行ステップのチェックポイント化と Lossless Resume の導入 (Phase 3)**（GeminiClaw ギャップB・昇格候補）
   - 途中でエラー（送信失敗など）が発生した際に、LLM API の再呼出を行わず失敗したフェーズから再試行できる中間状態の永続化と復旧機構。
 
 - `[x]` **6. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
-## Phase 26: 外部 MCP クライアントの堅牢化とトランスポート拡張 🟡 優先度中
+## Phase 28b: ダッシュボード精度・起動最適化のフォローアップ 🟢
+> 出典: 2026-05-31 の Phase 28 実機検証（`gateway --no-agent` 起動ログ点検）で判明した改善候補。
+
+- `[ ]` **2. Gateway 起動時の設定ロード遅延（約11秒）の短縮検討** 🟢 優先度低
+  - `Initializing daemon` から `loaded configuration` まで約11秒を要する（`--no-agent` でも発生）。遅延要素の遅延初期化（lazy）等で起動高速化を検討。
+  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（`Gateway::run` 初期化シーケンス）
+
+---
+
+## Phase 26: 外部 MCP クライアントの堅牢化とトランスポート拡張 🟢
 
 - `[ ]` **1. 子プロセスクラッシュ時の自動再接続・復旧 (Auto-Reconnect) の実装**
   - `crates/rustyclaw-mcp/src/lib.rs` の接続ライフサイクルに異常終了監視と `spawn` 再試行ループを追加。
@@ -101,7 +114,7 @@
 
 ---
 
-## Phase 27: ハウスクリーニング、ディスク容量保護と Cron 拡張 🟡 優先度中
+## Phase 27: ハウスクリーニング、ディスク容量保護と Cron 拡張 🟢
 
 - `[ ]` **1. ディスク空き容量監視と SSD 保護の導入**
   - 定期実行時に USB SSD の空き容量をチェックし、残り容量が 5% 以下になった際に Discord 等へ警告アラートを投げる保護タスクの実装。
@@ -117,8 +130,22 @@
 
 ---
 
-## Phase 30: Upstream 先進機能：Hook・Steering・Spawn タスクの統合 🟡 優先度中
-> 目的: Go 製 Upstream (PicoClaw) の優れた先進的設計思想（動的割り込み、イベントHook、非同期 Spawn、ClawHub Skills）を取り入れ、RustyClaw を次世代エージェントランタイムへと昇華させる。
+## Phase 23: 安全ガードレールと構造化監査ログの構築 🟢
+> ※ GeminiClaw に直接対応機能なし。RustyClaw 独自の安全機構として重要だが、GeminiClaw ギャップ回収優先のため降格。
+
+- `[ ]` **1. 自律レベル制御 (Autonomy Level) と承認ゲート (Confirmation Gate) の実装**
+  - `AutonomyLevel` (`Autonomous` / `Supervised` / `ReadOnly`) の導入。
+  - `supervised`（監視モード）時、書き込みや破壊的アクションに対して `ask-user` ファイル監視で実行を非同期ブロッキングする承認ゲートの実装。
+
+- `[ ]` **2. 構造化ツール監査ログ (Audit Logger) の実装**
+  - ツール実行結果をパラメータ切り詰めの上 `{workspace}/memory/audit.jsonl` に保存する仕組みの実装。
+
+- `[ ]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+
+---
+
+## Phase 30: Upstream 先進機能：Hook・Steering・Spawn タスクの統合 🟢
+> ※ PicoClaw (Go Upstream) 参照。GeminiClaw ギャップではなく、RustyClaw の独自進化機能として位置付け。  
 > 対象: `crates/rustyclaw-agent/`, `crates/rustyclaw-gateway/`, `crates/rustyclaw-tools/`, `crates/rustyclaw-cli/`
 
 - `[ ]` **1. イベント駆動 Hook システム (Hook Manager) の実装**
@@ -146,13 +173,13 @@
 
 ---
 
-## 次期大型対応検討案件 🟡 優先度中
+## 次期大型対応検討案件 🟢 優先度低
 
 > 現時点では保留。前提条件の整理・設計検討が必要な案件。
 
 ---
 
-## 継続モニタリング 🟡 優先度中
+## 継続モニタリング 🟢 優先度低
 
 - `[ ]` **RPi4 本番稼働 — cron.json 定期ジョブの発火確認**
   - Daily Briefing・Topic Patrol・Vital Check が実際に Discord へ正常通知されることを確認
