@@ -234,6 +234,72 @@ impl Tool for KarakeepTagTool {
     }
 }
 
+/// Karakeep のブックマークを削除するネイティブツール
+pub struct KarakeepDeleteTool {
+    server_addr: String,
+    api_key: String,
+}
+
+impl KarakeepDeleteTool {
+    pub fn new(server_addr: String, api_key: String) -> Self {
+        Self { server_addr, api_key }
+    }
+}
+
+#[async_trait]
+impl Tool for KarakeepDeleteTool {
+    fn name(&self) -> &str {
+        "karakeep_delete_bookmark"
+    }
+
+    fn description(&self) -> &str {
+        "Delete a Karakeep bookmark by ID (used for cleanup)."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "bookmark_id": { "type": "string" }
+            },
+            "required": ["bookmark_id"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> ToolResult {
+        let bookmark_id = match args["bookmark_id"].as_str() {
+            Some(id) => id.to_string(),
+            None => {
+                return ToolResult {
+                    content: "Missing bookmark_id".to_string(),
+                    is_error: true,
+                }
+            }
+        };
+        let client = reqwest::Client::new();
+        let url = format!("{}/api/v1/bookmarks/{}", self.server_addr, bookmark_id);
+        match client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => ToolResult {
+                content: format!("Deleted bookmark {}", bookmark_id),
+                is_error: false,
+            },
+            Ok(resp) => ToolResult {
+                content: format!("Karakeep delete error: HTTP {}", resp.status()),
+                is_error: true,
+            },
+            Err(e) => ToolResult {
+                content: format!("Karakeep delete request failed: {}", e),
+                is_error: true,
+            },
+        }
+    }
+}
+
 fn percent_encode(s: &str) -> String {
     s.chars().flat_map(|c| match c {
         'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => vec![c],
@@ -1337,6 +1403,16 @@ mod tests {
         let result = tool.execute(serde_json::json!({})).await;
         assert!(result.is_error);
         assert!(result.content.contains("bookmark_id") || result.content.contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_karakeep_delete_tool_name_and_schema() {
+        let tool = KarakeepDeleteTool::new("http://localhost:33000".to_string(), "key".to_string());
+        assert_eq!(tool.name(), "karakeep_delete_bookmark");
+        let params = tool.parameters();
+        assert_eq!(params["type"], "object");
+        assert!(params["properties"]["bookmark_id"].is_object());
+        assert!(params["required"].as_array().unwrap().contains(&serde_json::json!("bookmark_id")));
     }
 
     #[tokio::test]

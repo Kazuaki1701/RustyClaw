@@ -668,6 +668,9 @@ impl Gateway {
                 tool_registry.register(Arc::new(rustyclaw_tools::KarakeepTagTool::new(
                     k.server_addr.clone(), k.api_key.clone(),
                 )));
+                tool_registry.register(Arc::new(rustyclaw_tools::KarakeepDeleteTool::new(
+                    k.server_addr.clone(), k.api_key.clone(),
+                )));
                 tracing::info!("Registered native Karakeep tools.");
             }
         }
