@@ -607,16 +607,7 @@ Rules:
 
         self.dump_request(workspace_dir, &messages);
 
-        let heartbeat_model = self.config.get_model("heartbeat");
-        let opts = CompletionOptions {
-            model: heartbeat_model.model_name,
-            max_tokens: heartbeat_model.max_tokens,
-            temperature: heartbeat_model.temperature,
-            timeout: Duration::from_secs(900),
-            category: Some("heartbeat".to_string()),
-        };
-
-        let mut response = self.provider.complete(&messages, &[], &opts).await?;
+        let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &[], Duration::from_secs(900)).await?;
         response.content = filter_json_leaks(&response.content);
 
         logger.append_message(session_id, &user_msg)

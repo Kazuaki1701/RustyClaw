@@ -25,10 +25,10 @@ Manages bookmarks inside the self-hosted KaraKeep server, executing periodic cle
 
 ## Prerequisites & Endpoints
 
-To interact with KaraKeep, the following connection parameters must be resolved:
-*   **Default Server Address**: `http://192.168.1.2:33000` (Expected in environment variable `$KARAKEEP_SERVER_ADDR`)
-*   **Authentication**: Bearer Token resolved from **RustyClaw's vault** (`~/.rustyclaw/vault.json` under key `karakeep-api-key`), with environmental `$KARAKEEP_API_KEY` as an optional override.
-*   **Bookmarks Fetch Endpoint**: `$KARAKEEP_SERVER_ADDR/api/v1/bookmarks`
+To interact with KaraKeep, all parameters are securely resolved from **RustyClaw's vault** (`~/.rustyclaw/vault.json`):
+*   **Server Address**: Resolved under the key `karakeep-server-addr` (Default: `http://192.168.1.2:33000`).
+*   **Authentication**: Bearer Token resolved under the key `karakeep-api-key`.
+*   **Bookmarks Fetch Endpoint**: `[server-address]/api/v1/bookmarks`
 
 ---
 
@@ -77,7 +77,7 @@ Append all execution summaries to `production/workspace/memory/logs/YYYY-MM-DD.m
 
 ## Common Mistakes & Antipatterns
 
-*   **Missing Server Variables**: Attempting to run scripts or API requests without verifying if `$KARAKEEP_SERVER_ADDR` or `$KARAKEEP_API_KEY` are populated. (Fix: Pre-check environment variables and fail gracefully if missing).
+*   **Missing Vault Keys**: Attempting to run scripts or API requests without verifying if `karakeep-server-addr` or `karakeep-api-key` are configured in `vault.json`. (Fix: Verify vault variables exist and fail gracefully if missing).
 *   **Absolute Path Execution**: Running `bash production/workspace/scripts/501_karakeep-cleanup.sh` directly. (Fix: Invoke through `run_workspace_script` with localized script names).
 *   **Accidental Purging**: Deleting non-RSS items or favorited bookmarks. (Fix: Verify script logic filters strictly on source="rss" and favourited=false).
 *   **Unstructured Logs**: Dumping unstructured text or raw JSON into the daily log file. (Fix: Always use the standardized Markdown Table format).
