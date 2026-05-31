@@ -309,6 +309,55 @@ fn resolve_value(val: &str) -> String {
 }
 
 impl Config {
+    /// model_name (config キー) → 解決済み LlmModelConfig に変換する内部ヘルパー。
+    /// enabled: false のエントリは None を返す。
+    fn resolve_model(&self, model_name: &str, purpose: &str) -> Option<LlmModelConfig> {
+        self.model_list.iter()
+            .find(|m| m.model_name == model_name && m.enabled)
+            .map(|e| LlmModelConfig {
+                model_purpose: purpose.to_string(),
+                model_provider: e.provider.clone(),
+                model_name: e.model.clone(),
+                api_key: e.api_key.clone(),
+                api_base_url: e.api_base.clone(),
+                max_tokens: e.max_tokens,
+                temperature: e.temperature,
+            })
+    }
+
+    /// purpose の ModelNames を返す（未設定なら default）。
+    fn get_model_names_for_purpose(&self, purpose: &str) -> &ModelNames {
+        match purpose {
+            "summary"   => self.agents.summary.as_ref().unwrap_or(&self.agents.default),
+            "memory"    => self.agents.memory.as_ref().unwrap_or(&self.agents.default),
+            "tools"     => self.agents.tools.as_ref().unwrap_or(&self.agents.default),
+            "discord"   => self.agents.discord.as_ref().unwrap_or(&self.agents.default),
+            "line"      => self.agents.line.as_ref().unwrap_or(&self.agents.default),
+            "heartbeat" => self.agents.heartbeat.as_ref().unwrap_or(&self.agents.default),
+            "patrol"    => self.agents.patrol.as_ref().unwrap_or(&self.agents.default),
+            _           => &self.agents.default,
+        }
+    }
+
+    /// purpose のモデルチェーンを解決済み LlmModelConfig のリストとして返す。
+    /// 順序: purpose 指定モデル群 → global_fallback（重複除去）
+    /// disabled なモデルはリストから除外される。
+    pub fn get_model_chain(&self, purpose: &str) -> Vec<LlmModelConfig> {
+        let names = self.get_model_names_for_purpose(purpose);
+        let mut name_list: Vec<&str> = names.as_chain();
+
+        // global_fallback を末尾に追加（重複は除去）
+        if let Some(ref gf) = self.agents.global_fallback_model_name {
+            if !name_list.contains(&gf.as_str()) {
+                name_list.push(gf.as_str());
+            }
+        }
+
+        name_list.iter()
+            .filter_map(|name| self.resolve_model(name, purpose))
+            .collect()
+    }
+
     /// 用途に対応する解決済み LlmModelConfig を返す。
     /// 該当 purpose が未設定の場合は default にフォールバック。
     pub fn get_model(&self, purpose: &str) -> LlmModelConfig {
@@ -617,5 +666,144 @@ mod tests {
         assert_eq!(tmp.single.primary(), "groq-8b");
         assert_eq!(tmp.chain.primary(), "groq-70b");
         assert_eq!(tmp.chain.as_chain().len(), 2);
+    }
+
+    fn make_chain_test_config() -> Config {
+        Config {
+            model_list: vec![
+                ModelEntry {
+                    model_name: "primary-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "primary-api-model".to_string(),
+                    api_base: "https://primary.example.com/v1".to_string(),
+                    api_key: "key-primary".to_string(),
+                    max_tokens: Some(2048),
+                    temperature: Some(0.7),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+                ModelEntry {
+                    model_name: "fallback-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "fallback-api-model".to_string(),
+                    api_base: "https://fallback.example.com/v1".to_string(),
+                    api_key: "key-fallback".to_string(),
+                    max_tokens: Some(1500),
+                    temperature: Some(0.5),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+                ModelEntry {
+                    model_name: "global-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "global-api-model".to_string(),
+                    api_base: "https://global.example.com/v1".to_string(),
+                    api_key: "key-global".to_string(),
+                    max_tokens: Some(1024),
+                    temperature: Some(0.5),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+                ModelEntry {
+                    model_name: "disabled-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "disabled-api-model".to_string(),
+                    api_base: "https://disabled.example.com/v1".to_string(),
+                    api_key: "key-disabled".to_string(),
+                    max_tokens: Some(2048),
+                    temperature: Some(0.7),
+                    enabled: false,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+            ],
+            agents: AgentsConfig {
+                default: ModelNames::Single("primary-model".to_string()),
+                global_fallback_model_name: Some("global-model".to_string()),
+                discord: Some(ModelNames::Chain(vec![
+                    "primary-model".to_string(),
+                    "fallback-model".to_string(),
+                ])),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_get_model_chain_returns_primary_and_fallback() {
+        let config = make_chain_test_config();
+        let chain = config.get_model_chain("discord");
+        // discord = [primary, fallback] + global_fallback → 3 entries
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[0].api_base_url, "https://primary.example.com/v1");
+        assert_eq!(chain[1].api_base_url, "https://fallback.example.com/v1");
+        assert_eq!(chain[2].api_base_url, "https://global.example.com/v1");
+    }
+
+    #[test]
+    fn test_get_model_chain_global_fallback_appended() {
+        let config = make_chain_test_config();
+        let chain = config.get_model_chain("default");
+        // default = "primary-model" + global_fallback = "global-model" → 2 entries
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].api_base_url, "https://primary.example.com/v1");
+        assert_eq!(chain[1].api_base_url, "https://global.example.com/v1");
+    }
+
+    #[test]
+    fn test_get_model_chain_global_fallback_dedup() {
+        let mut config = make_chain_test_config();
+        // discord chain に global-model を含める（重複）
+        config.agents.discord = Some(ModelNames::Chain(vec![
+            "primary-model".to_string(),
+            "global-model".to_string(),
+        ]));
+        let chain = config.get_model_chain("discord");
+        // global-model は重複除去 → 2 entries のみ
+        assert_eq!(chain.len(), 2);
+    }
+
+    #[test]
+    fn test_get_model_chain_disabled_model_excluded() {
+        let mut config = make_chain_test_config();
+        config.agents.discord = Some(ModelNames::Chain(vec![
+            "disabled-model".to_string(),
+            "fallback-model".to_string(),
+        ]));
+        let chain = config.get_model_chain("discord");
+        // disabled-model はスキップ → fallback-model + global → 2 entries
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].api_base_url, "https://fallback.example.com/v1");
+    }
+
+    #[test]
+    fn test_get_model_chain_unknown_purpose_uses_default() {
+        let config = make_chain_test_config();
+        let chain_unknown = config.get_model_chain("unknown-purpose");
+        let chain_default = config.get_model_chain("default");
+        assert_eq!(chain_unknown.len(), chain_default.len());
+        assert_eq!(chain_unknown[0].api_base_url, chain_default[0].api_base_url);
+    }
+
+    #[test]
+    fn test_get_model_chain_model_purpose_field() {
+        let config = make_chain_test_config();
+        let chain = config.get_model_chain("discord");
+        for entry in &chain {
+            assert_eq!(entry.model_purpose, "discord");
+        }
+    }
+
+    #[test]
+    fn test_get_model_backward_compat_with_chain() {
+        let config = make_chain_test_config();
+        let model = config.get_model("discord");
+        let chain = config.get_model_chain("discord");
+        assert_eq!(model.api_base_url, chain[0].api_base_url);
+        assert_eq!(model.model_purpose, "discord");
     }
 }
