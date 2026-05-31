@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use chrono::{Local, DateTime, Timelike};
 use rustyclaw_config::Config;
@@ -26,7 +26,8 @@ impl HeartbeatService {
     }
 
     /// Heartbeat pre-run: heartbeat-digest.md の自動生成
-    pub fn generate_digest(&self, db: &DbManager) -> Result<String> {
+    pub async fn generate_digest(&self, db_path: &Path) -> Result<String> {
+        let db = DbManager::new(db_path)?;
         let now_dt = Local::now();
 
         // 実行回数カウンタの取得・更新 (6回に1回 Deep Scan)
@@ -207,7 +208,7 @@ impl HeartbeatService {
         
         // heartbeat-digest.md への原子性書き込み
         let _ = fs::create_dir_all(digest_path.parent().unwrap());
-        let _ = rustyclaw_storage::atomic_write(&digest_path, file_content.as_bytes());
+        let _ = rustyclaw_storage::atomic_write(&digest_path, file_content.as_bytes()).await;
 
         Ok(body)
     }
@@ -244,7 +245,7 @@ impl HeartbeatService {
     }
 
     /// Heartbeat 応答処理: HEARTBEAT_OK の有無による配信制御
-    pub fn process_heartbeat_response(&self, response_content: &str, db: &DbManager) -> Result<()> {
+    pub async fn process_heartbeat_response(&self, response_content: &str, db_path: &Path) -> Result<()> {
         let is_silent = response_content.to_lowercase().contains("heartbeat_ok");
 
         if is_silent {
@@ -270,7 +271,7 @@ impl HeartbeatService {
                 file_content = c;
             }
             file_content.push_str(&log_entry);
-            let _ = rustyclaw_storage::atomic_write(&log_file, file_content.as_bytes());
+            let _ = rustyclaw_storage::atomic_write(&log_file, file_content.as_bytes()).await;
 
         } else {
             // Proactive speak / Critical
@@ -283,46 +284,62 @@ impl HeartbeatService {
                 (session_id, ch_id.clone())
             } else {
                 // フォールバック: 最後にアクティブだったセッションを探す
+                let mut active_session: Option<(std::time::SystemTime, PathBuf, String)> = None;
                 let sessions_dir = self.workspace_path.join("sessions");
-                let mut last_active_session: Option<String> = None;
-                let mut last_mod_time = SystemTime::UNIX_EPOCH;
-                if let Ok(dir_entries) = fs::read_dir(&sessions_dir) {
-                    for entry in dir_entries.flatten() {
+                if let Ok(entries) = fs::read_dir(&sessions_dir) {
+                    for entry in entries.flatten() {
                         let path = entry.path();
-                        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        if filename.ends_with(".jsonl") && !filename.starts_with("cron") {
-                            if let Ok(metadata) = fs::metadata(&path) {
-                                if let Ok(mod_time) = metadata.modified() {
-                                    if mod_time > last_mod_time {
-                                        last_mod_time = mod_time;
-                                        last_active_session = Some(filename.trim_end_matches(".jsonl").to_string());
+                        if path.is_file() && path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                            if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                                if !file_name.starts_with("cron:") && !file_name.starts_with("cli-") && !file_name.starts_with("http-") {
+                                    if let Ok(meta) = path.metadata() {
+                                        if let Ok(mtime) = meta.modified() {
+                                            if active_session.is_none() || mtime > active_session.as_ref().unwrap().0 {
+                                                let session_id = file_name.replace('-', ":");
+                                                active_session = Some((mtime, path.clone(), session_id));
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-                let sid = last_active_session.unwrap_or_else(|| "discord-Cunknown-00000000".to_string());
-                let ch = sid.split('-').nth(1)
-                    .map(|s| s.trim_start_matches('C').to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                (sid, ch)
+
+                if let Some((_, _, ref session_id)) = active_session {
+                    let mut channel_id = String::new();
+                    if session_id.starts_with("discord-C") {
+                        if let Some(dash_idx) = session_id[9..].find('-') {
+                            channel_id = session_id[9..9+dash_idx].to_string();
+                        }
+                    }
+                    (session_id.clone(), channel_id)
+                } else {
+                    tracing::warn!("HeartbeatService: No active user session found for proactive speak. Speak cancelled.");
+                    return Ok(());
+                }
             };
 
-            // proactive-posts.md への追記（最新 5 件・48h 以内を保持）
+            // 昨日の同一セッション向け Proactive Posts 履歴をローテーション
+            let posts_dir = self.workspace_path.join("memory");
+            let _ = fs::create_dir_all(&posts_dir);
+            let posts_path = posts_dir.join("proactive-posts.md");
+            
+            let now = Local::now();
+            let new_entry = format!("[{}]{}:{}", now.to_rfc3339(), target_session_id, response_content.replace('\n', " "));
+            
             {
-                let posts_path = self.workspace_path.join("memory").join("proactive-posts.md");
-                let now_label = Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string();
-                let new_entry = format!("[{}] {}", now_label, response_content.replace('\n', " "));
-                let cutoff = Local::now() - chrono::Duration::hours(48);
-                let mut kept: Vec<String> = Vec::new();
-                if let Ok(existing) = fs::read_to_string(&posts_path) {
-                    for line in existing.lines() {
-                        if line.starts_with('[') {
-                            if let Some(end) = line.find(']') {
-                                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&line[1..end]) {
-                                    if dt.with_timezone(&Local) >= cutoff {
-                                        kept.push(line.to_string());
+                let mut kept = Vec::new();
+                let cutoff = now - chrono::Duration::hours(24);
+                if posts_path.exists() {
+                    if let Ok(existing) = fs::read_to_string(&posts_path) {
+                        for line in existing.lines() {
+                            if line.starts_with('[') {
+                                if let Some(end) = line.find(']') {
+                                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&line[1..end]) {
+                                        if dt.with_timezone(&Local) >= cutoff {
+                                            kept.push(line.to_string());
+                                        }
                                     }
                                 }
                             }
@@ -333,8 +350,7 @@ impl HeartbeatService {
                 if kept.len() > 5 {
                     kept = kept.split_off(kept.len() - 5);
                 }
-                let _ = fs::create_dir_all(posts_path.parent().unwrap());
-                let _ = rustyclaw_storage::atomic_write(&posts_path, kept.join("\n").as_bytes());
+                let _ = rustyclaw_storage::atomic_write(&posts_path, kept.join("\n").as_bytes()).await;
             }
 
             // 1. Proactive Post 注入 (ユーザーの会話履歴ファイルへ記録)
@@ -359,7 +375,9 @@ impl HeartbeatService {
         }
 
         // SQLiteの heartbeat_patrol 時刻を更新
-        let _ = db.update_patrol_state("heartbeat_patrol");
+        if let Ok(db) = DbManager::new(db_path) {
+            let _ = db.update_patrol_state("heartbeat_patrol");
+        }
         
         // heartbeat-state.json に状態を書き出し (状態管理の二重化)
         let state_path = self.workspace_path.join("memory").join("heartbeat-state.json");
@@ -389,12 +407,17 @@ impl HeartbeatService {
                 calendar: last_patrol.clone(),
                 email: last_patrol.clone(),
                 weather: last_patrol.clone(),
-                lastUserContact: db.get_last_patrol_run("lastUserContact")?.unwrap_or_else(|| last_patrol.clone()),
+                lastUserContact: {
+                    let contact = DbManager::new(db_path)
+                        .and_then(|db| db.get_last_patrol_run("lastUserContact"))
+                        .unwrap_or(None);
+                    contact.unwrap_or_else(|| last_patrol.clone())
+                },
             }
         };
 
         if let Ok(serialized) = serde_json::to_string_pretty(&state_val) {
-            let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes());
+            let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes()).await;
         }
 
         Ok(())
@@ -503,7 +526,7 @@ impl HeartbeatService {
             let findings_path = self.workspace_path.join("patrol").join("findings.md");
             if let Ok(mut current) = std::fs::read_to_string(&findings_path) {
                 current.push_str(&findings_log);
-                let _ = rustyclaw_storage::atomic_write(&findings_path, current.as_bytes());
+                let _ = rustyclaw_storage::atomic_write(&findings_path, current.as_bytes()).await;
             }
             tracing::info!("HeartbeatService: Rain predicted but skipped due to Quiet Hours ({} mm/h). Recorded to findings.md.", max_rainfall);
             return Ok(None);
@@ -533,7 +556,7 @@ impl HeartbeatService {
         let findings_path = self.workspace_path.join("patrol").join("findings.md");
         if let Ok(mut current) = std::fs::read_to_string(&findings_path) {
             current.push_str(&findings_log);
-            let _ = rustyclaw_storage::atomic_write(&findings_path, current.as_bytes());
+            let _ = rustyclaw_storage::atomic_write(&findings_path, current.as_bytes()).await;
         }
 
         // プロンプト注入用警告テキストの生成
@@ -576,12 +599,11 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[test]
-    fn test_generate_digest_persists_recent_dialogue() -> Result<()> {
+    #[tokio::test]
+    async fn test_generate_digest_persists_recent_dialogue() -> Result<()> {
         let ws_dir = tempdir()?;
         let ws_path = ws_dir.path().to_path_buf();
 
-        // 1. Create a dummy session log telegram-U123-20260528.jsonl with a user-assistant pair.
         let sessions_dir = ws_path.join("sessions");
         fs::create_dir_all(&sessions_dir)?;
         
@@ -611,18 +633,14 @@ mod tests {
             ),
         )?;
 
-        // 2. Setup DbManager and HeartbeatService
         let db_path = ws_path.join("test.db");
-        let db = DbManager::new(db_path.to_str().unwrap())?;
         
         let bus = std::sync::Arc::new(MessageBus::new());
         let config = Config::default();
-        
         let service = HeartbeatService::new(config, ws_path.clone(), bus);
 
-        // 3. Call generate_digest() multiple times sequentially and verify the digest contains the conversation.
         // First run
-        let digest_1 = service.generate_digest(&db)?;
+        let digest_1 = service.generate_digest(&db_path).await?;
         assert!(
             digest_1.contains("What is the weather today?"),
             "First digest should contain prompt"
@@ -637,10 +655,13 @@ mod tests {
         );
 
         // Update patrol state as if it just finished
-        db.update_patrol_state("heartbeat_patrol")?;
+        {
+            let db = DbManager::new(&db_path)?;
+            db.update_patrol_state("heartbeat_patrol")?;
+        }
 
         // Second run - should still contain the conversation because it's within the 24 hour window
-        let digest_2 = service.generate_digest(&db)?;
+        let digest_2 = service.generate_digest(&db_path).await?;
         assert!(
             digest_2.contains("What is the weather today?"),
             "Second digest should contain prompt"
@@ -653,8 +674,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_generate_digest_handles_tool_use() -> Result<()> {
+    #[tokio::test]
+    async fn test_generate_digest_handles_tool_use() -> Result<()> {
         let ws_dir = tempdir()?;
         let ws_path = ws_dir.path().to_path_buf();
         let sessions_dir = ws_path.join("sessions");
@@ -698,12 +719,11 @@ mod tests {
         fs::write(&session_file_path, file_content)?;
 
         let db_path = ws_path.join("test.db");
-        let db = DbManager::new(db_path.to_str().unwrap())?;
         let bus = std::sync::Arc::new(MessageBus::new());
         let config = Config::default();
         let service = HeartbeatService::new(config, ws_path.clone(), bus);
 
-        let digest = service.generate_digest(&db)?;
+        let digest = service.generate_digest(&db_path).await?;
         
         assert!(digest.contains("Find Tokyo coords"));
         assert!(digest.contains("Coords are 35.6762 N."));
@@ -718,22 +738,27 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_proactive_post_writes_to_file() -> Result<()> {
+    #[tokio::test]
+    async fn test_proactive_post_writes_to_file() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let ws = dir.path();
         let memory_dir = ws.join("memory");
         std::fs::create_dir_all(ws.join("sessions"))?;
         std::fs::create_dir_all(&memory_dir)?;
 
+        // Create a mock active session file
+        std::fs::write(
+            ws.join("sessions").join("discord-C123-20260531.jsonl"),
+            "{\"role\":\"user\",\"content\":\"hello\"}\n",
+        )?;
+
         let db_path = memory_dir.join("memory.db");
-        let db = rustyclaw_storage::DbManager::new(&db_path)?;
         let bus = std::sync::Arc::new(crate::MessageBus::new());
         let config = rustyclaw_config::Config::default();
         let svc = HeartbeatService::new(config, ws.to_path_buf(), bus);
 
         // proactive（非 HEARTBEAT_OK）応答を処理
-        svc.process_heartbeat_response("雨が近づいています。傘をお持ちください。", &db)?;
+        svc.process_heartbeat_response("雨が近づいています。傘をお持ちください。", &db_path).await?;
 
         let posts_file = memory_dir.join("proactive-posts.md");
         assert!(posts_file.exists(), "proactive-posts.md が作成されるべき");
@@ -742,8 +767,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_generate_digest_excludes_cli_and_http_sessions() -> Result<()> {
+    #[tokio::test]
+    async fn test_generate_digest_excludes_cli_and_http_sessions() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let ws = dir.path();
         let sessions_dir = ws.join("sessions");
@@ -767,12 +792,11 @@ mod tests {
         )?;
 
         let db_path = memory_dir.join("memory.db");
-        let db = rustyclaw_storage::DbManager::new(&db_path)?;
         let bus = std::sync::Arc::new(crate::MessageBus::new());
         let config = rustyclaw_config::Config::default();
         let svc = HeartbeatService::new(config, ws.to_path_buf(), bus);
 
-        let digest = svc.generate_digest(&db)?;
+        let digest = svc.generate_digest(&db_path).await?;
 
         assert!(!digest.contains("NO-AGENT"), "cli-session エントリが除外されるべき");
         assert!(!digest.contains("ping"), "http-dashboard エントリが除外されるべき");

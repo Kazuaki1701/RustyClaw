@@ -222,7 +222,7 @@ impl LaneRegistry {
                         
                         let setup_res = async {
                             if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
-                                if let Ok(digest) = heartbeat_svc.generate_digest(&db) {
+                                if let Ok(digest) = heartbeat_svc.generate_digest(&db_path).await {
                                     let is_step5_allowed = heartbeat_svc.is_step5_allowed(&db).unwrap_or(false);
                                     let weather_alert = heartbeat_svc.run_weather_patrol(&db_path).await.unwrap_or(None);
                                     Some((digest, is_step5_allowed, weather_alert))
@@ -286,7 +286,7 @@ impl LaneRegistry {
                                             Ok(response) => {
                                                 tracing::info!("Heartbeat LLM execution successful. Processing response...");
                                                 if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
-                                                    let _ = heartbeat_svc.process_heartbeat_response(&response.content, &db);
+                                                    let _ = heartbeat_svc.process_heartbeat_response(&response.content, &db_path).await;
                                                 }
                                                 crate::queue_remove(&session_id);
                                                 break; // Exit the retry loop!
@@ -381,7 +381,7 @@ impl LaneRegistry {
                                             let _ = std::fs::create_dir_all(&summaries_dir);
                                             let file_path = summaries_dir.join(format!("{}-daily-summary.md", today));
                                             
-                                            let _ = rustyclaw_storage::atomic_write(&file_path, response.content.as_bytes());
+                                            let _ = rustyclaw_storage::atomic_write(&file_path, response.content.as_bytes()).await;
 
                                             // Index matching summary in Tantivy
                                             let index_dir = workspace_path.join("memory").join("index");
@@ -583,7 +583,7 @@ impl LaneRegistry {
                                                     }
                                                 }
                                                 if let Ok(serialized) = serde_json::to_string_pretty(&current_state) {
-                                                    let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes());
+                                                    let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes()).await;
                                                 }
 
                                                 let trigger = if session_id.starts_with("cron:heartbeat") { "heartbeat" }
@@ -877,7 +877,7 @@ impl Gateway {
         let discord_client = Arc::new(discord);
 
         // 4. LaneRegistry の初期化
-        let gmn_sem = Arc::new(Semaphore::new(1)); // 全 gmn プロセス統合枠 (user + bg + flush を一本化)
+        let gmn_sem = Arc::new(Semaphore::new(4)); // 全 gmn プロセス統合枠 (user + bg + flush を一本化、容量 4)
         let registry = Arc::new(LaneRegistry::new(
             config.clone(),
             self.workspace_path.clone(),
@@ -961,7 +961,7 @@ impl Gateway {
             bus.clone(),
             self.workspace_path.clone(),
             gmn_sem.clone(),
-            1, // gmn_sem capacity = 1
+            4, // gmn_sem capacity = 4
         );
         health_server.start().await.context("Failed to start HealthServer")?;
 

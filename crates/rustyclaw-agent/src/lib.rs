@@ -463,7 +463,7 @@ Rules:
             } else {
                 content
             };
-            if let Err(e) = rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()) {
+            if let Err(e) = rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()).await {
                 tracing::warn!("memory flush: failed to write MEMORY.md: {}", e);
             }
         }
@@ -490,7 +490,7 @@ Rules:
                 )
             };
             file_content.push_str(&log_entry);
-            let _ = rustyclaw_storage::atomic_write(&log_file, file_content.as_bytes());
+            let _ = rustyclaw_storage::atomic_write(&log_file, file_content.as_bytes()).await;
         }
 
         // 3. SQLite にフラッシュ完了状態を保存（メッセージ数 + タイムスタンプ）

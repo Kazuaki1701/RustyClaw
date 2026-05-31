@@ -4,9 +4,48 @@ use rustyclaw_providers::Message;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::collections::HashMap;
+use once_cell::sync::Lazy;
+use tokio::sync::{RwLock, OwnedRwLockReadGuard, OwnedRwLockWriteGuard};
 
 pub mod search;
 pub use search::SearchIndexManager;
+
+// ==============================================================================
+// 0. パスロック管理 (Path Lock Manager)
+// ==============================================================================
+
+static PATH_LOCKS: Lazy<StdMutex<HashMap<PathBuf, Arc<RwLock<()>>>>> = Lazy::new(|| {
+    StdMutex::new(HashMap::new())
+});
+
+fn canonicalize_path(path: &Path) -> PathBuf {
+    match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// 指定したファイルパスの非同期読み込みロック（共有ロック）を取得する
+pub async fn acquire_read_lock(path: &Path) -> OwnedRwLockReadGuard<()> {
+    let normalized = canonicalize_path(path);
+    let lock = {
+        let mut locks = PATH_LOCKS.lock().unwrap();
+        locks.entry(normalized).or_insert_with(|| Arc::new(RwLock::new(()))).clone()
+    };
+    lock.read_owned().await
+}
+
+/// 指定したファイルパスの非同期書き込みロック（排他ロック）を取得する
+pub async fn acquire_write_lock(path: &Path) -> OwnedRwLockWriteGuard<()> {
+    let normalized = canonicalize_path(path);
+    let lock = {
+        let mut locks = PATH_LOCKS.lock().unwrap();
+        locks.entry(normalized).or_insert_with(|| Arc::new(RwLock::new(()))).clone()
+    };
+    lock.write_owned().await
+}
 
 
 // ==============================================================================
@@ -289,8 +328,9 @@ impl DbManager {
 // ==============================================================================
 
 /// 電源断やクラッシュ時にもファイル破損を防ぐ原子性書き込み
-pub fn atomic_write<P: AsRef<Path>>(path: P, data: &[u8]) -> Result<()> {
+pub async fn atomic_write<P: AsRef<Path>>(path: P, data: &[u8]) -> Result<()> {
     let path = path.as_ref();
+    let _guard = acquire_write_lock(path).await;
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut tmp = tempfile::NamedTempFile::new_in(dir)
         .context("Failed to create temporary file for atomic write")?;
@@ -520,12 +560,12 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_atomic_write() -> Result<()> {
+    #[tokio::test]
+    async fn test_atomic_write() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let file_path = tmp_dir.path().join("test_atomic.txt");
 
-        atomic_write(&file_path, b"Hello Atomic")?;
+        atomic_write(&file_path, b"Hello Atomic").await?;
         let content = std::fs::read_to_string(&file_path)?;
         assert_eq!(content, "Hello Atomic");
 
@@ -630,5 +670,38 @@ mod tests {
         assert_eq!(history.messages.len(), 10);
         assert_eq!(history.messages[7].role, "system");
         assert!(history.messages[7].content.contains("omitted"));
+    }
+
+    #[tokio::test]
+    async fn test_path_locking_concurrency() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        let file_path = tmp_dir.path().join("lock_test.txt");
+
+        // 1. 最初に共有読み込みロックを2つ同時に取得できるか（並行読み込み可能か）検証
+        let r_guard1 = acquire_read_lock(&file_path).await;
+        let r_guard2 = acquire_read_lock(&file_path).await;
+        drop(r_guard1);
+        drop(r_guard2);
+
+        // 2. 書き込みロックを取得し、その間は読み込みロックがブロックされるか検証
+        let w_guard = acquire_write_lock(&file_path).await;
+        
+        let file_path_clone = file_path.clone();
+        let handle = tokio::spawn(async move {
+            let _r_guard = acquire_read_lock(&file_path_clone).await;
+            42
+        });
+
+        // 少し待機しても handle は完了しないはず（書き込みロックが排他されているため）
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        assert!(!handle.is_finished());
+
+        // 書き込みロックを解放すると、待機していた読み込みロックが完了する
+        drop(w_guard);
+
+        let val = handle.await?;
+        assert_eq!(val, 42);
+
+        Ok(())
     }
 }
