@@ -57,7 +57,7 @@ Invoke the Garmin retrieval script located inside this skill's localized path, p
     *   `env`:
         *   `HOMEASSISTANT_TOKEN`: `$vault:homeassistant-token`
 
-The script returns **only the 13 core fields** listed in the table above. Do not attempt to parse other fields — they are not returned.
+The script returns **only the 27 core fields** listed in the tables below. Do not attempt to parse other fields — they are not returned.
 
 ### Step 2: Filtration & Threshold Analysis (Level 2)
 Extract only the **Core Health Metrics** and evaluate them against these coaching thresholds:
@@ -88,7 +88,7 @@ Formulate a supportive, professional, yet warm secretary-style response in Japan
 
 ## Common Mistakes & Antipatterns
 
-*   **Raw Data Dumping**: The script already filters to 7 core fields. Do not modify the script to output all sensors.
+*   **Raw Data Dumping**: The script already filters to 27 core fields. Do not modify the script to output all sensors.
 *   **Assuming Real-time Status**: Ignoring the sync time and declaring hours-old vitals as "fine" during an acute illness. (Fix: Always calculate and declare JST sync latency).
 *   **Missing Vault Keys**: Running without verifying if `homeassistant-token` exists in `vault.json`. (Fix: Verify token presence first and fail gracefully).
 *   **Absolute Script Execution**: Running shell scripts directly. (Fix: Use `run_workspace_script` for secure localized execution).
