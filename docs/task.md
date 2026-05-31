@@ -109,7 +109,7 @@
 ---
 
 ## Phase 36: 残存するネイティブツールの完全スキル化・疎結合化 🔴
-> 計画書 ([remaining_native_decoupling_implementation_plan.md](file:///home/kazuaki/.gemini/antigravity-cli/brain/718e6059-1c7d-4545-b99d-f99ed0d9211a/remaining_native_decoupling_implementation_plan.md)) に基づき、天気、カレンダー、Gmail、Obsidian の4種類のネイティブツールを完全デカップリングしてローカルスキル化し、トークン削減前処理を施す。
+> 計画書 ([remaining_native_decoupling_implementation_plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/remaining_native_decoupling_implementation_plan.md)) に基づき、天気、カレンダー、Gmail、Obsidian の4種類のネイティブツールを完全デカップリングしてローカルスキル化し、トークン削減前処理を施す。
 
 - `[ ]` **1. 天気予報のスキル化（Phase A）**
   - `skills/weather/` スキルフォルダを新設。
