@@ -674,7 +674,7 @@ async function updateInspector(){
   try{
     const[rq,rs]=await Promise.all([fetch('/debug/request'),fetch('/debug/response')]);
     const ts=now();
-    if(rq.ok){const txt=await rq.text();document.getElementById('req-ts').textContent=ts;document.getElementById('reqPanel').textContent=txt.length>4000?txt.substring(0,4000)+'\n...(truncated)':txt}
+    if(rq.ok){const txt=await rq.text();document.getElementById('req-ts').textContent=ts;document.getElementById('reqPanel').textContent=txt.length>4000?'...(truncated head)\n'+txt.slice(-4000):txt}
     if(rs.ok){const txt=await rs.text();document.getElementById('res-ts').textContent=ts;document.getElementById('resPanel').textContent=txt.length>3000?txt.substring(0,3000)+'\n...(truncated)':txt}
   }catch{}
 }
