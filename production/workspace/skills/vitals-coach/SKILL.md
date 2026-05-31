@@ -40,7 +40,7 @@ Garmin devices are consumer wearables, not clinical diagnostic tools. If the use
 
 ### 2. Synchronization Latency Verification (Critical)
 Always parse the `"Garmin Connect Last synced"` timestamp from the raw JSON payload.
-*   **Timezone Conversion**: The timestamp is in UTC (`+00:00`). You **MUST** convert it to JST (`+09:00`) before calculating the latency elapsed relative to current system time.
+*   **Timezone Note**: `Last synced` は **真の UTC**（`+00:00`）。JST に変換（+9時間）してから経過時間を計算すること。なお `Wake time` / `Bedtime` は `+00:00` サフィックスが付いているが **実態は JST**（UTC 変換不要）。
 *   **Rule**: If the last synced time is older than **30 minutes**, append a prominent warning:
     > [!WARNING]
     > **データ同期の遅延があります**: このデータは **[経過時間]前**（[ローカル表記での同期時刻]）のものです。急激な体格・体調の変化は反映されていないため、現在の体調の判断材料にしないでください。
@@ -74,7 +74,7 @@ Extract only the **Core Health Metrics** and evaluate them against these coachin
 | **`Garmin Connect Sleep duration`** | Under 360 min (6 hours) | 睡眠不足を指摘し、短時間の昼寝や就寝環境の改善をアドバイス。 |
 | **`Garmin Connect Deep sleep`** | Under 60 min | 深睡眠の不足は身体回復の低下を意味する。早めの就寝・寝室環境の見直しを提案。 |
 | **`Garmin Connect REM sleep`** | Under 90 min | REM 不足は精神的疲労に直結。ストレス軽減・就寝前のリラックスを推奨。 |
-| **`Garmin Connect Wake time`** | 参照のみ | 起床時刻の把握（JST 変換して表示）。睡眠時間の計算に使用。 |
+| **`Garmin Connect Wake time`** | 参照のみ | 起床時刻の把握。値は **JST そのまま**（`+00:00` サフィックスは誤表記、UTC 変換不要）。 |
 
 ### Step 3: Deliver (Concise & Empathetic Secretary Tone)
 Formulate a supportive, professional, yet warm secretary-style response in Japanese (K-sama's preference).
