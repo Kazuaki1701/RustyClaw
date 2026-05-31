@@ -460,6 +460,14 @@ impl ConversationHistory {
 
         true
     }
+
+    /// system プロンプト＋ツール定義などの固定オーバーヘッド（推定トークン）を考慮して圧縮する。
+    /// 実効上限を `limit - overhead_tokens` に下げてから既存の圧縮判定を行うことで、
+    /// 履歴＋システム＋ツールの合計がモデル上限を超えて 413 になるのを防ぐ。
+    pub fn compact_if_needed_with_overhead(&mut self, limit: usize, overhead_tokens: usize) -> bool {
+        let effective = limit.saturating_sub(overhead_tokens);
+        self.compact_if_needed(effective)
+    }
 }
 
 // ==============================================================================
@@ -469,6 +477,20 @@ impl ConversationHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overhead_lowers_effective_limit_and_triggers_compaction() {
+        // 10 件 × 100 文字 ≒ 1,500 推定トークン
+        let msgs: Vec<Message> = (0..10)
+            .map(|_| Message { role: "user".into(), content: "a".repeat(100), name: None, ..Default::default() })
+            .collect();
+        // overhead=0・大きな上限 → 圧縮されない
+        let mut h0 = ConversationHistory::new(msgs.clone());
+        assert!(!h0.compact_if_needed_with_overhead(10_000, 0));
+        // overhead 大で実効上限が下がり圧縮が発火する
+        let mut h1 = ConversationHistory::new(msgs.clone());
+        assert!(h1.compact_if_needed_with_overhead(2_000, 1_800));
+    }
 
     #[test]
     fn test_db_manager_creation_and_basic_ops() -> Result<()> {

@@ -766,7 +766,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         let mut history = ConversationHistory::new(history_messages);
         let history_limit = self.get_history_limit(purpose);
-        history.compact_if_needed(history_limit);
+        // ISSUE-02: system プロンプト＋ツール定義分のトークンを考慮して実効上限を下げる
+        let overhead_chars = system_context.chars().count()
+            + tool_registry.to_llm_schemas().iter().map(|s| s.to_string().chars().count()).sum::<usize>();
+        let overhead_tokens = (overhead_chars * 3) / 2;
+        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
 
         // 送信用メッセージリストの構築 (System + History)
         let mut active_messages = Vec::new();
