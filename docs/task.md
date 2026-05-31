@@ -205,8 +205,8 @@
 - `[ ]` **STEP 7: 設定・運用衛生（T5・個別着手可）** — ISSUE-08 / 11 / 12 / 15 / 16
   - LM Studio context 長の運用手順化/自動整合(08)、config `debug/release` の DRY 化(11)、`config.json` symlink のコミット衛生(12)、rp1 への `sqlite3` 導入(15)、LM Studio 埋め込みモデルの preload(16)。
 
-- `[ ]` **STEP 8: 信頼性・安定性（既存 ISSUE 再整理）（T6）** — ISSUE-01(要再確認) / 02 / 03
-  - ISSUE-01（数値パラメータ文字列化）は `fix(tools): use string type for numeric limit/count params` で**解消済みの可能性**→要再確認（Phase 20 と重複）。残り 02（トークン予算/413）・03（daemon 初期化非同期化・SIGTERM 再起動）を判断。
+- `[ ]` **STEP 8: 信頼性・安定性（既存 ISSUE 再整理）（T6）** — ISSUE-01 ✅解消済 / 02 / 03
+  - ISSUE-01（数値パラメータ文字列化）は **✅ 解消済み確認（2026-05-31）**: tools は `"type":"string"`＋`parse()` で安全化済み、`cargo test -p rustyclaw-tools` 44件 PASS（Phase 20 で対処・本STEPで検証）。残り 02（トークン予算/413）・03（daemon 初期化非同期化・SIGTERM 再起動）を判断。
   - 詳細は `docs/rusty_claw_improvement_plan.md` §1〜§3。
 
 ### Phase 31 — 保留（前提条件の解決後に着手）

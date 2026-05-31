@@ -283,7 +283,7 @@ ISSUE-01〜25 を**難易度（スコープ）**で分類し、**実行単位（
 | **T6 — 信頼性・安定性（既存）** | 05-30 ログ由来の堅牢化 | ISSUE-01（**済の可能性**）, ISSUE-02, ISSUE-03 |
 | **保留 / 観察** | 着手見送り or 経過観察 | 保留: ISSUE-22, ISSUE-25, ISSUE-09 ／ 観察: ISSUE-10, ISSUE-13, ISSUE-14 |
 
-> ※ ISSUE-01: git `fix(tools): use string type for numeric limit/count params (Groq compat)` で対処済みの可能性大 → **STEP 8 で要再確認**。
+> ※ ISSUE-01: **解消済み確認（2026-05-31）**。`rustyclaw-tools` の数値系パラメータは `"type":"string"` ＋ `Value::String(s).parse()` で安全化済み（`lib.rs:114/123/394/407` ほか）。`cargo test -p rustyclaw-tools` 44件 PASS。Phase 20 で対処・本 STEP で検証クローズ。
 
 ### 6-2. STEP（実行単位）
 
