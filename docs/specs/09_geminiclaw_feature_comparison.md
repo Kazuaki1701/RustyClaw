@@ -96,15 +96,15 @@
 
 | 機能 | GeminiClaw | RustyClaw | 備考 |
 |---|---|---|---|
-| **Skills ファイルロード** | workspace/skills/*.md を読み込みプロンプト注入 | ✅ | `skills.rs` 実装済み。gateway L.530 で cron dispatch 前に注入 |
-| daily-briefing skill | ✅ | ✅ | `production/workspace/skills/daily-briefing.md` 作成済み（Phase 29） |
-| vitals-coach skill | ✅ | ✅ | `production/workspace/skills/vitals-coach.md` 作成済み（Phase 29） |
-| topic-patrol skill | ✅ | ✅ | `production/workspace/skills/topic-patrol.md` 作成済み（Phase 21） |
-| deep-research skill | ✅ | ✅ | `production/workspace/skills/deep-research.md` 作成済み（Phase 29） |
-| coding-plan skill | ✅ | ✅ | `production/workspace/skills/coding-plan.md` 作成済み（Phase 29） |
-| todo-tracker skill | ✅ | ✅ | `production/workspace/skills/todo-tracker.md` 作成済み（Phase 29） |
-| workspace skill | ✅ | ✅ | `production/workspace/skills/workspace.md` 作成済み（Phase 29） |
-| session-logs skill | ✅ | ✅ | `production/workspace/skills/session-logs.md` 作成済み。`session-stats.sh`・`session-search.sh` で分析クエリ対応（Phase 34） |
+| **Skills ファイルロード** | 標準仕様（YAML Frontmatter / `SKILL.md`）に完全準拠し、段階的開示（Discovery & Activation）をサポート。従来フラットファイルとの下位互換性も担保 | ✅ | `skills.rs` が `gray_matter` による YAML 解析と Discovery/Activation 注入に対応。スキル内 scripts 実行やトラバーサル防御もサポート（Phase 35） |
+| daily-briefing skill | ✅ | ✅ | `skills/daily-briefing/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
+| vitals-coach skill | ✅ | ✅ | `skills/vitals-coach/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
+| topic-patrol skill | ✅ | ✅ | `skills/topic-patrol/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
+| deep-research skill | ✅ | ✅ | `skills/deep-research/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
+| coding-plan skill | ✅ | ✅ | `skills/coding-plan/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
+| todo-tracker skill | ✅ | ✅ | `skills/todo-tracker/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
+| workspace skill | ✅ | ✅ | `skills/workspace/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
+| session-logs skill | ✅ | ✅ | `skills/session-logs/SKILL.md` の標準パッケージ構造に移行完了。`session-stats.sh`・`session-search.sh` で分析クエリ対応（Phase 35） |
 | agent-browser skill | ✅ | ❌ | `npx agent-browser:*` 依存。対応ツールなし |
 | github skill | ✅ | ❌ | `run_shell_command` 依存 |
 

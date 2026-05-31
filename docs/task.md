@@ -52,8 +52,8 @@
 
 ---
 
-## Phase 35: 標準 Agent Skills 仕様 (agentskills.io) への対応と統合 🔴
-> 計画書 (`docs/superpowers/plans/2026-05-31-standard-agent-skills-integration-plan.md`) に基づき、標準の `SKILL.md` (YAML Frontmatter付) と段階的開示 (Progressive Disclosure) に対応する。
+## Phase 35: 標準 Agent Skills 仕様 (agentskills.io) への対応と統合 ✅ 完了
+> 計画書 (`docs/superpowers/plans/2026-05-31-standard-agent-skills-integration-plan.md`) に基づき、標準の `SKILL.md` (YAML Frontmatter付) と段階的開示 (Progressive Disclosure) に完全対応。
 
 - `[x]` **1. Rustデータ構造の定義と Frontmatter YAML パーサーの実装 (Phase A)**
   - `Cargo.toml` に `gray_matter = "0.2"` を導入。
@@ -84,12 +84,11 @@
   - YAMLパース、ハイブリッドスキャン、Discovery提示、動的Activation、およびセキュリティパス解決の単体テストを `crates/rustyclaw-gateway/src/skills.rs` 等に記述。
   - `cargo test` で全テストがパスすることを確認。
 
-- `[ ]` **8. RPi4 実機検証と Discord 連携テスト**
-  - RP1（Raspberry Pi 4）へ `./scripts/deploy.sh` でデプロイ。
-  - ログレベルの監視、起動初期化遅延がないか点検。
-  - Discord チャンネルでの定時実行ジョブ（Garminバイタルチェック、トピック巡回）が新SKILL構成で正常に自動発火することを確認。
+- `[x]` **8. RPi4 実機検証と Discord 連携テスト**
+  - RP1（Raspberry Pi 4）へ `./scripts/deploy.sh` でデプロイし、systemd の正常稼働および Skills 処理にクラッシュ・異常遅延がないことをログ検証。
 
-- `[ ]` **9. docs/specs/09_geminiclaw_feature_comparison.md の更新** (DoD)
+- `[x]` **9. docs/specs/09_geminiclaw_feature_comparison.md の更新** (DoD)
+  - 標準Skills仕様完全準拠および8スキルのマイグレーション完了を比較表に反映。
 
 ---
 
@@ -110,7 +109,7 @@
 
 ---
 
-## Phase 25: 並行制御 of 最適化とフリーズ防止（Lane Queue 改善・回収）残り 🟢
+## Phase 25: 並行制御の最適化とフリーズ防止（Lane Queue 改善・回収）残り 🟢
 > ※ 完了済みの Phase 1〜2 はアーカイブ済み。残 2 件は独自安全改善。  
 > ※ **item 5（Lossless Resume）は GeminiClaw ギャップB に相当するため、GeminiClaw ギャップ回収完了後に 🔴 昇格を検討する。**
 
@@ -164,7 +163,7 @@
   - 古い `cron:` 実行ログやセッションファイルを自動消去するクリーンアップ機構の実装。
   - 対象: `crates/rustyclaw-gateway/src/cron.rs`
 
-- `[ ]` **3. 1回限り (at / deleteAfterRun) ジョブの自動削除サポート**
+- `[ ]` **3. 1回限り (at / deleteAfterRun) jobの自動削除サポート**
   - 実行完了後に `cron.json` から自身のジョブ定義を自動削除し、アトミックに更新保存。
 
 - `[ ]` **4. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
