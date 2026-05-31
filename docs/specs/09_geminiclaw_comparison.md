@@ -1,6 +1,6 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (移植進捗とコードレベルの比較仕様)  
-> **最終更新日**: 2026-05-30  
+> **最終更新日**: 2026-05-31  
 > **対象コード**: `crates/rustyclaw-agent/`, `crates/rustyclaw-gateway/`
 
 # GeminiClaw vs RustyClaw コードレベル比較 & 移植進捗レポート
@@ -95,6 +95,9 @@ You posted these messages (not in your conversation history):
 - [YYYY-MM-DD HH:MM:SS]: (自発発言内容の先頭300文字...)
 ```
 
+### 【並行制御完了】インプロセス非同期パスロックと並行数 4 へのスケーリング (Phase 2)
+同一セッション workspace ファイル（`MEMORY.md`, `USER.md` 等）への並列アクセスによる競合や上書き破損を防止するため、`rustyclaw-storage` に `once_cell` を用いた「インプロセス非同期パスロック (`PATH_LOCKS`)」を実装しました。読み込みは並行（Shared）、書き込み（排他）は自動で `atomic_write` 内にて制御されます。この安全性確保により、Gateway 内のグローバル実行セマフォ容量を `1` から `4` に安全に拡張しました。
+
 ---
 
 ## 4. 移植・改修実績
@@ -107,3 +110,6 @@ You posted these messages (not in your conversation history):
     *   ログ差分増分スキャンの境界タイムスタンプのバグ、およびツール呼び出し中の最終テキスト返答の抽出ロジックを修正。動的なLocalタイムスタンプ表示および構造化マークダウンヘッダー出力を追加。
 3.  **tantivy 検索および Obsidian 書き込みツールの LLM 公開** (`crates/rustyclaw-tools/src/lib.rs`) ✅ 完了
     *   `MemorySearchTool` (tantivy) と `ObsidianWriteTool` の実装とツール登録、およびテストスイートを完備。
+4.  **インプロセス非同期パスロックの導入と並行スロット 4 への拡張** (`crates/rustyclaw-storage/src/lib.rs`, `crates/rustyclaw-gateway/src/lib.rs`) ✅ 完了
+    *   共有ファイルの並列アクセスを調停する非同期 `RwLock` マップを実装し、Gateway セマフォを容量 4 に拡張、デプロイ完了。
+

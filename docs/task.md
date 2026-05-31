@@ -75,13 +75,13 @@
 - `[x]` **3. Chat Progress Reporter (Typing... 送信) の実装 (Phase 1)**
   - `rustyclaw-channels` にて `DiscordProgressReporter` トレイト、タイピングキープアライブ維持タスク、進捗メッセージライフサイクルを実装。`rustyclaw-agent` および `rustyclaw-gateway` に mpsc チャネルを用いた非同期イベント中継として完全統合。
 
-- `[ ]` **4. 並行数 4 への拡張に向けたファイルロック機構の導入 (Phase 2)**
-  - `MEMORY.md` や `USER.md` 等への並列書き込み破損を防ぐため、`fd-lock` 等によるファイルレベルの排他制御を導入し、`gmn_sem` の容量を `4` に拡張可能にする。
+- `[x]` **4. 並行数 4 への拡張に向けたファイルロック機構の導入 (Phase 2)**
+  - `MEMORY.md` や `USER.md` 等への並列書き込み破損を防ぐため、インプロセス非同期パスロックによる排他制御を導入し、`gmn_sem` の容量を `4` に拡張。
 
 - `[ ]` **5. 実行ステップのチェックポイント化と Lossless Resume の導入 (Phase 3)**
   - 途中でエラー（送信失敗など）が発生した際に、LLM API の再呼出を行わず失敗したフェーズから再試行できる中間状態の永続化と復旧機構。
 
-- `[ ]` **6. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[x]` **6. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
