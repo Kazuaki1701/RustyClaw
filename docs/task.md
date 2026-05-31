@@ -109,29 +109,36 @@
 ---
 
 ## Phase 36: 残存するネイティブツールの完全スキル化・疎結合化 🔴
-> 計画書 ([remaining_native_decoupling_implementation_plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/remaining_native_decoupling_implementation_plan.md)) に基づき、天気、カレンダー、Gmail、Obsidian の4種類のネイティブツールを完全デカップリングしてローカルスキル化し、トークン削減前処理を施す。
+> 設計書・実装計画策定済み（2026-05-31）。各 Phase の spec/plan は `docs/superpowers/` に保存。
+
+| Phase | 設計書 | 実装計画 |
+|---|---|---|
+| A: Weather | `specs/2026-05-31-weather-skill-design.md` | `plans/2026-05-31-weather-skill-migration.md` |
+| B: Calendar | `specs/2026-05-31-calendar-gmail-skill-design.md` | `plans/2026-05-31-calendar-gmail-skill-migration.md` |
+| C: Gmail | ↑ 同上 | ↑ 同上 |
+| D: Obsidian | `specs/2026-05-31-obsidian-skill-design.md` | `plans/2026-05-31-obsidian-skill-migration.md` |
 
 - `[ ]` **1. 天気予報のスキル化（Phase A）**
   - `skills/weather/` スキルフォルダを新設。
-  - `504_get-weather.sh` スクリプトの実装（`jq` による極限降雨/気温の要約前処理でトークン約92%削減）。
+  - `504_get-weather.sh`（大森・厚木2地点、気温・風速・今日最高/最低・60分降水量）。
   - `YolpWeatherTool` 構造体およびテストの削除。
 
 - `[ ]` **2. Googleカレンダーの予定管理スキル化（Phase B）**
   - `skills/calendar/` スキルフォルダを新設。
-  - `505_get-calendar.sh` スクリプトの実装（予定タイトル、時刻、場所のみの `jq` マークダウン表要約でトークン約85%削減）。
-  - `508_write-calendar.sh` スクリプトの実装（許可リスト検証ガード内蔵）。
+  - `505_get-calendar.sh`（7日間予定、title/start/end/location のみ抽出）。
+  - `508_write-calendar.sh`（許可 Calendar ID 2件ハードコードガード内蔵）。
   - `GwsCalendarTool`, `GwsCalendarWriteTool` 構造体およびテストの削除。
 
 - `[ ]` **3. Gmailメッセージ取得・ゴミ箱化のスキル化（Phase C）**
   - `skills/gmail/` スキルフォルダを新設。
-  - `506_get-gmail.sh` スクリプトの実装（Sender, Subject, スニペットのみの `jq` 抽出でトークン約80%削減）。
-  - `509_delete-gmail.sh` スクリプトの実装（`_ai-agent` ラベル存在検証ガード内蔵）。
+  - `506_get-gmail.sh`（id/sender/subject/date/snippet の5フィールド抽出）。
+  - `509_delete-gmail.sh`（`_ai-agent` ラベル存在検証ガード内蔵）。
   - `GwsGmailTool`, `GwsGmailDeleteTool` 構造体およびテストの削除。
 
 - `[ ]` **4. Obsidian 操作の統一スキル化（Phase D）**
   - `skills/obsidian/` スキルフォルダを新設。
-  - `507_obsidian-ops.sh` スクリプトの実装（検索結果 `jq` トリミング、アペンド動作のBash内蔵、URLエンコード）。
-  - `ObsidianSearchTool`, `ObsidianReadTool`, `ObsidianWriteTool` 構造体およびテストの削除。
+  - `507_obsidian-ops.sh`（search/read/write/append サブコマンド統合、`$vault:obsidian-api-key` 注入）。
+  - `ObsidianSearchTool`, `ObsidianReadTool`, `ObsidianWriteTool` および `percent_encode()` の削除。
 
 - `[ ]` **5. ゲートウェイ自動登録の解除と cargo test のオールグリーン検証**
 
