@@ -1,3 +1,9 @@
+---
+name: topic-patrol
+description: 登録された技術情報源（RSS、Webサイト）を定期巡回し、新規トピックを要約・収集するパトロールスキル。
+allowed-tools:
+  - run_workspace_script
+---
 # Topic Patrol
 
 Explore the web based on the user's interests and share discoveries like a curious friend — not a news bot.

@@ -24,6 +24,65 @@ impl Pipeline {
         Self { config, provider, flush_sem }
     }
 
+    /// モデルチェーンを走査し、最初に成功したレスポンスを返す。
+    /// チェーン内の全モデルが失敗した場合はエラーを返す。
+    /// フォールバックモデルが使用された場合は warn! ログを出力する。
+    async fn complete_with_fallback(
+        &self,
+        purpose: &str,
+        session_id: &str,
+        messages: &[Message],
+        tools: &[rustyclaw_providers::ToolDef],
+        timeout: Duration,
+    ) -> Result<LlmResponse> {
+        let chain = self.config.get_model_chain(purpose);
+        if chain.is_empty() {
+            return Err(anyhow::anyhow!("no available models for purpose: {}", purpose));
+        }
+
+        let category = resolve_category(session_id);
+        let mut last_err: Option<anyhow::Error> = None;
+
+        for (idx, model_cfg) in chain.iter().enumerate() {
+            let opts = CompletionOptions {
+                model: model_cfg.model_name.clone(),
+                max_tokens: model_cfg.max_tokens,
+                temperature: model_cfg.temperature,
+                timeout,
+                category: Some(category.clone()),
+            };
+            let provider = create_provider(model_cfg.clone());
+            match provider.complete(messages, tools, &opts).await {
+                Ok(response) => {
+                    if idx > 0 {
+                        tracing::warn!(
+                            purpose = purpose,
+                            used_model = %model_cfg.model_name,
+                            primary_model = %chain[0].model_name,
+                            fallback_index = idx,
+                            "fallback model used"
+                        );
+                    }
+                    return Ok(response);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        model = %model_cfg.model_name,
+                        error = %e,
+                        "model failed, trying next in chain"
+                    );
+                    last_err = Some(e.into());
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "all models failed for purpose '{}': {}",
+            purpose,
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        ))
+    }
+
     /// 用途ごとのモデルの TPM 制限に基づいて、会話履歴の圧縮しきい値を動的に決定する。
     fn get_history_limit(&self, purpose: &str) -> usize {
         let model_cfg = self.config.get_model(purpose);
@@ -548,16 +607,7 @@ Rules:
 
         self.dump_request(workspace_dir, &messages);
 
-        let heartbeat_model = self.config.get_model("heartbeat");
-        let opts = CompletionOptions {
-            model: heartbeat_model.model_name,
-            max_tokens: heartbeat_model.max_tokens,
-            temperature: heartbeat_model.temperature,
-            timeout: Duration::from_secs(900),
-            category: Some("heartbeat".to_string()),
-        };
-
-        let mut response = self.provider.complete(&messages, &[], &opts).await?;
+        let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &[], Duration::from_secs(900)).await?;
         response.content = filter_json_leaks(&response.content);
 
         logger.append_message(session_id, &user_msg)
@@ -907,16 +957,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             })
             .collect();
 
-        let model_cfg = self.config.get_model(purpose);
-        let cat = resolve_category(session_id);
-        let opts = CompletionOptions {
-            model: model_cfg.model_name.clone(),
-            max_tokens: model_cfg.max_tokens,
-            temperature: model_cfg.temperature,
-            timeout: Duration::from_secs(300),
-            category: Some(cat),
-        };
-
         let mut loop_count = 0;
         let max_loops = 10;
 
@@ -932,7 +972,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             if let Some(ref tx) = progress_tx {
                 let _ = tx.send("LLMの応答を待っています...".to_string()).await;
             }
-            let mut response = self.provider.complete(&active_messages, &provider_tools, &opts).await?;
+            let mut response = self.complete_with_fallback(
+                purpose,
+                session_id,
+                &active_messages,
+                &provider_tools,
+                Duration::from_secs(300),
+            ).await?;
             response.content = filter_json_leaks(&response.content);
 
             // アシスタント返答をMessage形式にして active_messages / logger に保存
@@ -1258,10 +1304,55 @@ fn resolve_category(session_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustyclaw_config::{ModelEntry, AgentsConfig, AgentPurposeConfig};
+    use rustyclaw_config::{ModelEntry, AgentsConfig, ModelNames};
     use tempfile::tempdir;
     use tokio::net::TcpListener;
     use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn test_complete_with_fallback_skips_disabled_model() {
+        // disabled モデルが先頭の場合、get_model_chain が有効モデルだけを返すことを確認
+        let config = rustyclaw_config::Config {
+            model_list: vec![
+                rustyclaw_config::ModelEntry {
+                    model_name: "disabled-m".to_string(),
+                    provider: "openai".to_string(),
+                    model: "disabled-api".to_string(),
+                    api_base: "https://disabled.example.com/v1".to_string(),
+                    api_key: "key".to_string(),
+                    max_tokens: Some(100),
+                    temperature: Some(0.5),
+                    enabled: false,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+                rustyclaw_config::ModelEntry {
+                    model_name: "enabled-m".to_string(),
+                    provider: "openai".to_string(),
+                    model: "enabled-api".to_string(),
+                    api_base: "https://enabled.example.com/v1".to_string(),
+                    api_key: "key2".to_string(),
+                    max_tokens: Some(100),
+                    temperature: Some(0.5),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+            ],
+            agents: rustyclaw_config::AgentsConfig {
+                default: rustyclaw_config::ModelNames::Chain(vec![
+                    "disabled-m".to_string(),
+                    "enabled-m".to_string(),
+                ]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let chain = config.get_model_chain("default");
+        // disabled は除外、enabled のみがチェーンに残る
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].api_base_url, "https://enabled.example.com/v1");
+    }
 
     fn make_test_config_with_url(api_base: &str) -> Config {
         Config {
@@ -1278,7 +1369,7 @@ mod tests {
                 context_window: None,
             }],
             agents: AgentsConfig {
-                default: AgentPurposeConfig { model_name: "test-model".to_string() },
+                default: ModelNames::Single("test-model".to_string()),
                 summary: None,
                 memory: None,
                 ..Default::default()

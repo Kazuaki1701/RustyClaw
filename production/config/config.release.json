@@ -232,14 +232,15 @@
     }
   ],
   "agents": {
-    "default":   { "model_name": "groq-llama-8b" },
-    "tools":     { "model_name": "groq-qwen3-32b" },
-    "discord":   { "model_name": "groq-llama-70b" },
-    "line":      { "model_name": "groq-llama-70b" },
-    "heartbeat": { "model_name": "groq-llama-8b" },
-    "patrol":    { "model_name": "groq-llama-70b" },
-    "summary":   { "model_name": "cf-gemma-4-26b" },
-    "memory":    { "model_name": "cf-qwen3-30b" }
+    "global_fallback_model_name": "groq-llama-8b",
+    "default":   "groq-llama-8b",
+    "tools":     "groq-qwen3-32b",
+    "discord":   ["groq-llama-70b", "groq-llama-8b"],
+    "line":      ["groq-llama-70b", "groq-llama-8b"],
+    "heartbeat": ["groq-llama-8b", "cf-gemma-4-26b"],
+    "patrol":    ["groq-llama-70b", "groq-llama-8b"],
+    "summary":   ["cf-gemma-4-26b", "groq-llama-8b"],
+    "memory":    ["cf-qwen3-30b", "groq-llama-8b"]
   },
   "debug_dump": true,
   "timezone": "Asia/Tokyo",

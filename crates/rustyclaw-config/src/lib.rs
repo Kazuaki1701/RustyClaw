@@ -71,30 +71,59 @@ fn default_max_tokens() -> Option<u32> { Some(2048) }
 fn default_temperature() -> Option<f32> { Some(0.7) }
 fn bool_true() -> bool { true }
 
-/// 用途ごとの LLM 設定（model_list の model_name を参照）
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AgentPurposeConfig {
-    pub model_name: String,
+/// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
+/// 配列の場合、先頭が primary モデル、以降がフォールバックモデル。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ModelNames {
+    Single(String),
+    Chain(Vec<String>),
+}
+
+impl Default for ModelNames {
+    fn default() -> Self { Self::Single(String::new()) }
+}
+
+impl ModelNames {
+    /// 先頭（primary）モデル名を返す。
+    pub fn primary(&self) -> &str {
+        match self {
+            Self::Single(s) => s,
+            Self::Chain(v)  => v.first().map(|s| s.as_str()).unwrap_or(""),
+        }
+    }
+
+    /// [primary, fallback1, fallback2, ...] のスライスを返す。
+    pub fn as_chain(&self) -> Vec<&str> {
+        match self {
+            Self::Single(s) => vec![s.as_str()],
+            Self::Chain(v)  => v.iter().map(|s| s.as_str()).collect(),
+        }
+    }
 }
 
 /// agents セクション（default 必須、各 purpose は省略時 default にフォールバック）
+/// model_name は文字列（単一）または配列（フォールバックチェーン）で指定可能。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentsConfig {
-    pub default: AgentPurposeConfig,
+    pub default: ModelNames,
+    /// すべての purpose チェーンが失敗した場合の最終フォールバックモデル名
     #[serde(default)]
-    pub summary: Option<AgentPurposeConfig>,
+    pub global_fallback_model_name: Option<String>,
     #[serde(default)]
-    pub memory: Option<AgentPurposeConfig>,
+    pub summary:   Option<ModelNames>,
     #[serde(default)]
-    pub tools: Option<AgentPurposeConfig>,
+    pub memory:    Option<ModelNames>,
     #[serde(default)]
-    pub discord: Option<AgentPurposeConfig>,
+    pub tools:     Option<ModelNames>,
     #[serde(default)]
-    pub line: Option<AgentPurposeConfig>,
+    pub discord:   Option<ModelNames>,
     #[serde(default)]
-    pub heartbeat: Option<AgentPurposeConfig>,
+    pub line:      Option<ModelNames>,
     #[serde(default)]
-    pub patrol: Option<AgentPurposeConfig>,
+    pub heartbeat: Option<ModelNames>,
+    #[serde(default)]
+    pub patrol:    Option<ModelNames>,
 }
 
 /// get_model() が返す解決済みモデル設定（$vault: 参照解決済み）
@@ -280,40 +309,12 @@ fn resolve_value(val: &str) -> String {
 }
 
 impl Config {
-    /// 用途に対応する解決済み LlmModelConfig を返す。
-    /// 該当 purpose が未設定の場合は default にフォールバック。
-    pub fn get_model(&self, purpose: &str) -> LlmModelConfig {
-        let model_name = match purpose {
-            "summary" => self.agents.summary.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
-            "memory" => self.agents.memory.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
-            "tools" => self.agents.tools.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
-            "discord" => self.agents.discord.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
-            "line" => self.agents.line.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
-            "heartbeat" => self.agents.heartbeat.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
-            "patrol" => self.agents.patrol.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
-            _ => self.agents.default.model_name.as_str(),
-        };
-
-        let entry = self.model_list.iter()
+    /// model_name (config キー) → 解決済み LlmModelConfig に変換する内部ヘルパー。
+    /// enabled: false のエントリは None を返す。
+    fn resolve_model(&self, model_name: &str, purpose: &str) -> Option<LlmModelConfig> {
+        self.model_list.iter()
             .find(|m| m.model_name == model_name && m.enabled)
-            .or_else(|| self.model_list.iter().find(|m| m.enabled));
-
-        match entry {
-            Some(e) => LlmModelConfig {
+            .map(|e| LlmModelConfig {
                 model_purpose: purpose.to_string(),
                 model_provider: e.provider.clone(),
                 model_name: e.model.clone(),
@@ -321,19 +322,73 @@ impl Config {
                 api_base_url: e.api_base.clone(),
                 max_tokens: e.max_tokens,
                 temperature: e.temperature,
-            },
-            None => LlmModelConfig {
+            })
+    }
+
+    /// purpose の ModelNames を返す（未設定なら default）。
+    fn get_model_names_for_purpose(&self, purpose: &str) -> &ModelNames {
+        match purpose {
+            "summary"   => self.agents.summary.as_ref().unwrap_or(&self.agents.default),
+            "memory"    => self.agents.memory.as_ref().unwrap_or(&self.agents.default),
+            "tools"     => self.agents.tools.as_ref().unwrap_or(&self.agents.default),
+            "discord"   => self.agents.discord.as_ref().unwrap_or(&self.agents.default),
+            "line"      => self.agents.line.as_ref().unwrap_or(&self.agents.default),
+            "heartbeat" => self.agents.heartbeat.as_ref().unwrap_or(&self.agents.default),
+            "patrol"    => self.agents.patrol.as_ref().unwrap_or(&self.agents.default),
+            _           => &self.agents.default,
+        }
+    }
+
+    /// purpose のモデルチェーンを解決済み LlmModelConfig のリストとして返す。
+    /// 順序: purpose 指定モデル群 → global_fallback（重複除去）
+    /// disabled なモデルはリストから除外される。
+    pub fn get_model_chain(&self, purpose: &str) -> Vec<LlmModelConfig> {
+        let names = self.get_model_names_for_purpose(purpose);
+        let mut name_list: Vec<&str> = names.as_chain();
+
+        // global_fallback を末尾に追加（重複は除去）
+        if let Some(ref gf) = self.agents.global_fallback_model_name {
+            if !name_list.contains(&gf.as_str()) {
+                name_list.push(gf.as_str());
+            }
+        }
+
+        name_list.iter()
+            .filter_map(|name| self.resolve_model(name, purpose))
+            .collect()
+    }
+
+    /// 用途に対応する解決済み LlmModelConfig を返す。後方互換維持。
+    /// 内部では get_model_chain()[0] を使用。
+    /// チェーンが空（全モデル disabled）の場合は model_list 先頭 enabled モデルを返す。
+    pub fn get_model(&self, purpose: &str) -> LlmModelConfig {
+        // チェーンの先頭を返す
+        if let Some(first) = self.get_model_chain(purpose).into_iter().next() {
+            return first;
+        }
+        // 全 named モデルが disabled → model_list 先頭 enabled モデルを最終手段として返す
+        self.model_list.iter()
+            .find(|m| m.enabled)
+            .map(|e| LlmModelConfig {
+                model_purpose: purpose.to_string(),
+                model_provider: e.provider.clone(),
+                model_name: e.model.clone(),
+                api_key: e.api_key.clone(),
+                api_base_url: e.api_base.clone(),
+                max_tokens: e.max_tokens,
+                temperature: e.temperature,
+            })
+            .unwrap_or_else(|| LlmModelConfig {
                 model_purpose: purpose.to_string(),
                 ..Default::default()
-            },
-        }
+            })
     }
 
     /// 環境変数による設定オーバーライド
     pub fn override_with_env(&mut self) {
         // RUSTYCLAW_MODEL_NAME: agents.default の model_name を上書き
         if let Ok(val) = std::env::var("RUSTYCLAW_MODEL_NAME") {
-            self.agents.default.model_name = val;
+            self.agents.default = ModelNames::Single(val);
         }
     }
 
@@ -436,9 +491,10 @@ mod tests {
                 },
             ],
             agents: AgentsConfig {
-                default: AgentPurposeConfig { model_name: "test-8b".to_string() },
-                summary: Some(AgentPurposeConfig { model_name: "test-70b".to_string() }),
-                memory: Some(AgentPurposeConfig { model_name: "test-70b".to_string() }),
+                default: ModelNames::Single("test-8b".to_string()),
+                global_fallback_model_name: None,
+                summary: Some(ModelNames::Single("test-70b".to_string())),
+                memory: Some(ModelNames::Single("test-70b".to_string())),
                 tools: None,
                 discord: None,
                 line: None,
@@ -466,7 +522,7 @@ mod tests {
                 }
             ],
             "agents": {
-                "default": { "model_name": "groq-8b" }
+                "default": "groq-8b"
             },
             "debug_dump": true
         }"#;
@@ -475,7 +531,7 @@ mod tests {
         let config = load_config(tmp_file.path())?;
         assert_eq!(config.model_list.len(), 1);
         assert_eq!(config.model_list[0].model_name, "groq-8b");
-        assert_eq!(config.agents.default.model_name, "groq-8b");
+        assert_eq!(config.agents.default.primary(), "groq-8b");
         assert!(config.debug_dump);
 
         let model = config.get_model("default");
@@ -515,9 +571,9 @@ mod tests {
         assert_eq!(config.get_model("heartbeat").model_name, "llama-3.1-8b-instant");
 
         // 明示設定した場合はそちらを返す
-        config.agents.discord   = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
-        config.agents.heartbeat = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
-        config.agents.tools     = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
+        config.agents.discord   = Some(ModelNames::Single("test-70b".to_string()));
+        config.agents.heartbeat = Some(ModelNames::Single("test-70b".to_string()));
+        config.agents.tools     = Some(ModelNames::Single("test-70b".to_string()));
         assert_eq!(config.get_model("discord").model_name,   "llama-3.3-70b-versatile");
         assert_eq!(config.get_model("heartbeat").model_name, "llama-3.3-70b-versatile");
         assert_eq!(config.get_model("tools").model_name,     "llama-3.3-70b-versatile");
@@ -528,7 +584,7 @@ mod tests {
         let mut config = make_test_config();
         unsafe { std::env::set_var("RUSTYCLAW_MODEL_NAME", "test-70b"); }
         config.override_with_env();
-        assert_eq!(config.agents.default.model_name, "test-70b");
+        assert_eq!(config.agents.default.primary(), "test-70b");
         let model = config.get_model("default");
         assert_eq!(model.model_name, "llama-3.3-70b-versatile");
         unsafe { std::env::remove_var("RUSTYCLAW_MODEL_NAME"); }
@@ -562,5 +618,169 @@ mod tests {
         if let Some(tz) = detect_timezone() {
             assert!(!tz.is_empty());
         }
+    }
+
+    #[test]
+    fn test_model_names_single_deserialization() {
+        let s: ModelNames = serde_json::from_str(r#""groq-llama-8b""#).unwrap();
+        assert_eq!(s.primary(), "groq-llama-8b");
+        assert_eq!(s.as_chain(), vec!["groq-llama-8b"]);
+    }
+
+    #[test]
+    fn test_model_names_chain_deserialization() {
+        let c: ModelNames = serde_json::from_str(r#"["groq-70b", "or-deepseek"]"#).unwrap();
+        assert_eq!(c.primary(), "groq-70b");
+        assert_eq!(c.as_chain(), vec!["groq-70b", "or-deepseek"]);
+    }
+
+    #[test]
+    fn test_model_names_mixed_in_config() {
+        let json = r#"{ "single": "groq-8b", "chain": ["groq-70b", "or-deepseek"] }"#;
+        #[derive(serde::Deserialize)]
+        struct Tmp { single: ModelNames, chain: ModelNames }
+        let tmp: Tmp = serde_json::from_str(json).unwrap();
+        assert_eq!(tmp.single.primary(), "groq-8b");
+        assert_eq!(tmp.chain.primary(), "groq-70b");
+        assert_eq!(tmp.chain.as_chain().len(), 2);
+    }
+
+    fn make_chain_test_config() -> Config {
+        Config {
+            model_list: vec![
+                ModelEntry {
+                    model_name: "primary-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "primary-api-model".to_string(),
+                    api_base: "https://primary.example.com/v1".to_string(),
+                    api_key: "key-primary".to_string(),
+                    max_tokens: Some(2048),
+                    temperature: Some(0.7),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+                ModelEntry {
+                    model_name: "fallback-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "fallback-api-model".to_string(),
+                    api_base: "https://fallback.example.com/v1".to_string(),
+                    api_key: "key-fallback".to_string(),
+                    max_tokens: Some(1500),
+                    temperature: Some(0.5),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+                ModelEntry {
+                    model_name: "global-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "global-api-model".to_string(),
+                    api_base: "https://global.example.com/v1".to_string(),
+                    api_key: "key-global".to_string(),
+                    max_tokens: Some(1024),
+                    temperature: Some(0.5),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+                ModelEntry {
+                    model_name: "disabled-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "disabled-api-model".to_string(),
+                    api_base: "https://disabled.example.com/v1".to_string(),
+                    api_key: "key-disabled".to_string(),
+                    max_tokens: Some(2048),
+                    temperature: Some(0.7),
+                    enabled: false,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: None,
+                },
+            ],
+            agents: AgentsConfig {
+                default: ModelNames::Single("primary-model".to_string()),
+                global_fallback_model_name: Some("global-model".to_string()),
+                discord: Some(ModelNames::Chain(vec![
+                    "primary-model".to_string(),
+                    "fallback-model".to_string(),
+                ])),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_get_model_chain_returns_primary_and_fallback() {
+        let config = make_chain_test_config();
+        let chain = config.get_model_chain("discord");
+        // discord = [primary, fallback] + global_fallback → 3 entries
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[0].api_base_url, "https://primary.example.com/v1");
+        assert_eq!(chain[1].api_base_url, "https://fallback.example.com/v1");
+        assert_eq!(chain[2].api_base_url, "https://global.example.com/v1");
+    }
+
+    #[test]
+    fn test_get_model_chain_global_fallback_appended() {
+        let config = make_chain_test_config();
+        let chain = config.get_model_chain("default");
+        // default = "primary-model" + global_fallback = "global-model" → 2 entries
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].api_base_url, "https://primary.example.com/v1");
+        assert_eq!(chain[1].api_base_url, "https://global.example.com/v1");
+    }
+
+    #[test]
+    fn test_get_model_chain_global_fallback_dedup() {
+        let mut config = make_chain_test_config();
+        // discord chain に global-model を含める（重複）
+        config.agents.discord = Some(ModelNames::Chain(vec![
+            "primary-model".to_string(),
+            "global-model".to_string(),
+        ]));
+        let chain = config.get_model_chain("discord");
+        // global-model は重複除去 → 2 entries のみ
+        assert_eq!(chain.len(), 2);
+    }
+
+    #[test]
+    fn test_get_model_chain_disabled_model_excluded() {
+        let mut config = make_chain_test_config();
+        config.agents.discord = Some(ModelNames::Chain(vec![
+            "disabled-model".to_string(),
+            "fallback-model".to_string(),
+        ]));
+        let chain = config.get_model_chain("discord");
+        // disabled-model はスキップ → fallback-model + global → 2 entries
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].api_base_url, "https://fallback.example.com/v1");
+    }
+
+    #[test]
+    fn test_get_model_chain_unknown_purpose_uses_default() {
+        let config = make_chain_test_config();
+        let chain_unknown = config.get_model_chain("unknown-purpose");
+        let chain_default = config.get_model_chain("default");
+        assert_eq!(chain_unknown.len(), chain_default.len());
+        assert_eq!(chain_unknown[0].api_base_url, chain_default[0].api_base_url);
+    }
+
+    #[test]
+    fn test_get_model_chain_model_purpose_field() {
+        let config = make_chain_test_config();
+        let chain = config.get_model_chain("discord");
+        for entry in &chain {
+            assert_eq!(entry.model_purpose, "discord");
+        }
+    }
+
+    #[test]
+    fn test_get_model_backward_compat_with_chain() {
+        let config = make_chain_test_config();
+        let model = config.get_model("discord");
+        let chain = config.get_model_chain("discord");
+        assert_eq!(model.api_base_url, chain[0].api_base_url);
+        assert_eq!(model.model_purpose, "discord");
     }
 }

@@ -261,24 +261,26 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
     let enabled_names: HashSet<&str> = config.model_list.iter()
         .filter(|m| m.enabled).map(|m| m.model_name.as_str()).collect();
 
-    let check_agent_ref = |purpose: &str, name: &str, errors: &mut usize| {
-        if !all_names.contains(name) {
-            println!("[ERR]  agents.{:<8} → '{}': not found in model_list", purpose, name);
-            *errors += 1;
-        } else if !enabled_names.contains(name) {
-            println!("[ERR]  agents.{:<8} → '{}': model is disabled", purpose, name);
-            *errors += 1;
-        } else {
-            println!("[OK]   agents.{:<8} → '{}' (enabled)", purpose, name);
+    let check_agent_ref = |purpose: &str, model_names: &rustyclaw_config::ModelNames, errors: &mut usize| {
+        for name in model_names.as_chain() {
+            if !all_names.contains(name) {
+                println!("[ERR]  agents.{:<8} → '{}': not found in model_list", purpose, name);
+                *errors += 1;
+            } else if !enabled_names.contains(name) {
+                println!("[ERR]  agents.{:<8} → '{}': model is disabled", purpose, name);
+                *errors += 1;
+            } else {
+                println!("[OK]   agents.{:<8} → '{}' (enabled)", purpose, name);
+            }
         }
     };
 
-    check_agent_ref("default", &config.agents.default.model_name.clone(), &mut errors);
+    check_agent_ref("default", &config.agents.default, &mut errors);
     if let Some(ref s) = config.agents.summary {
-        check_agent_ref("summary", &s.model_name.clone(), &mut errors);
+        check_agent_ref("summary", s, &mut errors);
     }
     if let Some(ref m) = config.agents.memory {
-        check_agent_ref("memory", &m.model_name.clone(), &mut errors);
+        check_agent_ref("memory", m, &mut errors);
     }
 
     // ── 6. vault references ──────────────────────────────────────────
