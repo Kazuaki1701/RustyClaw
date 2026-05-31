@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現時点スナップショット)
-> **最終更新日**: 2026-05-30
+> **最終更新日**: 2026-05-31
 > **対象コード**: プロジェクト全体
 
 ---
@@ -70,7 +70,7 @@
 | Step 1: 活動レビュー | ✅ | ✅ | 正常稼働。ダイジェストに基づいて自己文脈を正しく認識 |
 | Step 2: Memory 整理 | ✅ | ✅ | |
 | Step 3: Calendar / Email チェック | ✅ | ✅ | gws_calendar_list_events / gws_gmail_list_messages |
-| Step 4: 天気チェック | ✅ | ❌ | 天気ツール未実装 |
+| Step 4: 天気チェック | ✅ | ✅ | `yolp_weather` ツール実装済み（Open-Meteo バックエンド、Phase 32） |
 | Step 5: 声掛け（Quiet Hours 考慮） | ✅ | ✅ | |
 | Step 6: プロアクティブ作業 | ✅ | ✅ | |
 | Step 7: HEARTBEAT_OK 応答 | ✅ | ✅ | |
@@ -96,15 +96,17 @@
 
 | 機能 | GeminiClaw | RustyClaw | 備考 |
 |---|---|---|---|
-| **Skills ファイルロード** | workspace/skills/*.md を読み込みプロンプト注入 | ❌ | skills/ ディレクトリ未作成。cron プロンプトにスキル名が素で渡るだけ |
-| daily-briefing skill | ✅ | ⚠️ | cron.json で発火するが skill 定義なし |
-| vitals-coach skill | ✅ | ⚠️ | 同上 |
-| topic-patrol skill | ✅ | ⚠️ | 同上 |
-| deep-research skill | ✅ | ❌ | |
-| coding-plan skill | ✅ | ❌ | |
-| agent-browser skill | ✅ | ❌ | |
-| github skill | ✅ | ❌ | |
-| todo-tracker skill | ✅ | ❌ | |
+| **Skills ファイルロード** | workspace/skills/*.md を読み込みプロンプト注入 | ✅ | `skills.rs` 実装済み。gateway L.530 で cron dispatch 前に注入 |
+| daily-briefing skill | ✅ | ✅ | `production/workspace/skills/daily-briefing.md` 作成済み（Phase 29） |
+| vitals-coach skill | ✅ | ✅ | `production/workspace/skills/vitals-coach.md` 作成済み（Phase 29） |
+| topic-patrol skill | ✅ | ✅ | `production/workspace/skills/topic-patrol.md` 作成済み（Phase 21） |
+| deep-research skill | ✅ | ✅ | `production/workspace/skills/deep-research.md` 作成済み（Phase 29） |
+| coding-plan skill | ✅ | ✅ | `production/workspace/skills/coding-plan.md` 作成済み（Phase 29） |
+| todo-tracker skill | ✅ | ✅ | `production/workspace/skills/todo-tracker.md` 作成済み（Phase 29） |
+| workspace skill | ✅ | ✅ | `production/workspace/skills/workspace.md` 作成済み（Phase 29） |
+| session-logs skill | ✅ | ✅ | `production/workspace/skills/session-logs.md` 作成済み。`session-stats.sh`・`session-search.sh` で分析クエリ対応（Phase 34） |
+| agent-browser skill | ✅ | ❌ | `npx agent-browser:*` 依存。対応ツールなし |
+| github skill | ✅ | ❌ | `run_shell_command` 依存 |
 
 ---
 
@@ -139,7 +141,7 @@
 | **Obsidian 書き込み・追記** | Obsidian MCP (SSE) | ✅ | obsidian_write_note として LLM に公開 |
 | **Obsidian Dataview クエリ** | Obsidian MCP (SSE) | ❌ | 未実装 |
 | **全文検索（Memory）** | qmd_query / qmd_get | ✅ | memory_search として LLM に公開 |
-| **天気** | 天気ツール | ❌ | 未実装 |
+| **天気** | 天気ツール | ✅ | `yolp_weather`（Open-Meteo 60分降水予報、Phase 32） |
 
 ---
 

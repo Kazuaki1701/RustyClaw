@@ -22,7 +22,8 @@ docs/
 │   ├── 07_mcp_plan.md         # [PLAN] rustyclaw-mcp 実装計画（Phase 7）
 │   ├── 08_operation_inspection.md  # 稼働点検ガイド（コマンド集・既知パターン）
 │   ├── 09_geminiclaw_comparison.md # GeminiClaw とのコードレベル比較・移植進捗仕様
-│   └── 10_weather_yolp_spec.md # YOLP気象情報APIリファレンス雨雲レーダー仕様
+│   ├── 10_weather_yolp_spec.md # YOLP気象情報APIリファレンス雨雲レーダー仕様
+│   └── 11_skills_spec.md      # Skills システム仕様・GeminiClaw 比較・移植記録
 │
 ├── archive/                   # 【参照のみ・編集不可】すでに完了した「過去の計画書・報告書」
 │   ├── implementation_plan.md # 過去の実装計画（Phase 2 & 4）

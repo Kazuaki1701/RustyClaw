@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
 > **最終更新日**: 2026-05-31  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 22, 28, 31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md` に保存
+> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 22, 28, 29, 32, 33, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
 > それ以外の独自機能・改善案件は一旦 🟢 に降格。GeminiClaw ギャップが解消され次第、改めて優先度を見直す。
@@ -14,28 +14,41 @@
 
 ---
 
-## Phase 29: Skills ファイルロードシステムの実装 🔴
-> GeminiClaw は `workspace/skills/*.md` をロードしてプロンプトに注入する。RustyClaw ではこの仕組みが未実装であり、`daily-briefing`・`vitals-coach`・`topic-patrol` が ⚠️ の主原因。
+## Phase 29: Skills ファイルロードシステムの実装 ✅ 完了
 
-- `[ ]` **1. Skills ロードエンジンの実装**
-  - `workspace/skills/` 配下の `*.md` を読み込み、ContextBuilder のシステムプロンプトに注入するロジックを実装。
-  - 対象: `crates/rustyclaw-agent/src/lib.rs`（`ContextBuilder` の `build` 相当関数）
+- `[x]` **1. Skills ロードエンジンの実装**
+  - `crates/rustyclaw-gateway/src/skills.rs` に `inject_skill_content()` 実装済み。gateway L.530 で cron dispatch 前に注入中。
 
-- `[ ]` **2. 基本 Skill 定義ファイルの作成**
-  - `daily-briefing.md`・`vitals-coach.md`・`topic-patrol.md` の Skill 定義を `production/workspace/skills/` に作成。
+- `[x]` **2. Skill 定義ファイルの作成**
+  - `daily-briefing`・`vitals-coach`・`deep-research`・`todo-tracker`・`coding-plan`・`workspace`・`session-logs`・`topic-patrol` を `production/workspace/skills/` に作成。
 
-- `[ ]` **3. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[x]` **3. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
+  - Skills セクション全行を更新。ロードエンジン・8スキルを ✅ に、session-logs を ⚠️ に変更。
 
 ---
 
-## Phase 32: 天気チェックツールの実装（Heartbeat Step 4） 🔴
-> `09_geminiclaw_feature_comparison.md` で ❌ 未実装。仕様書は `docs/specs/10_weather_yolp_spec.md` 済み。
+## Phase 32: 天気チェックツールの実装（Heartbeat Step 4） ✅ 完了
+> `YolpWeatherTool`（Open-Meteo バックエンド）として実装済み。gateway L.744 で LLM 登録済み。
 
-- `[ ]` **1. YOLP 雨雲レーダー API ツールの実装**
-  - `weather_get_rain_radar` ツールを `rustyclaw-tools` に実装・LLM 公開登録。
-  - 対象: `crates/rustyclaw-tools/src/lib.rs`、`crates/rustyclaw-gateway/src/lib.rs`（ツール登録）
+- `[x]` **1. YOLP 雨雲レーダー API ツールの実装** — `yolp_weather` として実装・登録済み
 
-- `[ ]` **2. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[x]` **2. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
+  - Heartbeat Step 4 および §8 天気行を ❌ → ✅ に更新。
+
+---
+
+## Phase 34: session-logs Skill 向け分析スクリプトの整備 ✅ 完了
+
+- `[x]` **1. `scripts/session-stats.sh` の作成**
+  - セッション一覧・メッセージ数。`--workspace`・`--date`・`--days` オプション対応。sqlite3 未インストール時もグレースフルに終了。
+
+- `[x]` **2. `scripts/session-search.sh` の作成**
+  - `<keyword>` で `sessions/*.jsonl` の content を grep。`--workspace`・`--date` オプション対応。マッチ行を role 付きで表示。
+
+- `[x]` **3. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
+  - session-logs skill を ⚠️ → ✅ に更新。
+
+- `[x]` **テスト**: `test-session-scripts.sh` で 13 テスト全パス（TDD RED→GREEN 確認済み）
 
 ---
 
@@ -53,19 +66,6 @@
 ---
 
 ## 🟢 その他の改善案件（独自機能・将来対応）
-
----
-
-## Phase 33: ローカルスクリプト実行ツール (run_workspace_script) の新規実装 🟢
-> LLMエージェントが `workspace/scripts/` 内のスクリプトを安全に実行し、LLMトークン消費量を節約するための機能。
-
-- `[x]` **1. run_workspace_script ツールの実装**
-  - セキュリティ保護（パス走査 `/`, `\`, `..` 等のブロッキング）と拡張子別自動ランナーを備えた実行エンジンを `rustyclaw-tools` に実装。
-- `[x]` **2. ドキュメント整備と指示の統合（アプローチ2の適用）**
-  - `workspace/scripts/README.md` を作成し、スクリプト一覧と仕様を網羅。
-  - `workspace/AGENTS.md` にスクリプト実行ガイドを追加し、README を参照するよう指示。
-- `[x]` **3. ユニットテストによる検証**
-  - パス走査防御とスキーマ検証のテストを記述し、すべて正常パスすることを確認。
 
 ---
 
