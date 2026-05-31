@@ -1,61 +1,94 @@
 ---
 name: vitals-coach
-description: Use when an AI agent needs to perform body condition analysis, health coaching, daily health reports, or personalized physical wellness advice.
+description: Use when a user requests their current physical status, fatigue levels, Garmin heart rate, stress levels, sleep analytics, body battery, or personalized wellness coaching.
 ---
 
 # Vitals Coach Skill
 
 ## Overview
-Analyzes retrieved vital metrics to generate personalized, empathetic, and actionable physical wellness coaching and lifestyle advice.
+Retrieves consumer-grade Garmin vital statistics via Home Assistant, enforces strict medical safety boundaries, validates data sync latency, and generates personalized, empathetic wellness coaching in Japanese.
 
 ---
 
 ## When to Use
 
 ### Triggering Symptoms / Scenarios:
-- The user requests feedback, tips, or coaching based on their parsed physical data.
-- Executing daily health summaries, vitality reports, or stress management advice.
-- The user asks: "How should I structure my day based on my current vitals?"
+- The user requests a health report, daily physical feedback, or sleep advice.
+- The user reports feeling exhausted, physically fatigued, or unwell and mentions Garmin metrics.
+- Daily scheduled vital patrols (e.g. `vitals-morning`, `vitals-night`) trigger (06:00 AM / 22:00 PM).
 
 ### When NOT to use:
-- You are retrieving raw data or validating device latency. (Use `get-vital-data-garmin` for retrieval and safety checks instead).
-- General fitness chat not tied to specific user metrics.
+- The user is experiencing an acute, severe medical emergency. (Prioritize emergency services immediately).
+- General fitness chat not tied to specific Garmin metrics.
 
 ---
 
-## Core Workflow
+## Prerequisites & Endpoints
 
-### **REQUIRED SUB-SKILL:**
-You **MUST** trigger the **`get-vital-data-garmin`** skill to safely retrieve raw metrics, calculate sync latency, and display critical medical safety warnings *before* formulating coaching feedback.
+To retrieve vital statistics, the following connection parameters must be resolved:
+*   **Authentication**: HA Bearer Token resolved from **RustyClaw's vault** (`~/.rustyclaw/vault.json` under key `homeassistant-token`).
+*   **Endpoint Address**: `http://192.168.1.30:8123/api/template` (Home Assistant local API).
 
-### Phase 1: Analysis (Level 2)
-Evaluate the safely retrieved core vital metrics against the following thresholds:
+---
 
-| Metric | Alert Threshold | Coaching Strategy |
+## The Core Safeguard Rules
+
+### 1. Mandatory Medical Warning & Action
+Garmin devices are consumer wearables, not clinical diagnostic tools. If the user reports feeling extremely unwell, you **MUST** prioritize the following warning *before* presenting any vital data:
+*   **Seek Clinical Care Immediately**: Advise the user to contact emergency services (e.g. 119 in Japan) or visit the nearest hospital emergency room.
+*   **Do Not Self-Diagnose**: Do not use consumer-grade metrics to make critical medical decisions.
+
+### 2. Synchronization Latency Verification (Critical)
+Always parse the `"Garmin Connect Last synced"` timestamp from the raw JSON payload.
+*   **Timezone Conversion**: The timestamp is in UTC (`+00:00`). You **MUST** convert it to JST (`+09:00`) before calculating the latency elapsed relative to current system time.
+*   **Rule**: If the last synced time is older than **30 minutes**, append a prominent warning:
+    > [!WARNING]
+    > **データ同期の遅延があります**: このデータは **[経過時間]前**（[ローカル表記での同期時刻]）のものです。急激な体格・体調の変化は反映されていないため、現在の体調の判断材料にしないでください。
+
+---
+
+## Workflow & Implementation
+
+### Step 1: Execution (Level 3)
+Invoke the Garmin retrieval script located inside this skill's localized path:
+*   **Tool**: `run_workspace_script`
+*   **Script Name**: `500_get-vital-data-garmin.sh`
+
+### Step 2: Filtration & Threshold Analysis (Level 2)
+Extract only the **Core Health Metrics** and evaluate them against these coaching thresholds:
+
+| Metric | Alert Threshold | Coaching Strategy (Japanese) |
 | :--- | :--- | :--- |
-| **Stress Level** | Average > 50 | Recommend breathing exercises, immediate screen breaks, or light walks. |
-| **Body Battery** | Current < 20 | Suggest reducing intensive tasks, prioritising rest, and going to bed early. |
-| **Steps Taken** | Under 10,000 | Propose light physical movement (e.g. stretching) or a brief walk. |
-| **Sleep Duration** | Under 6 hours | Inquire about sleep quality and propose nap strategies or bedtime hygiene. |
-| **HRV Status** | "Unbalanced" | Suggest high physical fatigue; advise focusing on passive recovery. |
+| **Body Battery** | Current < 20 | 激しい活動を控え、早めの就寝や休息を優先するよう提案。 |
+| **Stress Level** | Average > 50 | 深呼吸、スクリーンフリー時間、または軽い休憩を推奨。 |
+| **Steps Taken** | Under 10,000 | 軽いストレッチや散歩を提案（目標10,000歩）。 |
+| **Sleep Duration** | Under 6 hours | 睡眠不足を指摘し、短時間の昼寝や就寝環境の改善をアドバイス。 |
+| **HRV Status** | "Unbalanced" | 身体的疲労の蓄積を指摘し、完全なパッシブリカバリーを推奨。 |
 
-### Phase 2: Deliver (Level 2)
-Generate a supportive, encouraging, yet professional coaching response in Japanese.
-- Highlight achievements first (e.g. goal completion).
-- Match the coaching recommendations exactly to the parsed thresholds.
+### Step 3: Deliver (Concise & Empathetic Secretary Tone)
+Formulate a supportive, professional, yet warm secretary-style response in Japanese (K-sama's preference).
+*   Structure:
+    1.  Emergency medical warning (if feeling unwell).
+    2.  Data latency warning (if sync lag > 30 minutes).
+    3.  Summary table of the Core Health Metrics.
+    4.  Warm, actionable coaching advice.
 
 ---
 
 ## Common Mistakes & Antipatterns
 
-*   **Hardcoded Scripts**: Invoking raw Garmin scripts directly inside this skill. (Fix: Delegate all script execution and raw timezone parsing to `get-vital-data-garmin`).
-*   **Neglecting Safety**: Formulating health coaching without checking if the medical disclaimer or timezone lag warning was outputted. (Fix: Ensure `get-vital-data-garmin` output is processed first).
+*   **Raw Data Dumping**: Outputting 70+ lines of raw JSON, wasting context and tokens. (Fix: Filter strictly to the 5 core health metrics).
+*   **Assuming Real-time Status**: Ignoring the sync time and declaring hours-old vitals as "fine" during an acute illness. (Fix: Always calculate and declare JST sync latency).
+*   **Missing Vault Keys**: Running without verifying if `homeassistant-token` exists in `vault.json`. (Fix: Verify token presence first and fail gracefully).
+*   **Absolute Script Execution**: Running shell scripts directly. (Fix: Use `run_workspace_script` for secure localized execution).
 
 ---
 
 ## Red Flags - STOP and Check Context
 
-- You are executing `500_get-vital-data-garmin.sh` within this skill.
-- You did not prompt or reference the `get-vital-data-garmin` sub-skill for data retrieval.
+- You are executing `500_get-vital-data-garmin.sh` via a raw shell command or absolute path.
+- You presented vital stats without calculating the sync latency in JST.
+- K-sama feels ill, but you omitted the emergency clinical care warning.
+- Unnecessary fitness parameters (e.g. trekking distance, VO2 max) are bloating the output.
 
-**All of these mean: Stop. Apply the Vitals Coach Skill rules and delegate retrieval.**
+**All of these mean: Stop. Apply the Vitals Coach Skill rules immediately.**

@@ -98,7 +98,7 @@
 |---|---|---|---|
 | **Skills ファイルロード** | 標準仕様（YAML Frontmatter / `SKILL.md`）に完全準拠し、段階的開示（Discovery & Activation）をサポート。従来フラットファイルとの下位互換性も担保 | ✅ | `skills.rs` が `gray_matter` による YAML 解析と Discovery/Activation 注入に対応。スキル内 scripts 実行やトラバーサル防御もサポート（Phase 35） |
 | daily-briefing skill | ✅ | ✅ | `skills/daily-briefing/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
-| vitals-coach skill | ✅ | ✅ | `skills/vitals-coach/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
+| vitals-coach skill | ✅ | ✅ | `skills/vitals-coach/SKILL.md` の標準パッケージ構造に移行・統合完了。データ取得、タイムラグ検証、医療警告、閾値分析を一本化（Phase 35） |
 | topic-patrol skill | ✅ | ✅ | `skills/topic-patrol/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
 | deep-research skill | ✅ | ✅ | `skills/deep-research/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
 | coding-plan skill | ✅ | ✅ | `skills/coding-plan/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
