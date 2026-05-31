@@ -64,3 +64,10 @@ tempfile*
 # ローカル開発用設定ディレクトリ（$vault 参照・各種 ID を含むため追跡しない）
 /config/
 
+# crate ディレクトリ起点で実行/テストした際に生成される debug-dump 残骸（cruft）
+/crates/*/workspace/
+
+# 本番ランタイム生成物の追加分（デプロイログ・自発投稿バッファ）
+/production/logs/
+/production/workspace/memory/proactive-posts.md
+
