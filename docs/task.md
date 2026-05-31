@@ -3,24 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
 > **最終更新日**: 2026-05-31  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md` に保存
-
----
-
-## Phase 20: ログ点検で判明したバグ修正（2026-05-30）✅ 完了
-
-- `[x]` **【バグ修正】`obsidian_search` / `karakeep_list` の `limit` 型エラー**
-  - **完了日**: 2026-05-30
-
----
-
-## Phase 21: Topic Patrol — GeminiClaw からの完全移植 ✅ 完了 (2026-05-30)
-
-- `[x]` **1. `web_search` / `web_fetch` ツールの実装**
-- `[x]` **2. `workspace/skills/topic-patrol.md` の作成**
-- `[x]` **3. Skills ファイルロード機構の実装**
-- `[x]` **4. `patrol/findings.md` 14日プルーニングの確認・補完**
-- `[x]` **5. エンドツーエンド動作確認**
+> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md` に保存
 
 ---
 
@@ -38,38 +21,12 @@
   - `MemorySearchTool` と `ObsidianWriteTool` (Vaultへの新規書き込み・追記) を実装して `rustyclaw-tools` に追加・登録。
   - 対象: `crates/rustyclaw-tools/src/lib.rs` + `crates/rustyclaw-gateway/src/lib.rs` (登録)
 
-- `[x]` **4. 天気チェック（Heartbeat Step 4）** ✅ 完了 (2026-05-30)
-
 - `[ ]` **5. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
-
----
-
-## Phase 28: 統合型リアルタイム・ダッシュボード (HTML UI) の構築 ✅ 完了 (2026-05-31)
-> 目的: ヘッドレスで稼働する RPi4 上で、現在のキューの待機状況や、LLM の累積トークン利用・コスト統計を美麗な Web UI で可視化する（開発デバッグを促進するため優先度を格上げ）。
-> 対象: `crates/rustyclaw-gateway/` (`health.rs`), `crates/rustyclaw-storage/`
-> 実装計画: `docs/superpowers/plans/2026-05-30-phase28-dashboard.md`（サイバー CSS + Monitor/Stats 2タブ構成）
-
-- `[x]` **1. 統合ステータス JSON API の実装**
-  - `/api/concurrency`（`gmn_sem` 取得状態・キュー深度・クールダウン）追加。
-  - `/api/usage/summary` `/api/usage/timeline` `/api/usage/by-trigger`（SQLite `usage` 集計、`?since=` 期間フィルタ対応）追加。
-  - `LlmResponse` にトークンフィールド追加し、`usage` テーブルを拡張して LLM 呼び出し毎にトークン使用量を記録。
-
-- `[x]` **2. 美麗なダッシュボード HTML UI (GET /) の組み込み**
-  - サイバー CSS（スキャンライン・ネオングロー・グリッチヘッダー）+ Monitor/Stats 2タブ構成。
-  - Monitor: Lane Queue・Concurrency・CF Neurons・LLM Request/Response Inspector・App Log・Chat。
-  - Stats: KPI ゲージ・SVG 時系列チャート・モデル別/トリガー別ブレークダウン（`/api/usage/*` をライブ取得）。
-
-- `[ ]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
 ## Phase 28b: ダッシュボード精度・起動最適化のフォローアップ 🟡 優先度中
 > 出典: 2026-05-31 の Phase 28 実機検証（`gateway --no-agent` 起動ログ点検）で判明した改善候補。
-
-- `[x]` **1. memory flush の LLM 呼び出しをトークン計上対象に含める** ⚠️ ダッシュボード精度に直結 （→ **Phase 31 STEP 4** へ統合。プロバイダ層 dump 集約と同時に、memory/summary 等の未計上呼び出しも `record_usage` 対象化＝ ISSUE-20 と一体で解消）
-  - 1回の対話で、メインの `execute_with_tools` 応答に加えて memory flush（MEMORY.md 再生成）用の LLM 呼び出しが走るが、後者は `record_usage` を発火せず Stats が**実消費より過少計上**になる。
-  - flush 経路（`crates/rustyclaw-agent/src/lib.rs` の `flush_memory` 系）でも `LlmResponse` のトークンを取得し、`trigger_type` を `memory-flush` 等として `record_usage` する。
-  - 対象: `crates/rustyclaw-agent/src/lib.rs` + 記録呼び出し箇所（`crates/rustyclaw-gateway/src/lib.rs`）
 
 - `[ ]` **2. Gateway 起動時の設定ロード遅延（約11秒）の短縮検討** 🟢 優先度低
   - `Initializing daemon` から `loaded configuration` まで約11秒を要する（`--no-agent` でも発生）。プロバイダ生成・vault 初期化まわりのコスト要因を特定し、遅延要素の遅延初期化（lazy）等で起動高速化を検討。
@@ -103,11 +60,6 @@
 ---
 
 ## Phase 25: 並行制御の最適化とフリーズ防止（Lane Queue 改善） 🔴 優先度高
-
-- `[x]` **1. `gmn_sem` の並列化開放とファイルレベルロックの導入** （→ **Phase 31 保留 ISSUE-22** へ移行・統合。capacity の config 化＋「LLM 同時実行数」と「ワークスペース書き込み直列化」の責務分離として再整理。capacity 引き上げ検討時に着手）
-  - LLM API 呼び出しの並列実行を開放。
-  - `crates/rustyclaw-storage` にファイルアトミックロック機構を追加し、`MEMORY.md` やセッションログへの書き込み競合をファイルレベルの精密な排他制御で保護する。
-  - 対象: `crates/rustyclaw-gateway/src/lib.rs` ＋ `crates/rustyclaw-storage/src/lib.rs`
 
 - `[ ]` **2. 実行キュー取得の安全待機タイムアウトの実装**
   - `crates/rustyclaw-gateway/src/lib.rs` におけるセマフォ取得処理への `tokio::time::timeout` 導入。
@@ -172,67 +124,7 @@
 
 ---
 
-## Phase 31: ダッシュボード課題対応・LLM I/O インスペクタ刷新ほか（2026-05-31 洗い出し）🔴 優先度高
-> 出典: 2026-05-31 セッションでの Dashboard 各パネル点検・cron / LLM I/O 調査で洗い出した課題群（ISSUE-04〜25）。
-> 詳細仕様・難易度分類・依存・推奨実行順は `docs/rusty_claw_improvement_plan.md` §4〜§6 を参照。
-> 各 STEP は「まとめて実装・検証・反映できる実行単位」。推奨着手順は STEP 6 → 1 → 2 → 5 → 3 → 4 → 7 → 8。
-
-- `[x]` **STEP 1: Dashboard 即効表示改善（T1・フロントのみ・quick win）** — ISSUE-19 / 24 / 17
-  - LLM REQUEST の**末尾保持表示**（先頭4000字 truncate で会話部が見えない問題, 19）、ヘッダを `:8080`→**`IP:PORT`** 表記（`window.location.host`, 24）、LANE QUEUE のアイドル文言を「待機中（正常）」等に明示（17）。
-  - 対象: `crates/rustyclaw-gateway/src/health.rs`（フロント JS のみ）
-
-- `[x]` **STEP 2: トークン使用量グラフ実用化（T2）** — ISSUE-23
-  - DAILY TOKEN USAGE を**時間別**化。期間セレクタ `7D/30D/ALL`→**`1D/7D/ALL`**、粒度 1D=10分/7D・ALL=1時間。epoch フロアでバケット化＋ローカルTZ整形＋**空きバケット 0 埋め**（単一点で描画崩れする問題の根治）。
-  - 対象: `rustyclaw-storage`（`get_usage_timeline` granularity 対応）＋ `health.rs`（API `granularity` ＋ `renderTimeline`）
-
-- `[x]` **STEP 3: LANE QUEUE スケジュール可視化（T2）** — ISSUE-18 / 17
-  - `cron.json` から**次回実行時刻を算出**し `SCHED` ピル＋カウントダウンで表示。`Waiting` を permit 取得前に enqueue して可視化（現状ほぼ出現しない）。
-  - 対象: `gateway`（次回実行算出 / enqueue）＋ API（`/api/schedule` or `/api/queue` 統合）＋ フロント
-
-- `[x]` **STEP 4: LLM I/O インスペクタ刷新（T3・最大単位）** — ISSUE-20 → 21（19適用, 旧 Phase 28b-1 統合）
-  - dump を**プロバイダ層へ集約**し、全 LLM 呼び出し（memory/summary 含む）の req/res を**ペア捕捉**（リングバッファ）。同時に memory-flush 等の未計上トークンも `record_usage` 対象化（過少計上の解消＝旧 Phase 28b-1）。
-  - REQUEST/RESPONSE を**単一ペイン＋用途別タブ**化（tools / discord / dashboard / briefing / vitals / karakeep / patrol / heartbeat / summary / daily / memory）。
-  - 対象: `providers`（dump集約）＋ `agent`（category付与）＋ `config`（`CompletionOptions`）＋ `health.rs`（API/UI）
-
-- `[x]` **STEP 5: エージェント自己認識・事実確認の是正（T4）** — ISSUE-04 / 05
-  - 自己状態（cron 予定等）の質問に**ツールで事実確認**して答える（現状は記憶ベースで cron 一覧を誤答）。capability の過小申告・誤認識（「LLM だから shell 不可」、保有ツール非言及）を `SOUL.md`/プロンプトで是正。
-  - 対象: `SOUL.md` / プロンプト（STEP 3 の schedule をツール化すれば ISSUE-04 を確実化）
-
-- `[x]` **STEP 6: cron 信頼性回復（T3・要方針決定・実害最大）** — ISSUE-06 / 07
-  - `karakeep-cleanup`/`recommendation` cron が**存在しない `bash scripts/501,502` を前提に無言失敗**中。A) 既存 `karakeep_tag_bookmark` 等の API ツールで prompt 書換（軽・推奨）／ B) 制約付き shell 実行ツール新設（重・要セキュリティ）。
-  - 対象: `cron.json`（prompt 書換）もしくは `rustyclaw-tools`（shell ツール）
-
-- `[x]` **STEP 7: 設定・運用衛生（T5・個別着手可）** — ISSUE-08 / 11 / 12 / 15 / 16 ✅ 完了 (2026-05-31, merge `a18d639`)
-  - LM Studio context 長の運用手順化/自動整合(08, `scripts/check-lmstudio-context.sh`)、config `debug/release` の同期チェック(11, `scripts/check-config-sync.sh`)、`config.json` symlink の untrack 化(12, `9113834`)、rp1 への `sqlite3` 導入手順化(15, README §4)、LM Studio 埋め込みモデル preload 手順化(16, README §4)。
-
-- `[x]` **STEP 8: 信頼性・安定性（既存 ISSUE 再整理）（T6）** — ISSUE-01 ✅ / 03 ✅ / 02 ⚠️一部 (2026-05-31)
-  - ISSUE-01（数値パラメータ文字列化）: **✅ 解消済み**（tools は `"type":"string"`＋`parse()`、`cargo test -p rustyclaw-tools` 44件 PASS）。
-  - ISSUE-03（daemon 初期化非同期化）: **✅ 完了**（GWS カレンダー解決を `tokio::spawn` で並列化, `8a1fe01`）。
-  - ISSUE-02（トークン予算/413）: **⚠️ 一部のみ**。overhead 考慮の圧縮（`compact_if_needed_with_overhead`）は `execute_with_tools` 経路のみ適用。→ 下記「再点検 FU-3」参照。
-  - 詳細は `docs/rusty_claw_improvement_plan.md` §1〜§3。
-
-### Phase 31 — 再点検で判明した不足・不完全項目（2026-05-31 実装点検）
-> `docs/rusty_claw_improvement_plan.md` の各 ISSUE を実コードと照合した結果、production 側は修正済みだが
-> dev workspace 未同期・あるいは修正が一部経路に限定されている項目を検出。
-
-- `[x]` **FU-1: dev `workspace/cron.json` の karakeep ジョブ修正（STEP 6 / ISSUE-06 の dev 取りこぼし）** ✅ 完了 (2026-05-31)
-  - dev `workspace/cron.json` の `karakeep-recommendation`/`karakeep-cleanup` prompt を `bash scripts/501,502` 参照から `karakeep_list_bookmarks`/`karakeep_tag_bookmark`/`karakeep_delete_bookmark` ツール化（production と同等）へ同期。JSON 妥当性確認済。
-  - 対象: `workspace/cron.json`
-
-- `[x]` **FU-2: dev `workspace/` の SOUL.md / AGENTS.md 同期（STEP 5 / ISSUE-04・05 の dev 取りこぼし）** ✅ 完了 (2026-05-31)
-  - `workspace/SOUL.md` に「Capabilities & Fact-Checking」節（17+ native tools・`get_cron_schedule` 強制）を追記。`workspace/AGENTS.md` の「Karakeep Operation Scripts」(bash 501/502) を「Native Tools & Schedule Fact-Checking」（native ツール＋`get_cron_schedule`）へ差し替え。dev 既存スタイルは維持し、対象節のみ最小差分で同期。
-  - 対象: `workspace/SOUL.md`, `workspace/AGENTS.md`
-  - 備考: AGENTS.md は dev/production が広範に分岐（dev に固有の詳細節あり）。FU-2 スコープ外の差分は意図的相違の可能性があるため未変更。
-
-- `[x]` **FU-3: overhead 考慮の履歴圧縮を全経路へ拡張（STEP 8 / ISSUE-02 の残リスク）** ✅ 完了 (2026-05-31)
-  - `execute()`（`agent/src/lib.rs:515`）と `execute_stream()`（同:920）の `compact_if_needed` を `compact_if_needed_with_overhead`（system プロンプト分を `chars*3/2` で見積り加算）へ置換。これで全 LLM 経路が system オーバーヘッドを考慮し 413 残リスクを解消（`execute_stream` は現状 dead path だが将来配線時のため同時対応）。
-  - 対象: `crates/rustyclaw-agent/src/lib.rs`
-
-- `[x]` **FU-4: memory-flush / session-summary のトークン計上（STEP 4 / 旧 Phase 28b-1 の未達分）** ✅ 完了 (2026-05-31)
-  - 共通ヘルパ `Pipeline::record_aux_usage(db, session_id, response, trigger)` を追加し、`flush_memory`（`trigger=memory-flush`、既存 db を流用）と `generate_session_summary`（`trigger=session-summary`、fail-open で db を開く）の LLM 応答トークンを `usage` テーブルへ計上。Stats の過少計上を解消（旧 Phase 28b-1 の約束を達成）。
-  - 対象: `crates/rustyclaw-agent/src/lib.rs`
-
-### Phase 31 — 保留（前提条件の解決後に着手）
+## Phase 31 — 保留（前提条件の解決後に着手）
 - `[ ]` **ISSUE-22: `gmn_sem` capacity の config 化＋書き込み直列化の責務分離**（capacity 引き上げ検討時。**旧 Phase 25-1 を統合**。メモリ `project_user_sem_concurrency` 参照）
 - `[ ]` **ISSUE-25: `●ACTIVE` → daemon STOP 制御**（無認証 LAN への破壊操作の露出・START 非対称性のセキュリティ前提を解決後）
 - `[ ]` **ISSUE-09: rp1 の LM Studio 依存（単一障害点）のフェイルオーバ設計**
@@ -243,9 +135,6 @@
 ## 次期大型対応検討案件 🟡 優先度中
 
 > 現時点では保留。前提条件の整理・設計検討が必要な案件。
-
-- `[x]` **`gmn_sem > 1` の並列化復活** (✅ 完了: Phase 25 のファイルレベルロック導入タスクに統合・マージ)
-- `[x]` **Heartbeat 実行中のユーザー対話ブロック対策** (✅ 完了: Phase 25 の並列実行開放タスクに統合・マージ)
 
 ---
 
@@ -265,7 +154,7 @@
   - OpenRouter 新モデル: `qwen3-coder:free`（1M ctx）・`qwen3-next-80b:free` ...等
 
 - `[ ]` **本番環境の自動バックアップ体制**
-  - `production/workspace/`（`memory.db`・`sessions/*.jsonl`• `patrol/findings.md` 等）を QNAP 等の NAS へ定時 rsync
+  - `production/workspace/`（`memory.db`• `sessions/*.jsonl`• `patrol/findings.md` 等）を QNAP 等の NAS へ定時 rsync
 
 - `[ ]` **MEMORY.md および知識構造のスリム化自動トリガー**
   - 稼働蓄積で肥大化するナレッジファイルの自動クリーンアップ検討
