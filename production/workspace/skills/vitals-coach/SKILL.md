@@ -57,7 +57,7 @@ Invoke the Garmin retrieval script located inside this skill's localized path, p
     *   `env`:
         *   `HOMEASSISTANT_TOKEN`: `$vault:homeassistant-token`
 
-The script returns **only the 7 core fields** (Body battery, Average stress level, Steps, Daily step goal, Sleep duration, HRV status, Last synced). Do not attempt to parse other fields — they are not returned.
+The script returns **only the 13 core fields** listed in the table above. Do not attempt to parse other fields — they are not returned.
 
 ### Step 2: Filtration & Threshold Analysis (Level 2)
 Extract only the **Core Health Metrics** and evaluate them against these coaching thresholds:
@@ -65,9 +65,16 @@ Extract only the **Core Health Metrics** and evaluate them against these coachin
 | Metric (HA sensor name) | Alert Threshold | Coaching Strategy (Japanese) |
 | :--- | :--- | :--- |
 | **`Garmin Connect Body battery`** | Current < 20 | 激しい活動を控え、早めの就寝や休息を優先するよう提案。 |
+| **`Garmin Connect Body battery highest`** | < 40 | 1日の最高値が低い場合、慢性的な疲労蓄積として言及。 |
 | **`Garmin Connect Average stress level`** | Average > 50 | 深呼吸、スクリーンフリー時間、または軽い休憩を推奨。 |
-| **`Garmin Connect Steps`** | Under 10,000 (参照: `Garmin Connect Daily step goal`) | 軽いストレッチや散歩を提案。 |
+| **`Garmin Connect High stress duration`** | > 90 min | 長時間の高ストレス状態を具体的に指摘し、こまめな休憩を促す。 |
+| **`Garmin Connect Resting heart rate`** | > 70 bpm | 安静時心拍の上昇は疲労・体調不良のサイン。無理な活動を避けるよう提案。 |
+| **`Garmin Connect Steps`** | Under `Daily step goal` | 軽いストレッチや散歩を提案。 |
+| **`Garmin Connect Sedentary time`** | > 600 min (10 hours) | 長時間の座りっぱなしを指摘し、1時間ごとに立ち上がることを提案。 |
 | **`Garmin Connect Sleep duration`** | Under 360 min (6 hours) | 睡眠不足を指摘し、短時間の昼寝や就寝環境の改善をアドバイス。 |
+| **`Garmin Connect Deep sleep`** | Under 60 min | 深睡眠の不足は身体回復の低下を意味する。早めの就寝・寝室環境の見直しを提案。 |
+| **`Garmin Connect REM sleep`** | Under 90 min | REM 不足は精神的疲労に直結。ストレス軽減・就寝前のリラックスを推奨。 |
+| **`Garmin Connect Wake time`** | 参照のみ | 起床時刻の把握（JST 変換して表示）。睡眠時間の計算に使用。 |
 
 ### Step 3: Deliver (Concise & Empathetic Secretary Tone)
 Formulate a supportive, professional, yet warm secretary-style response in Japanese (K-sama's preference).

@@ -11,9 +11,16 @@ curl -s -X POST -H "Authorization: Bearer $HOMEASSISTANT_TOKEN" \
      -d '{"template": "{% set garmin = states.sensor | selectattr(\"entity_id\", \"search\", \"^sensor.garmin_\") %}\n{\n{% for s in garmin %}\n  \"{{ s.name }}\": \"{{ s.state }}{{ \" \" ~ s.attributes.unit_of_measurement if s.attributes.unit_of_measurement and s.state != \"unknown\" else \"\" }}\"{{ \",\" if not loop.last }}\n{% endfor %}\n}"}' \
      http://192.168.1.30:8123/api/template | jq '{
   "Garmin Connect Body battery":          .["Garmin Connect Body battery"],
+  "Garmin Connect Body battery highest":  .["Garmin Connect Body battery highest"],
   "Garmin Connect Average stress level":  .["Garmin Connect Average stress level"],
+  "Garmin Connect High stress duration":  .["Garmin Connect High stress duration"],
+  "Garmin Connect Resting heart rate":    .["Garmin Connect Resting heart rate"],
   "Garmin Connect Steps":                 .["Garmin Connect Steps"],
   "Garmin Connect Daily step goal":       .["Garmin Connect Daily step goal"],
+  "Garmin Connect Sedentary time":        .["Garmin Connect Sedentary time"],
   "Garmin Connect Sleep duration":        .["Garmin Connect Sleep duration"],
+  "Garmin Connect Deep sleep":            .["Garmin Connect Deep sleep"],
+  "Garmin Connect REM sleep":             .["Garmin Connect REM sleep"],
+  "Garmin Connect Wake time":             .["Garmin Connect Wake time"],
   "Garmin Connect Last synced":           .["Garmin Connect Last synced"]
 }'
