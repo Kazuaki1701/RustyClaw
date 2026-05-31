@@ -366,6 +366,52 @@ pub fn next_run_epoch(
     }
 }
 
+/// cron.json の全有効ジョブについて次回実行時刻を計算し JSON 配列で返す。
+/// 返却: [{ "id", "name", "next_run_epoch", "trigger_type" }] を next_run 昇順。
+pub fn compute_schedule(
+    workspace_dir: &std::path::Path,
+    db: &rustyclaw_storage::DbManager,
+) -> Vec<serde_json::Value> {
+    let cron_json_path = workspace_dir.join("cron.json");
+    let content = match std::fs::read_to_string(&cron_json_path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let jobs: Vec<Job> = match serde_json::from_str(&content) {
+        Ok(j) => j,
+        Err(_) => return vec![],
+    };
+    let now = chrono::Local::now();
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for job in jobs.iter().filter(|j| j.enabled) {
+        let last_run = if job.trigger.trigger_type == "interval" {
+            let state_key = format!("cron_last_run:{}", job.id);
+            db.get_last_patrol_run(&state_key)
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<i64>().ok())
+        } else {
+            None
+        };
+        if let Some(next) = next_run_epoch(
+            &job.trigger.trigger_type,
+            job.trigger.expression.as_deref(),
+            job.trigger.minutes,
+            now,
+            last_run,
+        ) {
+            out.push(serde_json::json!({
+                "id": job.id,
+                "name": job.name,
+                "next_run_epoch": next,
+                "trigger_type": job.trigger.trigger_type,
+            }));
+        }
+    }
+    out.sort_by_key(|v| v["next_run_epoch"].as_i64().unwrap_or(i64::MAX));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

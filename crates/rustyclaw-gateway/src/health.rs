@@ -196,6 +196,14 @@ impl HealthServer {
                                     let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string());
                                     ("200 OK".to_string(), json, "application/json; charset=utf-8")
 
+                                } else if request.starts_with("GET /api/schedule") {
+                                    let db_path = workspace_path_clone.join("memory.db");
+                                    let rows = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                        crate::cron::compute_schedule(&workspace_path_clone, &db)
+                                    } else { vec![] };
+                                    let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string());
+                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
+
                                 // ── ダッシュボード & チャット ────────────────────
                                 } else if request.starts_with("GET /dashboard")
                                     || request.starts_with("GET / ")
