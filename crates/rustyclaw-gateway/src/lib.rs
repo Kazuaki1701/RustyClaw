@@ -723,27 +723,38 @@ impl Gateway {
                 tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
 
                 if !gws.writable_calendar_ids.is_empty() {
-                    let mut writable_calendars: Vec<(String, String, String)> = Vec::new();
-                    for cal_id in &gws.writable_calendar_ids {
-                        let params = serde_json::json!({ "calendarId": cal_id }).to_string();
-                        match tokio::process::Command::new(&gws_path)
-                            .args(["calendar", "calendarList", "get", "--params", &params, "--format", "json"])
-                            .output()
-                            .await
-                        {
-                            Ok(out) if out.status.success() => {
-                                let body = String::from_utf8_lossy(&out.stdout);
-                                if let Ok(d) = serde_json::from_str::<serde_json::Value>(&body) {
-                                    let name = d["summary"].as_str().unwrap_or(cal_id).to_string();
-                                    let desc = d["description"].as_str().unwrap_or("").to_string();
-                                    tracing::info!("Calendar resolved: '{}' ({})", name, cal_id);
-                                    writable_calendars.push((cal_id.clone(), name, desc));
+                    // ISSUE-03: カレンダー解決を並列化して起動ブロッキングを短縮する
+                    let mut handles = Vec::new();
+                    for cal_id in gws.writable_calendar_ids.clone() {
+                        let gws_path = gws_path.clone();
+                        handles.push(tokio::spawn(async move {
+                            let params = serde_json::json!({ "calendarId": &cal_id }).to_string();
+                            match tokio::process::Command::new(&gws_path)
+                                .args(["calendar", "calendarList", "get", "--params", &params, "--format", "json"])
+                                .output()
+                                .await
+                            {
+                                Ok(out) if out.status.success() => {
+                                    let body = String::from_utf8_lossy(&out.stdout);
+                                    if let Ok(d) = serde_json::from_str::<serde_json::Value>(&body) {
+                                        let name = d["summary"].as_str().unwrap_or(&cal_id).to_string();
+                                        let desc = d["description"].as_str().unwrap_or("").to_string();
+                                        tracing::info!("Calendar resolved: '{}' ({})", name, cal_id);
+                                        return (cal_id.clone(), name, desc);
+                                    }
+                                    (cal_id.clone(), cal_id.clone(), String::new())
+                                }
+                                _ => {
+                                    tracing::warn!("Failed to fetch calendar info for {}. Using ID as name.", cal_id);
+                                    (cal_id.clone(), cal_id.clone(), String::new())
                                 }
                             }
-                            _ => {
-                                tracing::warn!("Failed to fetch calendar info for {}. Using ID as name.", cal_id);
-                                writable_calendars.push((cal_id.clone(), cal_id.clone(), String::new()));
-                            }
+                        }));
+                    }
+                    let mut writable_calendars: Vec<(String, String, String)> = Vec::new();
+                    for h in handles {
+                        if let Ok(tuple) = h.await {
+                            writable_calendars.push(tuple);
                         }
                     }
                     if !writable_calendars.is_empty() {
