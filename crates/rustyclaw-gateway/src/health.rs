@@ -120,19 +120,23 @@ impl HealthServer {
                                 } else if request.starts_with("GET /api/llm/io") {
                                     let cat_opt = extract_query_str(&request, "cat");
                                     let debug_llm_dir = workspace_path_clone.join("memory").join("debug").join("llm");
+                                    let categories = [
+                                        "tools", "discord", "dashboard", "briefing",
+                                        "vitals", "karakeep", "patrol", "heartbeat",
+                                        "summary", "daily", "memory"
+                                    ];
                                     
                                     if let Some(cat) = cat_opt {
-                                        let path = debug_llm_dir.join(format!("{}.json", cat));
-                                        let json = std::fs::read_to_string(&path).unwrap_or_else(|_| "null".to_string());
-                                        ("200 OK".to_string(), json, "application/json; charset=utf-8")
+                                        if categories.contains(&cat.as_str()) {
+                                            let path = debug_llm_dir.join(format!("{}.json", cat));
+                                            let json = std::fs::read_to_string(&path).unwrap_or_else(|_| "null".to_string());
+                                            ("200 OK".to_string(), json, "application/json; charset=utf-8")
+                                        } else {
+                                            ("400 BAD REQUEST".to_string(), "Invalid category".to_string(), "text/plain")
+                                        }
                                     } else {
-                                        let categories = vec![
-                                            "tools", "discord", "dashboard", "briefing",
-                                            "vitals", "karakeep", "patrol", "heartbeat",
-                                            "summary", "daily", "memory"
-                                        ];
                                         let mut map = serde_json::Map::new();
-                                        for c in categories {
+                                        for c in &categories {
                                             let path = debug_llm_dir.join(format!("{}.json", c));
                                             if let Ok(content) = std::fs::read_to_string(&path) {
                                                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -846,7 +850,7 @@ async function sendMessage(){
   catch{removeLoading(lid);addBubble('通信エラー','ai')}
   finally{inp.disabled=false;document.getElementById('sendBtn').disabled=false;inp.focus()}
 }
-function addBubble(text,role){const d=document.createElement('div');d.className='bubble '+role;d.innerHTML=text.replace(/\n/g,'<br>');const m=document.getElementById('chatMessages');m.appendChild(d);m.scrollTop=m.scrollHeight}
+function addBubble(text,role){const d=document.createElement('div');d.className='bubble '+role;d.textContent=text;d.style.whiteSpace='pre-wrap';const m=document.getElementById('chatMessages');m.appendChild(d);m.scrollTop=m.scrollHeight}
 function addLoading(){const id='ld-'+Date.now();const el=document.createElement('div');el.className='loading-dots';el.id=id;el.innerHTML='<span class="dot"></span><span class="dot"></span><span class="dot"></span>';const m=document.getElementById('chatMessages');m.appendChild(el);m.scrollTop=m.scrollHeight;return id}
 function removeLoading(id){const el=document.getElementById(id);if(el)el.remove()}
 let currentPeriod='1d';
