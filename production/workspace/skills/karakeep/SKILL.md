@@ -23,6 +23,15 @@ Manages bookmarks inside the self-hosted KaraKeep server, executing periodic cle
 
 ---
 
+## Prerequisites & Endpoints
+
+To interact with KaraKeep, the following connection parameters must be resolved:
+*   **Default Server Address**: `http://192.168.1.2:33000` (Expected in environment variable `$KARAKEEP_SERVER_ADDR`)
+*   **Authentication**: Bearer Token expected in environment variable `$KARAKEEP_API_KEY`
+*   **Bookmarks Fetch Endpoint**: `$KARAKEEP_SERVER_ADDR/api/v1/bookmarks`
+
+---
+
 ## The Core Safeguard Rules
 
 ### 1. Safety Guardrails for Auto-Cleanup
@@ -33,6 +42,7 @@ Before running the cleanup, you **MUST** ensure the deletion target selection cr
 
 ### 2. Precise Interest Matching (Daily Recommendation)
 *   **Source**: Load K's interests from `/workspace/USER.md` under the `## Interests` header.
+*   **Retrieval Scope**: Fetch bookmarks from the Endpoint and filter for items created within the **last 3 days (72 hours)** by comparing `bookmarks[].createdAt` to the current system time.
 *   **Rule**: Perform case-insensitive matching on bookmark titles and descriptions. If a bookmark mentions any extracted interest keyword (e.g., "AI", "Cloudflare", "Obsidian"), mark it as a MATCH.
 *   **Action**: Apply the tag `_recommended` strictly to the matched IDs.
 
@@ -67,6 +77,7 @@ Append all execution summaries to `production/workspace/memory/logs/YYYY-MM-DD.m
 
 ## Common Mistakes & Antipatterns
 
+*   **Missing Server Variables**: Attempting to run scripts or API requests without verifying if `$KARAKEEP_SERVER_ADDR` or `$KARAKEEP_API_KEY` are populated. (Fix: Pre-check environment variables and fail gracefully if missing).
 *   **Absolute Path Execution**: Running `bash production/workspace/scripts/501_karakeep-cleanup.sh` directly. (Fix: Invoke through `run_workspace_script` with localized script names).
 *   **Accidental Purging**: Deleting non-RSS items or favorited bookmarks. (Fix: Verify script logic filters strictly on source="rss" and favourited=false).
 *   **Unstructured Logs**: Dumping unstructured text or raw JSON into the daily log file. (Fix: Always use the standardized Markdown Table format).
@@ -76,6 +87,7 @@ Append all execution summaries to `production/workspace/memory/logs/YYYY-MM-DD.m
 ## Red Flags - STOP and Check Context
 
 - You did not check `USER.md` before compiling recommended bookmarks.
+- You did not verify the `createdAt` timestamp is within the 72-hour retrieval window.
 - You executed a shell script without using the secure `run_workspace_script` gateway tool.
 - You logged raw API payloads or unstructured console output to `memory/logs/`.
 
