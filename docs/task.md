@@ -118,7 +118,7 @@
 | C: Gmail | ↑ 同上 | ↑ 同上 |
 | D: Obsidian | `specs/2026-05-31-obsidian-skill-design.md` | `plans/2026-05-31-obsidian-skill-migration.md` |
 
-- `[ ]` **1. 天気予報のスキル化（Phase A）**
+- `[x]` **1. 天気予報のスキル化（Phase A）**
   - `skills/weather/` スキルフォルダを新設。
   - `504_get-weather.sh`（大森・厚木2地点、気温・風速・今日最高/最低・60分降水量）。
   - `YolpWeatherTool` 構造体およびテストの削除。
