@@ -105,6 +105,7 @@
 | todo-tracker skill | ✅ | ✅ | `skills/todo-tracker/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
 | workspace skill | ✅ | ✅ | `skills/workspace/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
 | session-logs skill | ✅ | ✅ | `skills/session-logs/SKILL.md` の標準パッケージ構造に移行完了。`session-stats.sh`・`session-search.sh` で分析クエリ対応（Phase 35） |
+| karakeep skill | ✅ | ✅ | `skills/karakeep/SKILL.md` の標準パッケージ構造をTDDで新規作成。`501_karakeep-cleanup.sh`・`502_karakeep-tag-items.sh` による削除・推薦に対応（Phase 35） |
 | agent-browser skill | ✅ | ❌ | `npx agent-browser:*` 依存。対応ツールなし |
 | github skill | ✅ | ❌ | `run_shell_command` 依存 |
 

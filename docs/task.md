@@ -95,6 +95,11 @@
   - `vitals-coach` の責務を分析・コーチングに絞り、データ取得は `get-vital-data-garmin` に委託する関心分離（Separation of Concerns）を完了。
   - 既存テストスイートのコンパイルエラー（legacy struct reference 関連）を修正し、プロジェクト全118テストがオールグリーンであることを検証・コミット。
 
+- `[x]` **11. TDDによる `karakeep` スキルの新規作成と `cron.json` の更新** (writing-skills)
+  - `501_karakeep-cleanup.sh` および `502_karakeep-tag-items.sh` をスキルローカルディレクトリ `skills/karakeep/scripts/` にセキュアに同封（Level 3）。
+  - `USER.md` からの正確な関心事マッチング判定と、`memory/logs/` への標準テーブル形式ログの自動生成ルールを `karakeep/SKILL.md` として TDD 構築・検証。
+  - `cron.json` 内のクローンジョブプロンプトを更新し、新しい `karakeep` スキルの dynamic Activation を明示的にトリガーするよう設定。
+
 ---
 
 ## Phase 24: LLM 接続プロバイダ層の耐障害性（レジリエンス）強化 🔴
