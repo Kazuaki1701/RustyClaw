@@ -1367,6 +1367,13 @@ impl Tool for WorkspaceExecuteScriptTool {
                         "type": "string"
                     },
                     "description": "Optional list of arguments to pass to the script."
+                },
+                "env": {
+                    "type": "object",
+                    "description": "Optional environment variables to inject into the script process. Supports '$vault:key_name' value syntax to dynamically resolve values from vault.enc / vault.json.",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 }
             },
             "required": ["script_name"]
@@ -1452,6 +1459,65 @@ impl Tool for WorkspaceExecuteScriptTool {
 
         // 引数を追加
         cmd.args(cmd_args);
+
+        // 環境変数の追加と Vault 解決
+        if let Some(env_obj) = args["env"].as_object() {
+            for (key, val) in env_obj {
+                if let Some(val_str) = val.as_str() {
+                    let resolved_value = if let Some(vault_key) = val_str.strip_prefix("$vault:") {
+                        // 1. Vault (vault.enc) からの解決を試みる
+                        let mut val_opt = match rustyclaw_config::vault::load_vault(None) {
+                            Ok(secrets) => secrets.get(vault_key).cloned(),
+                            Err(_) => None,
+                        };
+                        
+                        // 2. なければ平文の vault.json からの解決を試みる (フォールバック)
+                        if val_opt.is_none() {
+                            let json_path = rustyclaw_config::get_config_dir().join("vault.json");
+                            if let Ok(file) = std::fs::File::open(json_path) {
+                                let reader = std::io::BufReader::new(file);
+                                if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(reader) {
+                                    if let Some(v) = json.get(vault_key).and_then(|v| v.as_str()) {
+                                        val_opt = Some(v.to_string());
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3. なければ UNIX環境変数からのインテリジェント・フォールバックを試みる
+                        let env_var_name = vault_key.replace("-", "_").to_uppercase();
+                        if val_opt.is_none() {
+                            if let Ok(env_val) = std::env::var(&env_var_name) {
+                                val_opt = Some(env_val);
+                            }
+                        }
+
+                        // 4. どちらも解決できない場合は、方式A（安全にエラーを返して即時中断）
+                        match val_opt {
+                            Some(val) => val,
+                            None => {
+                                return ToolResult {
+                                    content: format!(
+                                        "Error: Failed to resolve vault reference '$vault:{}'. \n\
+                                         Key '{}' was not found in ~/.rustyclaw/vault.enc (passphrase not configured?), \n\
+                                         nor in fallback vault.json, nor is the environment variable '{}' set. \n\
+                                         To configure this key in the vault, run: `rustyclaw vault set {} <value>`", 
+                                        vault_key, vault_key, env_var_name, vault_key
+                                    ),
+                                    is_error: true,
+                                };
+                            }
+                        }
+                    } else {
+                        // $vault: プレフィックスがない場合は普通の文字列値として採用
+                        val_str.to_string()
+                    };
+
+                    cmd.env(key, resolved_value);
+                }
+            }
+        }
+
         cmd.current_dir(&scripts_dir);
 
         // 実行
@@ -2108,6 +2174,74 @@ mod tests {
 
         assert!(!res.is_error, "Tool reported error: {}", res.content);
         assert!(res.content.contains("hello vitals"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_execute_script_vault_injection_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
+        
+        let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
+        std::fs::create_dir_all(&localized_script_dir).unwrap();
+        
+        let script_path = localized_script_dir.join("test-env.sh");
+        std::fs::write(&script_path, "#!/bin/bash\necho \"VAL is $TEST_VAL\"").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).unwrap();
+        }
+
+        // 環境変数フォールバックが働くように親プロセスにセット
+        unsafe { std::env::set_var("TEST_KEY", "resolved-secret-from-env"); }
+
+        let res = tool.execute(serde_json::json!({
+            "script_name": "skills/vitals-coach/scripts/test-env.sh",
+            "env": {
+                "TEST_VAL": "$vault:test-key"
+            }
+        })).await;
+
+        unsafe { std::env::remove_var("TEST_KEY"); }
+
+        assert!(!res.is_error, "Tool reported error: {}", res.content);
+        assert!(res.content.contains("VAL is resolved-secret-from-env"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_execute_script_vault_injection_fail_fast() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
+        
+        let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
+        std::fs::create_dir_all(&localized_script_dir).unwrap();
+        
+        let script_path = localized_script_dir.join("test-env.sh");
+        std::fs::write(&script_path, "#!/bin/bash\necho \"VAL is $TEST_VAL\"").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).unwrap();
+        }
+
+        // キーが一切解決できない状態
+        let res = tool.execute(serde_json::json!({
+            "script_name": "skills/vitals-coach/scripts/test-env.sh",
+            "env": {
+                "TEST_VAL": "$vault:non-existent-secret-key-xyz"
+            }
+        })).await;
+
+        // 方式A: 即座にフェイルファスト（エラー）になり、スクリプト実行は行われない
+        assert!(res.is_error);
+        assert!(res.content.contains("Failed to resolve vault reference"));
+        assert!(res.content.contains("rustyclaw vault set non-existent-secret-key-xyz"));
     }
 }
 

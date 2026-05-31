@@ -25,7 +25,7 @@
 | 非同期ランタイム | Node.js / Inngest | Tokio (Rust) | |
 | LLM 呼び出し | ACP stdio JSON-RPC | reqwest HTTP 直呼び | GeminiClaw の ACP は意図的に除外 |
 | 並列制御 | Inngest Lane Queue | gmn_sem(1) + LaneRegistry | |
-| 設定ファイル | JSON (暗号化シークレット別管理) | config.json + vault.json | |
+| 設定ファイル | JSON (暗号化シークレット別管理) | config.json + vault.enc (暗号化) / vault.json | 暗号化 vault.enc & 平文フォールバック、およびスクリプト向け `$vault:` 動的環境変数インジェクションに対応 ✅ |
 | Hot Reload | SIGHUP | SIGHUP ✅ | |
 | systemd watchdog | — | WatchdogService ✅ | |
 | Health HTTP | — | `/health` `/ready` `/reload` ✅ | |
@@ -96,7 +96,7 @@
 
 | 機能 | GeminiClaw | RustyClaw | 備考 |
 |---|---|---|---|
-| **Skills ファイルロード** | 標準仕様（YAML Frontmatter / `SKILL.md`）に完全準拠し、段階的開示（Discovery & Activation）をサポート。従来フラットファイルとの下位互換性も担保 | ✅ | `skills.rs` が `gray_matter` による YAML 解析と Discovery/Activation 注入に対応。スキル内 scripts 実行やトラバーサル防御もサポート（Phase 35） |
+| **Skills ファイルロード** | 標準仕様（YAML Frontmatter / `SKILL.md`）に完全準拠し、段階的開示（Discovery & Activation）をサポート。従来フラットファイルとの下位互換性も担保 | ✅ | `skills.rs` が YAML 解析と Discovery/Activation 注入、および `env` を介した `$vault:` 動的解決・多層フォールバック、トラバーサル防御を完全サポート ✅ |
 | daily-briefing skill | ✅ | ✅ | `skills/daily-briefing/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |
 | vitals-coach skill | ✅ | ✅ | `skills/vitals-coach/SKILL.md` の標準パッケージ構造に移行・統合完了。データ取得、タイムラグ検証、医療警告、閾値分析を一本化（Phase 35） |
 | topic-patrol skill | ✅ | ✅ | `skills/topic-patrol/SKILL.md` の標準パッケージ構造に移行完了（Phase 35） |

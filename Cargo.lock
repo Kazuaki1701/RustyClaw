@@ -2098,6 +2098,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "reqwest",
+ "rustyclaw-config",
  "rustyclaw-storage",
  "serde",
  "serde_json",

@@ -6,17 +6,9 @@ TAG_NAME=$1
 shift
 IDS=$@
 
-# Vault から設定を直接ロード
-VAULT="$HOME/.rustyclaw/vault.json"
-if [ ! -f "$VAULT" ]; then
-    echo "Error: vault.json not found."
-    exit 1
-fi
-KARAKEEP_API_KEY=$(python3 -c "import json; d=json.load(open('$VAULT')); print(d.get('karakeep-api-key',''))" 2>/dev/null)
-KARAKEEP_SERVER_ADDR=$(python3 -c "import json; d=json.load(open('$VAULT')); print(d.get('karakeep-server-addr',''))" 2>/dev/null)
-
+# 環境変数の確認
 if [ -z "$KARAKEEP_API_KEY" ] || [ -z "$KARAKEEP_SERVER_ADDR" ]; then
-    echo "Error: karakeep-api-key or karakeep-server-addr is not set in vault.json."
+    echo "Error: KARAKEEP_API_KEY or KARAKEEP_SERVER_ADDR is not set."
     exit 1
 fi
 
