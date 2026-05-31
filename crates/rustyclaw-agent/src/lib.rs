@@ -86,6 +86,71 @@ impl Pipeline {
         Ok(context)
     }
 
+    /// 過去履歴から「最後にユーザーが発言した時刻以降に記録された自発的投稿」を抽出し、
+    /// システムプロンプト（system_context）に注入するためのテキストブロックと、
+    /// 自発的投稿を除外した純粋な会話履歴メッセージ群を返す。
+    fn process_proactive_posts(
+        &self,
+        session_id: &str,
+        history_messages: Vec<Message>,
+        system_context: &mut String,
+    ) -> Vec<Message> {
+        if session_id.starts_with("cron:") {
+            return history_messages;
+        }
+
+        // 1. ユーザーの最終発言のタイムスタンプを特定する
+        let last_user_ts = history_messages.iter()
+            .filter(|m| m.role == "user")
+            .last()
+            .and_then(|m| m.timestamp.as_ref())
+            .cloned();
+
+        let mut conversational_messages = Vec::new();
+        let mut proactive_entries = Vec::new();
+
+        for msg in history_messages {
+            if msg.trigger.as_deref() == Some("proactive") {
+                let is_after_last_user = match (&msg.timestamp, &last_user_ts) {
+                    (Some(msg_ts), Some(user_ts)) => msg_ts > user_ts,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+
+                if is_after_last_user {
+                    proactive_entries.push(msg);
+                    continue;
+                }
+            }
+            conversational_messages.push(msg);
+        }
+
+        // 2. 自発的発言が存在する場合、system_context に注入ブロックを追加する
+        if !proactive_entries.is_empty() {
+            let mut proactive_block = String::from("\n### Your Previous Posts in This Channel\nYou posted these messages (not in your conversation history):\n");
+            let start_idx = proactive_entries.len().saturating_sub(5);
+            for entry in &proactive_entries[start_idx..] {
+                let ts = entry.timestamp.as_deref().unwrap_or("unknown");
+                let formatted_ts = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                    dt.format("%Y-%m-%d %H:%M:%S").to_string()
+                } else {
+                    ts.to_string()
+                };
+                let content_preview = if entry.content.chars().count() > 300 {
+                    let mut s: String = entry.content.chars().take(300).collect();
+                    s.push_str("...");
+                    s
+                } else {
+                    entry.content.clone()
+                };
+                proactive_block.push_str(&format!("- [{}]: {}\n", formatted_ts, content_preview));
+            }
+            system_context.push_str(&proactive_block);
+        }
+
+        conversational_messages
+    }
+
     /// デバッグ用の生リクエストダンプを出力する
     fn dump_request(&self, _workspace_dir: &Path, _messages: &[Message]) {
         // Consolidated in providers layer
@@ -532,7 +597,9 @@ Rules:
                 .context("Failed to load session history messages")?
         };
 
-        let mut history = ConversationHistory::new(history_messages);
+        let cleaned_history = self.process_proactive_posts(session_id, history_messages, &mut system_context);
+
+        let mut history = ConversationHistory::new(cleaned_history);
         let history_limit = self.get_history_limit("default");
         // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
         let overhead_tokens = (system_context.chars().count() * 3) / 2;
@@ -795,7 +862,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 .context("Failed to load session history messages")?
         };
 
-        let mut history = ConversationHistory::new(history_messages);
+        let cleaned_history = self.process_proactive_posts(session_id, history_messages, &mut system_context);
+
+        let mut history = ConversationHistory::new(cleaned_history);
         let history_limit = self.get_history_limit(purpose);
         // ISSUE-02: system プロンプト＋ツール定義分のトークンを考慮して実効上限を下げる
         let overhead_chars = system_context.chars().count()
@@ -1652,5 +1721,51 @@ Keep it short.\n\
         assert!(!result.contains("タブインデント"));
         assert!(result.contains("- Item"));
         assert!(result.contains("- Next"));
+    }
+
+    #[test]
+    fn test_proactive_posts_filtering_and_injection() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        let logger = SessionLogger::new(ws);
+        
+        logger.append_message("session-proactive", &Message {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            timestamp: Some("2026-05-31T10:00:00Z".to_string()),
+            ..Default::default()
+        }).unwrap();
+        
+        logger.append_message("session-proactive", &Message {
+            role: "assistant".to_string(),
+            content: "Hi there!".to_string(),
+            timestamp: Some("2026-05-31T10:01:00Z".to_string()),
+            ..Default::default()
+        }).unwrap();
+        
+        logger.append_message("session-proactive", &Message {
+            role: "assistant".to_string(),
+            content: "It might rain soon, grab an umbrella!".to_string(),
+            trigger: Some("proactive".to_string()),
+            timestamp: Some("2026-05-31T12:00:00Z".to_string()),
+            ..Default::default()
+        }).unwrap();
+
+        let config = rustyclaw_config::Config::default();
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+
+        let history_messages = logger.load_history("session-proactive").unwrap();
+        let mut system_context = "Base Prompt Context".to_string();
+        
+        let cleaned = pipeline.process_proactive_posts("session-proactive", history_messages, &mut system_context);
+        
+        assert_eq!(cleaned.len(), 2);
+        assert_eq!(cleaned[0].content, "Hello");
+        assert_eq!(cleaned[1].content, "Hi there!");
+        
+        assert!(system_context.contains("Your Previous Posts in This Channel"));
+        assert!(system_context.contains("It might rain soon, grab an umbrella!"));
+        assert!(system_context.contains("2026-05-31 12:00:00"));
     }
 }

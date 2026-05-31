@@ -77,17 +77,17 @@
 
 ---
 
-## 3. 未移植機能（ギャップ）と移植仕様
+## 3. 移植済み機能（ギャップの解消）
 
-### 【未移植】Proactive Posts 注入
-Heartbeat が自発的に送った Discord 等のメッセージを、翌日の会話セッション開始時に「会話履歴外の自分の発言」としてシステムプロンプトに差し戻す機能。これが欠落しているため、現在は「自分が自発的に発言した内容」を忘れてしまう。
+### 【移植完了】Proactive Posts 注入
+Heartbeat が自発的に送った Discord 等のメッセージを、翌日の会話セッション開始時に「会話履歴外の自分の発言」としてシステムプロンプトに差し戻す機能を完全実装しました。これにより、自分が自発的に発言した内容の文脈を次の対話で正しく認識できるようになりました。
 
-#### 移植先の設計指針:
-1.  **対象コード**: `crates/rustyclaw-agent/src/lib.rs` の `execute` および `execute_with_tools` 内。
+#### 実装仕様:
+1.  **対象コード**: `crates/rustyclaw-agent/src/lib.rs` の `execute` および `execute_with_tools` 内の `process_proactive_posts` ヘルパー関数。
 2.  **スキャンの仕組み**:
     *   `SessionLogger::load_history` でセッション履歴（JSONL）を読み込む。
-    *   `trigger === "proactive"` (自発投稿) かつ、最後にユーザーが発言したタイムスタンプ以降に記録されたエントリーをフィルタリングする。
-    *   抽出した直近 5 件の発言を以下の Markdown フォーマットで `system_context` もしくはメッセージ履歴の直前に注入する。
+    *   `trigger == "proactive"` (自発投稿) かつ、最後にユーザーが発言したタイムスタンプ以降に記録されたエントリーをフィルタリングして会話履歴（`history.messages`）から除外（二重参照防止）。
+    *   抽出した直近 5 件の発言を以下の Markdown フォーマットで `system_context` に動的に注入する。
 
 ```markdown
 ### Your Previous Posts in This Channel
@@ -97,13 +97,13 @@ You posted these messages (not in your conversation history):
 
 ---
 
-## 4. 今後の移植・改修タスク
+## 4. 移植・改修実績
 
-本調査結果に基づき、以下のタスクを `docs/task.md` (Phase 16) に紐づけて順次実行する。
+本調査結果に基づき、以下のタスクを完了しました：
 
-1.  **Proactive Posts 注入の実装** (`crates/rustyclaw-agent/src/lib.rs`)
-    *   自発メッセージの差分ロードおよびプロンプトへの差し戻しロジックの実装。
-2.  **heartbeat-digest.md の増分ロード不全の改修** (`crates/rustyclaw-gateway/src/heartbeat.rs`)
-    *   ログ差分増分スキャンの境界タイムスタンプのバグ調査と修正。
-3.  **tantivy 検索および Obsidian 書き込みツールの LLM 公開** (`crates/rustyclaw-tools/src/lib.rs`)
-    *   インプロセス検索と REST API 経由の Vault 書き込みを Tool として登録。
+1.  **Proactive Posts 注入の実装** (`crates/rustyclaw-agent/src/lib.rs`) ✅ 完了
+    *   自発メッセージの差分ロードおよびプロンプトへの差し戻しロジック、およびユニットテストを追加。
+2.  **heartbeat-digest.md の増分ロード不全・ツール対話抽出バグの改修** (`crates/rustyclaw-gateway/src/heartbeat.rs`) ✅ 完了
+    *   ログ差分増分スキャンの境界タイムスタンプのバグ、およびツール呼び出し中の最終テキスト返答の抽出ロジックを修正。動的なLocalタイムスタンプ表示および構造化マークダウンヘッダー出力を追加。
+3.  **tantivy 検索および Obsidian 書き込みツールの LLM 公開** (`crates/rustyclaw-tools/src/lib.rs`) ✅ 完了
+    *   `MemorySearchTool` (tantivy) と `ObsidianWriteTool` の実装とツール登録、およびテストスイートを完備。

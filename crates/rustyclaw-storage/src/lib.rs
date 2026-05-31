@@ -326,7 +326,12 @@ impl SessionLogger {
         let safe_session_id = session_id.replace(':', "-");
         let file_path = self.sessions_dir.join(format!("{}.jsonl", safe_session_id));
         
-        let json_line = serde_json::to_string(message)
+        let mut logged_msg = message.clone();
+        if logged_msg.timestamp.is_none() {
+            logged_msg.timestamp = Some(chrono::Local::now().to_rfc3339());
+        }
+
+        let json_line = serde_json::to_string(&logged_msg)
             .context("Failed to serialize message to JSON")?;
 
         let mut file = OpenOptions::new()

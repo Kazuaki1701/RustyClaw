@@ -61,11 +61,13 @@ impl HeartbeatService {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    if trimmed.starts_with("[--:--] ") {
-                        let body = &trimmed["[--:--] ".len()..];
-                        if let Some(colon_idx) = body.find(": ") {
-                            let session_id = body[..colon_idx].to_string();
-                            existing_digest_map.entry(session_id).or_default().push(trimmed.to_string());
+                    if trimmed.starts_with('[') {
+                        if let Some(close_bracket_idx) = trimmed.find("] ") {
+                            let body = &trimmed[close_bracket_idx + 2..];
+                            if let Some(colon_idx) = body.find(": ") {
+                                let session_id = body[..colon_idx].to_string();
+                                existing_digest_map.entry(session_id).or_default().push(trimmed.to_string());
+                            }
                         }
                     }
                 }
@@ -133,21 +135,42 @@ impl HeartbeatService {
                     let mut session_lines = Vec::new();
                     while i < messages.len() {
                         if messages[i].role == "user" {
-                            if i + 1 < messages.len() && messages[i + 1].role == "assistant" {
-                                let prompt = &messages[i].content;
-                                let response = &messages[i + 1].content;
-                                
+                            let prompt = &messages[i].content;
+                            let mut next_user_idx = messages.len();
+                            for j in (i + 1)..messages.len() {
+                                if messages[j].role == "user" {
+                                    next_user_idx = j;
+                                    break;
+                                }
+                            }
+                            
+                            let mut response = None;
+                            for j in (i + 1)..next_user_idx {
+                                if messages[j].role == "assistant" {
+                                    if !messages[j].content.trim().is_empty() {
+                                        response = Some(&messages[j].content);
+                                    }
+                                }
+                            }
+
+                            if let Some(resp_content) = response {
                                 let clean_prompt = prompt.replace('\n', " ").chars().take(100).collect::<String>();
-                                let clean_response = response.replace('\n', " ").chars().take(100).collect::<String>();
+                                let clean_response = resp_content.replace('\n', " ").chars().take(100).collect::<String>();
+
+                                let mut time_str = "--:--".to_string();
+                                if let Some(ref ts) = messages[i].timestamp {
+                                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                                        let local_dt = dt.with_timezone(&Local);
+                                        time_str = local_dt.format("%H:%M").to_string();
+                                    }
+                                }
 
                                 session_lines.push(format!(
-                                    "[--:--] {}: {} → {}",
-                                    session_id, clean_prompt, clean_response
+                                    "[{}] {}: {} → {}",
+                                    time_str, session_id, clean_prompt, clean_response
                                 ));
-                                i += 2;
-                            } else {
-                                i += 1;
                             }
+                            i = next_user_idx;
                         } else {
                             i += 1;
                         }
@@ -165,22 +188,28 @@ impl HeartbeatService {
 
         let digest_lines: Vec<String> = merged_lines.into_iter().map(|item| item.1).collect();
 
-        // 最新エントリを優先して最大3000文字に制限
-        let mut final_digest = String::new();
-        for line in digest_lines.iter().rev() {
-            if final_digest.len() + line.len() + 1 > 3000 {
-                break;
+        let header = if is_deep_scan { "*(deep scan — 24h lookback)*\n\n" } else { "" };
+        let body = if digest_lines.is_empty() {
+            "*(No new activity since last heartbeat)*".to_string()
+        } else {
+            // 最新エントリを優先して最大3000文字に制限
+            let mut final_digest = String::new();
+            for line in digest_lines.iter().rev() {
+                if final_digest.len() + line.len() + 1 > 3000 {
+                    break;
+                }
+                final_digest = format!("{}\n{}", line, final_digest);
             }
-            final_digest = format!("{}\n{}", line, final_digest);
-        }
+            format!("{}{}", header, final_digest.trim())
+        };
 
-        let final_digest = final_digest.trim().to_string();
+        let file_content = format!("# Heartbeat Digest\n\n{}\n", body);
         
         // heartbeat-digest.md への原子性書き込み
         let _ = fs::create_dir_all(digest_path.parent().unwrap());
-        let _ = rustyclaw_storage::atomic_write(&digest_path, final_digest.as_bytes());
+        let _ = rustyclaw_storage::atomic_write(&digest_path, file_content.as_bytes());
 
-        Ok(final_digest)
+        Ok(body)
     }
 
 
@@ -314,6 +343,8 @@ impl HeartbeatService {
                 role: "assistant".to_string(),
                 content: response_content.to_string(),
                 name: None,
+                trigger: Some("proactive".to_string()),
+                timestamp: Some(chrono::Local::now().to_rfc3339()),
                 ..Default::default()
             };
             let _ = logger.append_message(&target_session_id, &assistant_msg);
@@ -559,12 +590,14 @@ mod tests {
         let msg_user = Message {
             role: "user".to_string(),
             content: "What is the weather today?".to_string(),
+            timestamp: Some("2026-05-31T10:15:30+09:00".to_string()),
             name: None,
             ..Default::default()
         };
         let msg_assistant = Message {
             role: "assistant".to_string(),
             content: "It is sunny and 22 degrees.".to_string(),
+            timestamp: Some("2026-05-31T10:16:00+09:00".to_string()),
             name: None,
             ..Default::default()
         };
@@ -598,6 +631,10 @@ mod tests {
             digest_1.contains("It is sunny and 22 degrees."),
             "First digest should contain response"
         );
+        assert!(
+            digest_1.contains("[10:15] telegram-U123-20260528"),
+            "First digest should contain formatted local timestamp [10:15]"
+        );
 
         // Update patrol state as if it just finished
         db.update_patrol_state("heartbeat_patrol")?;
@@ -613,6 +650,71 @@ mod tests {
             "Second digest should contain response"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_digest_handles_tool_use() -> Result<()> {
+        let ws_dir = tempdir()?;
+        let ws_path = ws_dir.path().to_path_buf();
+        let sessions_dir = ws_path.join("sessions");
+        fs::create_dir_all(&sessions_dir)?;
+        
+        let session_file_path = sessions_dir.join("telegram-U456-20260528.jsonl");
+        
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "Find Tokyo coords".to_string(),
+                timestamp: Some("2026-05-31T14:00:00+09:00".to_string()),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "".to_string(),
+                tool_calls: Some(vec![]),
+                timestamp: Some("2026-05-31T14:00:05+09:00".to_string()),
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: "35.6762, 139.6503".to_string(),
+                timestamp: Some("2026-05-31T14:00:10+09:00".to_string()),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "Coords are 35.6762 N.".to_string(),
+                timestamp: Some("2026-05-31T14:00:15+09:00".to_string()),
+                ..Default::default()
+            },
+        ];
+        
+        let mut file_content = String::new();
+        for msg in &messages {
+            file_content.push_str(&serde_json::to_string(msg)?);
+            file_content.push('\n');
+        }
+        fs::write(&session_file_path, file_content)?;
+
+        let db_path = ws_path.join("test.db");
+        let db = DbManager::new(db_path.to_str().unwrap())?;
+        let bus = std::sync::Arc::new(MessageBus::new());
+        let config = Config::default();
+        let service = HeartbeatService::new(config, ws_path.clone(), bus);
+
+        let digest = service.generate_digest(&db)?;
+        
+        assert!(digest.contains("Find Tokyo coords"));
+        assert!(digest.contains("Coords are 35.6762 N."));
+        assert!(!digest.contains("35.6762, 139.6503"));
+        assert!(digest.contains("[14:00]"));
+        
+        let digest_file = ws_path.join("memory").join("heartbeat-digest.md");
+        assert!(digest_file.exists());
+        let file_data = fs::read_to_string(&digest_file)?;
+        assert!(file_data.starts_with("# Heartbeat Digest\n\n"));
+        
         Ok(())
     }
 

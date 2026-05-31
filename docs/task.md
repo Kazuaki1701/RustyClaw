@@ -9,19 +9,24 @@
 
 ## Phase 22: GeminiClaw 移植ギャップの回収（Proactive Posts / heartbeat-digest 等） 🔴 優先度高
 
-- `[ ]` **1. `Proactive Posts` 注入の実装**
+- `[x]` **1. `Proactive Posts` 注入の実装**
   - Heartbeat による自発メッセージ（Discord 等への声掛け）を、翌ターンの対話時に「会話履歴外の自分の発言」としてシステムプロンプトに差し戻すロジックの実装。
   - 対象: `crates/rustyclaw-agent/src/lib.rs` (`execute` および `execute_with_tools` 内)
 
-- `[ ]` **2. `heartbeat-digest.md` ロジックの点検・修正**
+- `[x]` **2. `heartbeat-digest.md` ロジックの点検・修正**
   - CLIテスト等で無効化されている `heartbeat-digest.md` のタイムスタンプ・差分ロードロジックを修正し、増分スキャンおよびディープスキャンが正しく動作するように改修。
+  - 調査で判明した以下の潜在バグ・挙動差分の回収：
+    - `[x]` **a. ツール呼び出し（Tool-call）時の最終アシスタント返答抽出バグの修正** (空文字列が抽出される問題の解決)
+    - `[x]` **b. 差分スキャン時の既存マップ存在チェック不全の修正** (新規セッションを無視するバグの解決)
+    - `[x]` **c. Message 構造体へのタイムスタンプ追加に伴う動的 `[HH:MM]` 表示への変更** (固定 `[--:--]` の廃止)
+    - `[x]` **d. `# Heartbeat Digest` ヘッダー出力の追加** (GeminiClaw 同等のマークダウン構造化)
   - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`
 
-- `[ ]` **3. `tantivy` 全文検索および `Obsidian` 書き込みツールの LLM 公開**
+- `[x]` **3. `tantivy` 全文検索および `Obsidian` 書き込みツールの LLM 公開**
   - `MemorySearchTool` と `ObsidianWriteTool` (Vaultへの新規書き込み・追記) を実装して `rustyclaw-tools` に追加・登録。
   - 対象: `crates/rustyclaw-tools/src/lib.rs` + `crates/rustyclaw-gateway/src/lib.rs` (登録)
 
-- `[ ]` **5. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[x]` **5. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 

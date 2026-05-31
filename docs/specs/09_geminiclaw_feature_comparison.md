@@ -40,7 +40,7 @@
 | ConversationHistory 蓄積 | ✅ | ✅ | |
 | compact_if_needed（70/20/10） | ✅ | ✅ | limit 1500、×1.5 日本語補正済み |
 | Session Continuation（日またぎ） | ✅ | ⚠️ | 実装済みだが summaries/ が少なく実質機能薄 |
-| **Proactive Posts 注入** | ✅ | ❌ | Heartbeat 発言が翌ターンに反映されない |
+| **Proactive Posts 注入** | ✅ | ✅ | 実装済み。翌ターンのシステムプロンプトに差し戻す |
 | Memory Flush（セッション後非同期） | ✅ | ✅ | fail-open、15分ゲート・6ターン delta |
 | execute_with_tools（ツール呼び出しループ） | ✅ | ✅ | OpenAiCompatProvider のみ対応 |
 | Streaming SSE | ✅ | ✅ | |
@@ -55,10 +55,10 @@
 | logs/YYYY-MM-DD.md 日次ログ | ✅ | ✅ | fail-open |
 | summaries/ セッションサマリー | ✅ | ✅ | アイドル5分で生成 |
 | Daily Summary | ✅ | ✅ | 日付変更時 +5分オフセット |
-| **heartbeat-digest.md 増分生成** | ✅ | ⚠️ | 0バイト常態。増分スキャンが未機能 |
+| **heartbeat-digest.md 増分生成** | ✅ | ✅ | 実装済み。増分・ディープスキャンが正しく動作しダイジェスト出力 |
 | SQLite（usage/patrol_state/seen_items） | ✅ | ✅ | WAL モード |
 | sessions/*.jsonl（fail-closed） | ✅ | ✅ | |
-| **tantivy BM25 全文検索（LLM 公開）** | qmd_query / qmd_get | ⚠️ | インデックス構築は動作。LLM 検索ツール未登録 |
+| **tantivy BM25 全文検索（LLM 公開）** | qmd_query / qmd_get | ✅ | 実装済み。memory_search として LLM に公開 |
 | atomic write（電源断対策） | ✅ | ✅ | tempfile → rename |
 
 ---
@@ -67,7 +67,7 @@
 
 | 機能 | GeminiClaw | RustyClaw | 備考 |
 |---|---|---|---|
-| Step 1: 活動レビュー | ✅ | ⚠️ | heartbeat-digest が空のため実質機能なし |
+| Step 1: 活動レビュー | ✅ | ✅ | 正常稼働。ダイジェストに基づいて自己文脈を正しく認識 |
 | Step 2: Memory 整理 | ✅ | ✅ | |
 | Step 3: Calendar / Email チェック | ✅ | ✅ | gws_calendar_list_events / gws_gmail_list_messages |
 | Step 4: 天気チェック | ✅ | ❌ | 天気ツール未実装 |
@@ -136,9 +136,9 @@
 | Karakeep タグ付け | 502_karakeep-tag-items.sh | karakeep_tag_bookmark ✅ | Rust 直実装 |
 | Obsidian 検索 | Obsidian MCP (SSE) | obsidian_search ✅ | Rust 直実装 |
 | Obsidian 読み取り | Obsidian MCP (SSE) | obsidian_read_note ✅ | Rust 直実装 |
-| **Obsidian 書き込み・追記** | Obsidian MCP (SSE) | ❌ | ObsidianWriteTool 未実装 |
+| **Obsidian 書き込み・追記** | Obsidian MCP (SSE) | ✅ | obsidian_write_note として LLM に公開 |
 | **Obsidian Dataview クエリ** | Obsidian MCP (SSE) | ❌ | 未実装 |
-| **全文検索（Memory）** | qmd_query / qmd_get | ❌ | インデックスは構築済み。ツール未登録 |
+| **全文検索（Memory）** | qmd_query / qmd_get | ✅ | memory_search として LLM に公開 |
 | **天気** | 天気ツール | ❌ | 未実装 |
 
 ---
