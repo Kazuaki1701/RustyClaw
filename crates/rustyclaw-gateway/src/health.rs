@@ -523,7 +523,7 @@ header{
     <button class="tab"        onclick="switchTab('stats',  this)">STATS</button>
   </nav>
   <div class="header-right">
-    <span style="font-size:10px;color:var(--muted);font-family:'Fira Code',monospace">:8080</span>
+    <span id="hostLabel" style="font-size:10px;color:var(--muted);font-family:'Fira Code',monospace">:8080</span>
     <div class="status-badge"><span class="status-dot"></span>ACTIVE</div>
   </div>
 </header>
@@ -771,7 +771,7 @@ function renderTriggers(rows){
     return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${r.trigger}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${r.runs} runs</span></div>`;
   }).join('')||'<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
 }
-updateQueue();updateConcurrency();updateNeurons();updateInspector();updateLog();
+document.getElementById('hostLabel').textContent=location.host;updateQueue();updateConcurrency();updateNeurons();updateInspector();updateLog();
 setInterval(updateQueue,1000);setInterval(updateConcurrency,1000);setInterval(updateNeurons,5000);setInterval(updateInspector,2000);setInterval(updateLog,2000);
 </script>
 </body>
