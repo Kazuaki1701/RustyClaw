@@ -834,6 +834,27 @@ impl Gateway {
             }
         });
 
+        // ISSUE-17: IncomingMessage 受信直後に Waiting を可視化する観測タスク
+        {
+            let mut wait_rx = bus.subscribe();
+            tokio::spawn(async move {
+                loop {
+                    match wait_rx.recv().await {
+                        Ok(SystemEvent::IncomingMessage { session_id, content, .. }) => {
+                            let desc = {
+                                let t: String = content.chars().take(40).collect();
+                                format!("User Prompt: \"{}\"", t.replace('\n', " "))
+                            };
+                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &desc);
+                        }
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        Err(_) => {} // Lagged は無視
+                    }
+                }
+            });
+        }
+
         // 6. Agent応答の配信監視ループ (LaneRegistry / MessageBus -> Discord)
         let mut rx_responses = bus.subscribe();
         let discord_sender = discord_client.clone();
