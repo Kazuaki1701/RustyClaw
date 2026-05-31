@@ -1,5 +1,5 @@
 #!/bin/bash
-# 天気予報: 大森・厚木 の現在気温・風速・今日の最高/最低・60分降水量を取得
+# 天気予報: 大森・厚木 の現在気温・風速・今日の最高/最低・75分降水量を取得
 
 set -euo pipefail
 
@@ -43,7 +43,10 @@ fetch_weather() {
                 }
             ]
         }
-    '
+    ' || {
+        echo "{\"location\":\"${name}\",\"error\":\"jq parse error\"}"
+        return
+    }
 }
 
 fetch_weather "OMORI"  "35.5613" "139.7241"
