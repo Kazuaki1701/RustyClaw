@@ -650,19 +650,27 @@ function fmtK(n){if(n>=1e6)return(n/1e6).toFixed(2)+'M';if(n>=1e3)return(n/1e3).
 function now(){return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 async function updateQueue(){
   try{
-    const r=await fetch('/api/queue');if(!r.ok)return;
-    const items=await r.json();
+    const[rq,rs]=await Promise.all([fetch('/api/queue'),fetch('/api/schedule')]);
+    if(!rq.ok)return;
+    const items=await rq.json();
+    const sched=rs.ok?await rs.json():[];
     document.getElementById('queue-ts').textContent='↻ '+now();
     const panel=document.getElementById('queuePanel');
-    if(items.length===0){panel.innerHTML='<div style="color:var(--muted);text-align:center;padding:10px;font-family:\'Fira Code\',monospace;font-size:11px;">稼働タスクなし（待機中・正常）</div>';return}
     let html='';
-    items.forEach((item,i)=>{
+    items.forEach((item)=>{
       const cls=item.status==='Executing'?'pill-exec':item.status==='Waiting'?'pill-wait':'pill-cool';
       const lbl=item.status==='Executing'?'EXEC':item.status==='Waiting'?'WAIT':'COOL';
       const elapsed=Math.floor((Date.now()-item.enqueued_at_ms)/1000);
       html+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span><span class="q-sid">${item.session_id}</span><span class="q-desc">${item.description||''}</span><span class="q-time">${elapsed}s</span></div>`;
       if(item.status==='Cooldown'&&item.cooldown_left_secs>0){const pct=Math.min(100,(item.cooldown_left_secs/60)*100);html+=`<div class="cool-bar"><div class="cool-fill" style="width:${pct}%"></div></div>`}
     });
+    sched.forEach((s)=>{
+      const left=Math.max(0,s.next_run_epoch-Math.floor(Date.now()/1000));
+      const h=Math.floor(left/3600),m=Math.floor((left%3600)/60);
+      const eta=h>0?`${h}h${m}m`:m>0?`${m}m`:`<1m`;
+      html+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span><span class="q-sid">${s.name}</span><span class="q-desc">${s.trigger_type}</span><span class="q-time">in ${eta}</span></div>`;
+    });
+    if(!html){html='<div style="color:var(--muted);text-align:center;padding:10px;font-family:\'Fira Code\',monospace;font-size:11px;">稼働タスク・予定なし</div>'}
     panel.innerHTML=html;
   }catch{}
 }
