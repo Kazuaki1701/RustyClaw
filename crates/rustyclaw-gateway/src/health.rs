@@ -177,10 +177,12 @@ impl HealthServer {
                                     ("200 OK".to_string(), json.to_string(), "application/json; charset=utf-8")
 
                                 } else if request.starts_with("GET /api/usage/timeline") {
-                                    let since = extract_since_param(&request);
+                                    let gran = extract_query_i64(&request, "gran").unwrap_or(86400).max(1) as u64;
+                                    let from = extract_query_i64(&request, "from");
+                                    let now = chrono::Utc::now().timestamp();
                                     let db_path = workspace_path_clone.join("memory.db");
                                     let rows = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
-                                        db.get_usage_timeline(since.as_deref())
+                                        db.get_usage_timeline(from, now, gran)
                                     } else { vec![] };
                                     let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string());
                                     ("200 OK".to_string(), json, "application/json; charset=utf-8")
@@ -319,6 +321,20 @@ fn extract_since_param(request: &str) -> Option<String> {
             if val.len() >= 10 && val.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
                 return Some(val.to_string());
             }
+        }
+    }
+    None
+}
+
+/// GET /path?key=value のクエリから整数値を取り出す（無ければ None）。
+fn extract_query_i64(request: &str, key: &str) -> Option<i64> {
+    let first_line = request.lines().next()?;
+    let query_start = first_line.find('?')?;
+    let query = &first_line[query_start + 1..];
+    let end = query.find(' ').unwrap_or(query.len());
+    for pair in query[..end].split('&') {
+        if let Some(val) = pair.strip_prefix(&format!("{}=", key)) {
+            return val.parse::<i64>().ok();
         }
     }
     None
