@@ -51,11 +51,15 @@ Before running the cleanup, you **MUST** ensure the deletion target selection cr
 ## Pattern Implementation
 
 ### Step 1: Execution (Level 3)
-Do NOT run scripts via absolute shell paths. Invoke the script inside the skill's local directory using the secure gateway tool, passing the resolved Vault keys dynamically:
+Do NOT run scripts via absolute shell paths or try to call native tools. Invoke the localized script inside the skill's local directory using the secure gateway tool, passing the resolved Vault keys dynamically:
 *   **Tool**: `run_workspace_script`
-*   **Parameters**:
-    *   `script_name`: `skills/karakeep/scripts/501_karakeep-cleanup.sh` (or `502_karakeep-tag-items.sh`)
-    *   `args`: `["_recommended", "<id1>", "<id2>", ...]` (for tagging only)
+*   **Scripts Available**:
+    *   `503_karakeep-list.sh`: Retrieves recent bookmarks list.
+        *   `args`: `["<limit>"]` (optional, default: "20")
+    *   `502_karakeep-tag-items.sh <tag_name> <ids...>`: Tags matching bookmark IDs.
+        *   `args`: `["_recommended", "<id1>", "<id2>", ...]`
+    *   `501_karakeep-cleanup.sh`: Automated daily stale RSS items purge.
+*   **Parameters (`env` injection)**:
     *   `env`:
         *   `KARAKEEP_SERVER_ADDR`: `http://192.168.1.2:33000`
         *   `KARAKEEP_API_KEY`: `$vault:karakeep-api-key`
@@ -81,7 +85,7 @@ Append all execution summaries to `production/workspace/memory/logs/YYYY-MM-DD.m
 
 ## Common Mistakes & Antipatterns
 
-*   **Missing Vault Keys**: Attempting to run scripts or API requests without verifying if `karakeep-server-addr` or `karakeep-api-key` are configured in `vault.json`. (Fix: Verify vault variables exist and fail gracefully if missing).
+*   **Missing Vault Keys**: Attempting to run scripts or API requests without verifying if `karakeep-api-key` is configured in `vault.json`. (Fix: Verify vault variable exists and fail gracefully if missing).
 *   **Absolute Path Execution**: Running `bash production/workspace/scripts/501_karakeep-cleanup.sh` directly. (Fix: Invoke through `run_workspace_script` with localized script names).
 *   **Accidental Purging**: Deleting non-RSS items or favorited bookmarks. (Fix: Verify script logic filters strictly on source="rss" and favourited=false).
 *   **Unstructured Logs**: Dumping unstructured text or raw JSON into the daily log file. (Fix: Always use the standardized Markdown Table format).

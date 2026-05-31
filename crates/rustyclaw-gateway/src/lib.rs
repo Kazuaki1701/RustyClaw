@@ -699,21 +699,7 @@ impl Gateway {
             tool_registry.register(mcp_tool);
         }
 
-        // Karakeep ネイティブツール登録
-        if let Some(k) = config.tools.karakeep.as_ref().filter(|k| k.enabled) {
-            if !k.server_addr.is_empty() && !k.api_key.is_empty() {
-                tool_registry.register(Arc::new(rustyclaw_tools::KarakeepListTool::new(
-                    k.server_addr.clone(), k.api_key.clone(),
-                )));
-                tool_registry.register(Arc::new(rustyclaw_tools::KarakeepTagTool::new(
-                    k.server_addr.clone(), k.api_key.clone(),
-                )));
-                tool_registry.register(Arc::new(rustyclaw_tools::KarakeepDeleteTool::new(
-                    k.server_addr.clone(), k.api_key.clone(),
-                )));
-                tracing::info!("Registered native Karakeep tools.");
-            }
-        }
+
 
         // Obsidian ネイティブツール登録
         if let Some(o) = config.tools.obsidian.as_ref().filter(|o| o.enabled) {
@@ -1095,17 +1081,5 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_tool_registry_counts_native_tools() {
-        use rustyclaw_tools::ToolRegistry;
-        // KarakeepListTool + KarakeepTagTool registered when addr+key provided
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(
-            rustyclaw_tools::KarakeepListTool::new("http://localhost:33000".to_string(), "k".to_string())
-        ));
-        registry.register(Arc::new(
-            rustyclaw_tools::KarakeepTagTool::new("http://localhost:33000".to_string(), "k".to_string())
-        ));
-        assert_eq!(registry.tool_count(), 2);
-    }
+
 }
