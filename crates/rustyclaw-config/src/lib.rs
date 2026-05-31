@@ -102,30 +102,28 @@ impl ModelNames {
     }
 }
 
-/// 用途ごとの LLM 設定（model_list の model_name を参照）
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AgentPurposeConfig {
-    pub model_name: String,
-}
-
 /// agents セクション（default 必須、各 purpose は省略時 default にフォールバック）
+/// model_name は文字列（単一）または配列（フォールバックチェーン）で指定可能。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentsConfig {
-    pub default: AgentPurposeConfig,
+    pub default: ModelNames,
+    /// すべての purpose チェーンが失敗した場合の最終フォールバックモデル名
     #[serde(default)]
-    pub summary: Option<AgentPurposeConfig>,
+    pub global_fallback_model_name: Option<String>,
     #[serde(default)]
-    pub memory: Option<AgentPurposeConfig>,
+    pub summary:   Option<ModelNames>,
     #[serde(default)]
-    pub tools: Option<AgentPurposeConfig>,
+    pub memory:    Option<ModelNames>,
     #[serde(default)]
-    pub discord: Option<AgentPurposeConfig>,
+    pub tools:     Option<ModelNames>,
     #[serde(default)]
-    pub line: Option<AgentPurposeConfig>,
+    pub discord:   Option<ModelNames>,
     #[serde(default)]
-    pub heartbeat: Option<AgentPurposeConfig>,
+    pub line:      Option<ModelNames>,
     #[serde(default)]
-    pub patrol: Option<AgentPurposeConfig>,
+    pub heartbeat: Option<ModelNames>,
+    #[serde(default)]
+    pub patrol:    Option<ModelNames>,
 }
 
 /// get_model() が返す解決済みモデル設定（$vault: 参照解決済み）
@@ -316,27 +314,27 @@ impl Config {
     pub fn get_model(&self, purpose: &str) -> LlmModelConfig {
         let model_name = match purpose {
             "summary" => self.agents.summary.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
+                .map(|s| s.primary())
+                .unwrap_or_else(|| self.agents.default.primary()),
             "memory" => self.agents.memory.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
+                .map(|s| s.primary())
+                .unwrap_or_else(|| self.agents.default.primary()),
             "tools" => self.agents.tools.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
+                .map(|s| s.primary())
+                .unwrap_or_else(|| self.agents.default.primary()),
             "discord" => self.agents.discord.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
+                .map(|s| s.primary())
+                .unwrap_or_else(|| self.agents.default.primary()),
             "line" => self.agents.line.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
+                .map(|s| s.primary())
+                .unwrap_or_else(|| self.agents.default.primary()),
             "heartbeat" => self.agents.heartbeat.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
+                .map(|s| s.primary())
+                .unwrap_or_else(|| self.agents.default.primary()),
             "patrol" => self.agents.patrol.as_ref()
-                .map(|s| s.model_name.as_str())
-                .unwrap_or(self.agents.default.model_name.as_str()),
-            _ => self.agents.default.model_name.as_str(),
+                .map(|s| s.primary())
+                .unwrap_or_else(|| self.agents.default.primary()),
+            _ => self.agents.default.primary(),
         };
 
         let entry = self.model_list.iter()
@@ -364,7 +362,7 @@ impl Config {
     pub fn override_with_env(&mut self) {
         // RUSTYCLAW_MODEL_NAME: agents.default の model_name を上書き
         if let Ok(val) = std::env::var("RUSTYCLAW_MODEL_NAME") {
-            self.agents.default.model_name = val;
+            self.agents.default = ModelNames::Single(val);
         }
     }
 
