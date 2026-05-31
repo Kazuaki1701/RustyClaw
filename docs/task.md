@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-05-30  
+> **最終更新日**: 2026-05-31  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md` に保存
 
 ---
@@ -66,7 +66,7 @@
 ## Phase 28b: ダッシュボード精度・起動最適化のフォローアップ 🟡 優先度中
 > 出典: 2026-05-31 の Phase 28 実機検証（`gateway --no-agent` 起動ログ点検）で判明した改善候補。
 
-- `[ ]` **1. memory flush の LLM 呼び出しをトークン計上対象に含める** ⚠️ ダッシュボード精度に直結
+- `[x]` **1. memory flush の LLM 呼び出しをトークン計上対象に含める** ⚠️ ダッシュボード精度に直結 （→ **Phase 31 STEP 4** へ統合。プロバイダ層 dump 集約と同時に、memory/summary 等の未計上呼び出しも `record_usage` 対象化＝ ISSUE-20 と一体で解消）
   - 1回の対話で、メインの `execute_with_tools` 応答に加えて memory flush（MEMORY.md 再生成）用の LLM 呼び出しが走るが、後者は `record_usage` を発火せず Stats が**実消費より過少計上**になる。
   - flush 経路（`crates/rustyclaw-agent/src/lib.rs` の `flush_memory` 系）でも `LlmResponse` のトークンを取得し、`trigger_type` を `memory-flush` 等として `record_usage` する。
   - 対象: `crates/rustyclaw-agent/src/lib.rs` + 記録呼び出し箇所（`crates/rustyclaw-gateway/src/lib.rs`）
@@ -104,7 +104,7 @@
 
 ## Phase 25: 並行制御の最適化とフリーズ防止（Lane Queue 改善） 🔴 優先度高
 
-- `[ ]` **1. `gmn_sem` の並列化開放とファイルレベルロックの導入**
+- `[x]` **1. `gmn_sem` の並列化開放とファイルレベルロックの導入** （→ **Phase 31 保留 ISSUE-22** へ移行・統合。capacity の config 化＋「LLM 同時実行数」と「ワークスペース書き込み直列化」の責務分離として再整理。capacity 引き上げ検討時に着手）
   - LLM API 呼び出しの並列実行を開放。
   - `crates/rustyclaw-storage` にファイルアトミックロック機構を追加し、`MEMORY.md` やセッションログへの書き込み競合をファイルレベルの精密な排他制御で保護する。
   - 対象: `crates/rustyclaw-gateway/src/lib.rs` ＋ `crates/rustyclaw-storage/src/lib.rs`
@@ -169,6 +169,51 @@
   - `rustyclaw skills install <skill-name>` サブコマンドの実装および `workspace/skills/` へのリモート展開ロジック。
 
 - `[ ]` **5. `docs/specs/PicoClaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+
+---
+
+## Phase 31: ダッシュボード課題対応・LLM I/O インスペクタ刷新ほか（2026-05-31 洗い出し）🔴 優先度高
+> 出典: 2026-05-31 セッションでの Dashboard 各パネル点検・cron / LLM I/O 調査で洗い出した課題群（ISSUE-04〜25）。
+> 詳細仕様・難易度分類・依存・推奨実行順は `docs/rusty_claw_improvement_plan.md` §4〜§6 を参照。
+> 各 STEP は「まとめて実装・検証・反映できる実行単位」。推奨着手順は STEP 6 → 1 → 2 → 5 → 3 → 4 → 7 → 8。
+
+- `[x]` **STEP 1: Dashboard 即効表示改善（T1・フロントのみ・quick win）** — ISSUE-19 / 24 / 17
+  - LLM REQUEST の**末尾保持表示**（先頭4000字 truncate で会話部が見えない問題, 19）、ヘッダを `:8080`→**`IP:PORT`** 表記（`window.location.host`, 24）、LANE QUEUE のアイドル文言を「待機中（正常）」等に明示（17）。
+  - 対象: `crates/rustyclaw-gateway/src/health.rs`（フロント JS のみ）
+
+- `[x]` **STEP 2: トークン使用量グラフ実用化（T2）** — ISSUE-23
+  - DAILY TOKEN USAGE を**時間別**化。期間セレクタ `7D/30D/ALL`→**`1D/7D/ALL`**、粒度 1D=10分/7D・ALL=1時間。epoch フロアでバケット化＋ローカルTZ整形＋**空きバケット 0 埋め**（単一点で描画崩れする問題の根治）。
+  - 対象: `rustyclaw-storage`（`get_usage_timeline` granularity 対応）＋ `health.rs`（API `granularity` ＋ `renderTimeline`）
+
+- `[x]` **STEP 3: LANE QUEUE スケジュール可視化（T2）** — ISSUE-18 / 17
+  - `cron.json` から**次回実行時刻を算出**し `SCHED` ピル＋カウントダウンで表示。`Waiting` を permit 取得前に enqueue して可視化（現状ほぼ出現しない）。
+  - 対象: `gateway`（次回実行算出 / enqueue）＋ API（`/api/schedule` or `/api/queue` 統合）＋ フロント
+
+- `[ ]` **STEP 4: LLM I/O インスペクタ刷新（T3・最大単位）** — ISSUE-20 → 21（19適用, 旧 Phase 28b-1 統合）
+  - dump を**プロバイダ層へ集約**し、全 LLM 呼び出し（memory/summary 含む）の req/res を**ペア捕捉**（リングバッファ）。同時に memory-flush 等の未計上トークンも `record_usage` 対象化（過少計上の解消＝旧 Phase 28b-1）。
+  - REQUEST/RESPONSE を**単一ペイン＋用途別タブ**化（tools / discord / dashboard / briefing / vitals / karakeep / patrol / heartbeat / summary / daily / memory）。
+  - 対象: `providers`（dump集約）＋ `agent`（category付与）＋ `config`（`CompletionOptions`）＋ `health.rs`（API/UI）
+
+- `[ ]` **STEP 5: エージェント自己認識・事実確認の是正（T4）** — ISSUE-04 / 05
+  - 自己状態（cron 予定等）の質問に**ツールで事実確認**して答える（現状は記憶ベースで cron 一覧を誤答）。capability の過小申告・誤認識（「LLM だから shell 不可」、保有ツール非言及）を `SOUL.md`/プロンプトで是正。
+  - 対象: `SOUL.md` / プロンプト（STEP 3 の schedule をツール化すれば ISSUE-04 を確実化）
+
+- `[ ]` **STEP 6: cron 信頼性回復（T3・要方針決定・実害最大）** — ISSUE-06 / 07
+  - `karakeep-cleanup`/`recommendation` cron が**存在しない `bash scripts/501,502` を前提に無言失敗**中。A) 既存 `karakeep_tag_bookmark` 等の API ツールで prompt 書換（軽・推奨）／ B) 制約付き shell 実行ツール新設（重・要セキュリティ）。
+  - 対象: `cron.json`（prompt 書換）もしくは `rustyclaw-tools`（shell ツール）
+
+- `[ ]` **STEP 7: 設定・運用衛生（T5・個別着手可）** — ISSUE-08 / 11 / 12 / 15 / 16
+  - LM Studio context 長の運用手順化/自動整合(08)、config `debug/release` の DRY 化(11)、`config.json` symlink のコミット衛生(12)、rp1 への `sqlite3` 導入(15)、LM Studio 埋め込みモデルの preload(16)。
+
+- `[ ]` **STEP 8: 信頼性・安定性（既存 ISSUE 再整理）（T6）** — ISSUE-01(要再確認) / 02 / 03
+  - ISSUE-01（数値パラメータ文字列化）は `fix(tools): use string type for numeric limit/count params` で**解消済みの可能性**→要再確認（Phase 20 と重複）。残り 02（トークン予算/413）・03（daemon 初期化非同期化・SIGTERM 再起動）を判断。
+  - 詳細は `docs/rusty_claw_improvement_plan.md` §1〜§3。
+
+### Phase 31 — 保留（前提条件の解決後に着手）
+- `[ ]` **ISSUE-22: `gmn_sem` capacity の config 化＋書き込み直列化の責務分離**（capacity 引き上げ検討時。**旧 Phase 25-1 を統合**。メモリ `project_user_sem_concurrency` 参照）
+- `[ ]` **ISSUE-25: `●ACTIVE` → daemon STOP 制御**（無認証 LAN への破壊操作の露出・START 非対称性のセキュリティ前提を解決後）
+- `[ ]` **ISSUE-09: rp1 の LM Studio 依存（単一障害点）のフェイルオーバ設計**
+- 観察のみ: ISSUE-10（ローカル Gemma 品質）/ 13（一時 WS の context file WARN）/ 14（gws calendar WARN・現状解消）
 
 ---
 
