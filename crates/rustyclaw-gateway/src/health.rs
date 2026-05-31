@@ -602,9 +602,9 @@ header{
   <div class="stats-top">
     <span class="stats-title">TOKEN USAGE STATISTICS</span>
     <div class="period-bar">
-      <button class="period-btn" onclick="setPeriod(7,this)">7D</button>
-      <button class="period-btn active" onclick="setPeriod(30,this)">30D</button>
-      <button class="period-btn" onclick="setPeriod(0,this)">ALL</button>
+      <button class="period-btn active" onclick="setPeriod('1d',this)">1D</button>
+      <button class="period-btn" onclick="setPeriod('7d',this)">7D</button>
+      <button class="period-btn" onclick="setPeriod('all',this)">ALL</button>
     </div>
   </div>
   <div class="kpi-row">
@@ -722,13 +722,18 @@ async function sendMessage(){
 function addBubble(text,role){const d=document.createElement('div');d.className='bubble '+role;d.innerHTML=text.replace(/\n/g,'<br>');const m=document.getElementById('chatMessages');m.appendChild(d);m.scrollTop=m.scrollHeight}
 function addLoading(){const id='ld-'+Date.now();const el=document.createElement('div');el.className='loading-dots';el.id=id;el.innerHTML='<span class="dot"></span><span class="dot"></span><span class="dot"></span>';const m=document.getElementById('chatMessages');m.appendChild(el);m.scrollTop=m.scrollHeight;return id}
 function removeLoading(id){const el=document.getElementById(id);if(el)el.remove()}
-let currentPeriodDays=30;
-function setPeriod(days,btn){currentPeriodDays=days;document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');loadStats()}
+let currentPeriod='1d';
+const PERIOD_CFG={'1d':{gran:600,secs:86400},'7d':{gran:3600,secs:604800},'all':{gran:3600,secs:null}};
+function setPeriod(p,btn){currentPeriod=p;document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');loadStats()}
 async function loadStats(){
-  const since=currentPeriodDays>0?new Date(Date.now()-currentPeriodDays*86400000).toISOString().slice(0,10):undefined;
-  const qs=since?'?since='+since:'';
+  const cfg=PERIOD_CFG[currentPeriod];
+  window.statGran=cfg.gran;
+  const now=Math.floor(Date.now()/1000);
+  const tlQs=`?gran=${cfg.gran}`+(cfg.secs?`&from=${now-cfg.secs}`:'');
+  const sinceDate=cfg.secs?new Date(Date.now()-cfg.secs*1000).toISOString().slice(0,10):undefined;
+  const sumQs=sinceDate?'?since='+sinceDate:'';
   try{
-    const[rSum,rTl,rTr,rN]=await Promise.all([fetch('/api/usage/summary'+qs),fetch('/api/usage/timeline'+qs),fetch('/api/usage/by-trigger'+qs),fetch('/api/neurons')]);
+    const[rSum,rTl,rTr,rN]=await Promise.all([fetch('/api/usage/summary'+sumQs),fetch('/api/usage/timeline'+tlQs),fetch('/api/usage/by-trigger'+sumQs),fetch('/api/neurons')]);
     if(rSum.ok)renderSummary(await rSum.json());
     if(rTl.ok) renderTimeline(await rTl.json());
     if(rTr.ok) renderTriggers(await rTr.json());
@@ -757,7 +762,7 @@ function renderNeuronsKpi(d){
 }
 function renderTimeline(rows){
   if(!rows.length){document.getElementById('timelineChart').innerHTML='<text x="4" y="20" fill="#1e3a5f" font-size="8" font-family="Fira Code">No data yet</text>';return}
-  const maxT=Math.max(...rows.map(r=>r.total_tokens??r.tokens??0));
+  const maxT=Math.max(...rows.map(r=>r.tokens??0));
   if(maxT===0)return;
   const W=900,H=120,PAD=20;
   const xStep=(W-PAD*2)/Math.max(rows.length-1,1);
@@ -777,7 +782,8 @@ function renderTimeline(rows){
     <path d="${ia}" fill="url(#ig)"/><polyline points="${inputPts}" fill="none" stroke="#bf00ff" stroke-width="1.5" stroke-linejoin="round"/>
     <path d="${oa}" fill="url(#og)"/><polyline points="${outPts}"   fill="none" stroke="#00d4ff" stroke-width="1.5" stroke-linejoin="round"/>`;
   const step=Math.max(1,Math.floor(rows.length/7));
-  document.getElementById('chartXAxis').innerHTML=rows.filter((_,i)=>i%step===0||i===rows.length-1).map(r=>`<span>${r.date}</span>`).join('');
+  const fmt=ep=>{const d=new Date(ep*1000);const p=n=>String(n).padStart(2,'0');return window.statGran<3600?`${p(d.getHours())}:${p(d.getMinutes())}`:`${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:00`};
+  document.getElementById('chartXAxis').innerHTML=rows.filter((_,i)=>i%step===0||i===rows.length-1).map(r=>`<span>${fmt(r.bucket_epoch)}</span>`).join('');
 }
 function renderTriggers(rows){
   const maxT=Math.max(...rows.map(r=>r.tokens??0),1);
