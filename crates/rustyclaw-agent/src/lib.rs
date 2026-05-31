@@ -845,6 +845,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         user_message: &str,
         tool_registry: &ToolRegistry,
         purpose: &str,
+        progress_tx: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> Result<LlmResponse> {
         let logger = SessionLogger::new(workspace_dir);
 
@@ -928,6 +929,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             self.dump_request(workspace_dir, &active_messages);
 
             // 3. LLMプロバイダ呼び出し
+            if let Some(ref tx) = progress_tx {
+                let _ = tx.send("LLMの応答を待っています...".to_string()).await;
+            }
             let mut response = self.provider.complete(&active_messages, &provider_tools, &opts).await?;
             response.content = filter_json_leaks(&response.content);
 
@@ -951,6 +955,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                     // LLMがツール実行を要求したため、ツールを実行する
                     for call in calls {
                         tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
+                        if let Some(ref tx) = progress_tx {
+                            let _ = tx.send(format!("ツール '{}' を実行しています...", call.function.name)).await;
+                        }
 
                         // 引数を Value にパース
                         let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
@@ -1630,7 +1637,7 @@ mod tests {
         unsafe {
             std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
         }
-        let resp = pipeline.execute_with_tools(ws_dir.path(), "session-tool-test", "calculate 5+10", &registry, "default").await;
+        let resp = pipeline.execute_with_tools(ws_dir.path(), "session-tool-test", "calculate 5+10", &registry, "default", None).await;
         unsafe {
             std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
         }

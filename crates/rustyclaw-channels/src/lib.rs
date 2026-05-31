@@ -23,6 +23,18 @@ pub trait Channel: Send + Sync {
     async fn send_message(&self, channel_id: &str, content: &str) -> Result<()>;
 }
 
+#[async_trait]
+pub trait ProgressReporter: Send + Sync {
+    /// 進行インジケーター（タイピング表示、および中間メッセージ）の開始
+    async fn start(&self) -> Result<()>;
+    
+    /// 現在の処理状況やツール実行ステータスを更新する
+    async fn update_status(&self, status: &str) -> Result<()>;
+    
+    /// 処理が完了した時のクリーンアップ（タイピングの停止、メッセージの削除など）
+    async fn finish(&self) -> Result<()>;
+}
+
 // ==============================================================================
 // 2. Discord コネクタ (DiscordConnector) の実装
 // ==============================================================================
@@ -215,6 +227,150 @@ impl Channel for DiscordConnector {
             serenity_channel_id.say(http, &chunk).await
                 .context("Failed to send message chunk via serenity")?;
         }
+        Ok(())
+    }
+}
+
+impl DiscordConnector {
+    /// ProgressReporter インスタンスを生成する。
+    /// MOCK モードの場合はダミー（何もしない空のレポーター）を返す。
+    pub fn create_progress_reporter(&self, channel_id: &str) -> Result<Arc<dyn ProgressReporter>> {
+        let cid: u64 = channel_id.parse()
+            .context("Failed to parse channel_id as u64")?;
+
+        if let Some(ref http) = self.http {
+            Ok(Arc::new(DiscordProgressReporter::new(http.clone(), cid)))
+        } else {
+            // MOCK/DUMMY モード用の DummyProgressReporter
+            Ok(Arc::new(DummyProgressReporter))
+        }
+    }
+}
+
+pub struct DummyProgressReporter;
+
+#[async_trait]
+impl ProgressReporter for DummyProgressReporter {
+    async fn start(&self) -> Result<()> { Ok(()) }
+    async fn update_status(&self, _status: &str) -> Result<()> { Ok(()) }
+    async fn finish(&self) -> Result<()> { Ok(()) }
+}
+
+pub struct DiscordProgressReporter {
+    http: Arc<serenity::http::Http>,
+    channel_id: u64,
+    typing_abort_handle: Arc<std::sync::Mutex<Option<tokio::task::AbortHandle>>>,
+    progress_message_id: Arc<tokio::sync::Mutex<Option<u64>>>,
+    last_update: Arc<tokio::sync::Mutex<std::time::Instant>>,
+}
+
+impl DiscordProgressReporter {
+    pub fn new(http: Arc<serenity::http::Http>, channel_id: u64) -> Self {
+        Self {
+            http,
+            channel_id,
+            typing_abort_handle: Arc::new(std::sync::Mutex::new(None)),
+            progress_message_id: Arc::new(tokio::sync::Mutex::new(None)),
+            last_update: Arc::new(tokio::sync::Mutex::new(std::time::Instant::now())),
+        }
+    }
+}
+
+#[async_trait]
+impl ProgressReporter for DiscordProgressReporter {
+    async fn start(&self) -> Result<()> {
+        let http = self.http.clone();
+        let channel_id = self.channel_id;
+
+        // 1. 初期メッセージ投稿
+        let serenity_channel_id = serenity::model::id::ChannelId::new(channel_id);
+        match serenity_channel_id.say(&http, "*エージェントが考え中...*").await {
+            Ok(msg) => {
+                let mut msg_id_lock = self.progress_message_id.lock().await;
+                *msg_id_lock = Some(msg.id.get());
+                tracing::info!("DiscordProgressReporter: posted progress message id={}", msg.id.get());
+            }
+            Err(e) => {
+                tracing::warn!("DiscordProgressReporter: failed to post initial progress message: {:?}", e);
+            }
+        }
+
+        // 2. タイピングインジケーター維持タスク起動
+        let http_clone = http.clone();
+        let join_handle = tokio::spawn(async move {
+            loop {
+                if let Err(e) = http_clone.broadcast_typing(channel_id.into()).await {
+                    tracing::warn!("DiscordProgressReporter typing loop error: {:?}", e);
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+            }
+        });
+
+        let mut handle_lock = self.typing_abort_handle.lock().unwrap();
+        *handle_lock = Some(join_handle.abort_handle());
+
+        Ok(())
+    }
+
+    async fn update_status(&self, status: &str) -> Result<()> {
+        let msg_id = {
+            let lock = self.progress_message_id.lock().await;
+            *lock
+        };
+
+        let msg_id = match msg_id {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+
+        // レート制限（スロットリング）: 2秒以上の間隔を空ける
+        {
+            let mut last_update_lock = self.last_update.lock().await;
+            if last_update_lock.elapsed() < std::time::Duration::from_secs(2) {
+                return Ok(());
+            }
+            *last_update_lock = std::time::Instant::now();
+        }
+
+        let serenity_channel_id = serenity::model::id::ChannelId::new(self.channel_id);
+        let serenity_message_id = serenity::model::id::MessageId::new(msg_id);
+
+        let content = format!("*エージェントが実行中: {}*", status);
+        let builder = serenity::builder::EditMessage::new().content(content);
+
+        if let Err(e) = serenity_channel_id.edit_message(&self.http, serenity_message_id, builder).await {
+            tracing::warn!("DiscordProgressReporter: failed to edit message id={}: {:?}", msg_id, e);
+        }
+
+        Ok(())
+    }
+
+    async fn finish(&self) -> Result<()> {
+        // 1. タイピングキープアライブタスクを停止
+        {
+            let mut handle_lock = self.typing_abort_handle.lock().unwrap();
+            if let Some(handle) = handle_lock.take() {
+                handle.abort();
+                tracing::debug!("DiscordProgressReporter typing loop stopped.");
+            }
+        }
+
+        // 2. 中間メッセージを削除
+        let msg_id = {
+            let mut lock = self.progress_message_id.lock().await;
+            lock.take()
+        };
+
+        if let Some(id) = msg_id {
+            let serenity_channel_id = serenity::model::id::ChannelId::new(self.channel_id);
+            let serenity_message_id = serenity::model::id::MessageId::new(id);
+            if let Err(e) = serenity_channel_id.delete_message(&self.http, serenity_message_id).await {
+                tracing::warn!("DiscordProgressReporter: failed to delete message id={}: {:?}", id, e);
+            } else {
+                tracing::info!("DiscordProgressReporter: deleted progress message id={}", id);
+            }
+        }
+
         Ok(())
     }
 }

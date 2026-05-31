@@ -135,6 +135,7 @@ pub struct LaneRegistry {
     workspace_path: PathBuf,
     bus: Arc<MessageBus>,
     tool_registry: Arc<rustyclaw_tools::ToolRegistry>,
+    discord_connector: Arc<DiscordConnector>,
 }
 
 impl LaneRegistry {
@@ -144,6 +145,7 @@ impl LaneRegistry {
         bus: Arc<MessageBus>,
         tool_registry: Arc<rustyclaw_tools::ToolRegistry>,
         gmn_sem: Arc<Semaphore>,
+        discord_connector: Arc<DiscordConnector>,
     ) -> Self {
         Self {
             lanes: Arc::new(TokioMutex::new(HashMap::new())),
@@ -152,6 +154,7 @@ impl LaneRegistry {
             workspace_path,
             bus,
             tool_registry,
+            discord_connector,
         }
     }
 
@@ -190,6 +193,7 @@ impl LaneRegistry {
         let workspace_path = self.workspace_path.clone();
         let bus = self.bus.clone();
         let tool_registry = self.tool_registry.clone();
+        let discord_connector = self.discord_connector.clone();
 
         tokio::spawn(async move {
             let mut rx = rx;
@@ -492,6 +496,36 @@ impl LaneRegistry {
                                     tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                     let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
                                     let tool_reg = tool_registry.clone();
+
+                                    // ProgressReporter（進捗表示とタイピング）のセットアップ
+                                    let is_user_channel = !session_id.starts_with("cron");
+                                    let progress_reporter = if is_user_channel {
+                                        match discord_connector.create_progress_reporter(&channel_id) {
+                                            Ok(rep) => {
+                                                let _ = rep.start().await;
+                                                Some(rep)
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("Failed to create DiscordProgressReporter: {:?}", e);
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    };
+
+                                    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<String>(10);
+                                    let progress_tx_opt = if progress_reporter.is_some() { Some(progress_tx) } else { None };
+
+                                    let progress_reporter_clone = progress_reporter.clone();
+                                    let middle_task = tokio::spawn(async move {
+                                        if let Some(rep) = progress_reporter_clone {
+                                            while let Some(status) = progress_rx.recv().await {
+                                                let _ = rep.update_status(&status).await;
+                                            }
+                                        }
+                                    });
+
                                     // スキルファイル注入（workspace/skills/<name>.md が存在すれば前置）
                                     let content = crate::skills::inject_skill_content(&workspace_path, &content);
                                     let exec_res = if session_id.starts_with("cron:session-summary:") {
@@ -509,8 +543,14 @@ impl LaneRegistry {
                                             })
                                     } else {
                                         let run_purpose = if session_id == "cron:topic-patrol" { "patrol" } else { "discord" };
-                                        pipeline.execute_with_tools(&workspace_path, &session_id, &content, &tool_reg, run_purpose).await
+                                        pipeline.execute_with_tools(&workspace_path, &session_id, &content, &tool_reg, run_purpose, progress_tx_opt).await
                                     };
+
+                                    // 進捗表示の終了とクリーンアップ
+                                    if let Some(ref rep) = progress_reporter {
+                                        let _ = rep.finish().await;
+                                    }
+                                    middle_task.abort();
                                     match exec_res {
                                         Ok(response) => {
                                             tracing::info!("Agent response generated successfully for Session {}", session_id);
@@ -804,18 +844,9 @@ impl Gateway {
         let tool_registry = Arc::new(tool_registry);
         tracing::info!("Tool registry initialized with {} tools.", tool_registry.tool_count());
 
-        // 3. MessageBus および LaneRegistry の初期化
+        // 3. MessageBus および DiscordConnector の初期化
         let bus = Arc::new(MessageBus::new());
-        let gmn_sem = Arc::new(Semaphore::new(1)); // 全 gmn プロセス統合枠 (user + bg + flush を一本化)
-        let registry = Arc::new(LaneRegistry::new(
-            config.clone(),
-            self.workspace_path.clone(),
-            bus.clone(),
-            tool_registry.clone(),
-            gmn_sem.clone(),
-        ));
 
-        // 4. DiscordConnector コネクタの起動
         let discord_cfg = config.channels.discord.as_ref();
         let discord_enabled = discord_cfg.map(|d| d.enabled).unwrap_or(false);
         let discord_token = discord_cfg
@@ -843,12 +874,24 @@ impl Gateway {
             .unwrap_or_default();
         discord.set_respond_in_channels(respond_in);
 
+        let discord_client = Arc::new(discord);
+
+        // 4. LaneRegistry の初期化
+        let gmn_sem = Arc::new(Semaphore::new(1)); // 全 gmn プロセス統合枠 (user + bg + flush を一本化)
+        let registry = Arc::new(LaneRegistry::new(
+            config.clone(),
+            self.workspace_path.clone(),
+            bus.clone(),
+            tool_registry.clone(),
+            gmn_sem.clone(),
+            discord_client.clone(),
+        ));
+
         if discord_enabled {
-            discord.start().await.context("Failed to start DiscordConnector")?;
+            discord_client.start().await.context("Failed to start DiscordConnector")?;
         } else {
             tracing::info!("Discord channel disabled — skipping connector startup.");
         }
-        let discord_client = Arc::new(discord);
 
         // 5. MessageBus イベント監視ループ (MessageBus -> LaneRegistry)
         let registry_clone = registry.clone();
@@ -1028,7 +1071,8 @@ mod tests {
 
         let tool_registry = Arc::new(rustyclaw_tools::ToolRegistry::new());
         let test_gmn_sem = Arc::new(Semaphore::new(1));
-        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry, test_gmn_sem);
+        let mock_discord = Arc::new(DiscordConnector::new("mock"));
+        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry, test_gmn_sem, mock_discord);
 
         // メッセージを投入
         registry.dispatch(SystemEvent::IncomingMessage {
