@@ -532,7 +532,7 @@ header{
   <div class="row1">
     <div class="panel queue">
       <div class="panel-head"><span class="panel-label">◈ LANE QUEUE</span><span class="rts" id="queue-ts">—</span></div>
-      <div class="panel-body" id="queuePanel" style="padding:6px 8px;"><div style="color:var(--muted);text-align:center;padding:10px;font-family:'Fira Code',monospace;font-size:11px;">キューは空（稼働タスクなし）</div></div>
+      <div class="panel-body" id="queuePanel" style="padding:6px 8px;"><div style="color:var(--muted);text-align:center;padding:10px;font-family:'Fira Code',monospace;font-size:11px;">稼働タスクなし（待機中・正常）</div></div>
     </div>
     <div class="panel concur">
       <div class="panel-head"><span class="panel-label">◈ CONCURRENCY</span><span class="rts" id="concur-ts">—</span></div>
@@ -630,7 +630,7 @@ async function updateQueue(){
     const items=await r.json();
     document.getElementById('queue-ts').textContent='↻ '+now();
     const panel=document.getElementById('queuePanel');
-    if(items.length===0){panel.innerHTML='<div style="color:var(--muted);text-align:center;padding:10px;font-family:\'Fira Code\',monospace;font-size:11px;">キューは空（稼働タスクなし）</div>';return}
+    if(items.length===0){panel.innerHTML='<div style="color:var(--muted);text-align:center;padding:10px;font-family:\'Fira Code\',monospace;font-size:11px;">稼働タスクなし（待機中・正常）</div>';return}
     let html='';
     items.forEach((item,i)=>{
       const cls=item.status==='Executing'?'pill-exec':item.status==='Waiting'?'pill-wait':'pill-cool';
