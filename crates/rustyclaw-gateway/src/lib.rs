@@ -726,8 +726,6 @@ impl Gateway {
         }
         // WebFetchTool は常時登録（APIキー不要）
         tool_registry.register(Arc::new(rustyclaw_tools::WebFetchTool::new()));
-        // YolpWeatherTool は常時登録（APIキー不要、Open-Meteoバックエンド）
-        tool_registry.register(Arc::new(rustyclaw_tools::YolpWeatherTool::new()));
 
         // WorkspaceReadTool / WorkspaceWriteTool 登録
         tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone())));

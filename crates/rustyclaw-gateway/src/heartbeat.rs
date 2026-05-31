@@ -452,56 +452,62 @@ impl HeartbeatService {
 
         tracing::info!("HeartbeatService: Weather Patrol coordinates: lat={}, lon={}", lat, lon);
 
-        // 3. YolpWeatherTool を用いて降水量をフェッチ (await が発生、この時点では db への参照はない)
-        let tool = rustyclaw_tools::YolpWeatherTool::new();
-        let tool_res = tool.execute(serde_json::json!({
-            "coordinates": format!("{},{}", lon, lat)
-        })).await;
-
-        if tool_res.is_error {
-            tracing::error!("HeartbeatService: Weather Patrol API fetch failed: {}", tool_res.content);
-            return Ok(None);
-        }
-
-        // レスポンスのパース
-        let parsed_val: serde_json::Value = match serde_json::from_str(&tool_res.content) {
-            Ok(v) => v,
+        // 3. Open-Meteo API を直接呼び出して降水量をフェッチ
+        let url = format!(
+            "https://api.open-meteo.com/v1/forecast\
+             ?latitude={lat}&longitude={lon}\
+             &minutely_15=precipitation\
+             &timezone=Asia%2FTokyo\
+             &forecast_days=1"
+        );
+        let parsed_val: serde_json::Value = match reqwest::get(&url).await {
+            Ok(resp) => match resp.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("HeartbeatService: Weather Patrol response parse failed: {}", e);
+                    return Ok(None);
+                }
+            },
             Err(e) => {
-                tracing::error!("HeartbeatService: Weather Patrol response parse failed: {}", e);
+                tracing::error!("HeartbeatService: Weather Patrol API fetch failed: {}", e);
                 return Ok(None);
             }
         };
 
-        // WeatherList の Weather 配列を抽出
-        let weather_list = parsed_val["Feature"][0]["Property"]["WeatherList"]["Weather"].as_array();
-        let weather_array = match weather_list {
+        // minutely_15 の time/precipitation 配列を抽出
+        let times = match parsed_val["minutely_15"]["time"].as_array() {
             Some(arr) if !arr.is_empty() => arr,
             _ => {
                 tracing::warn!("HeartbeatService: Weather Patrol response is empty.");
                 return Ok(None);
             }
         };
+        let precips = parsed_val["minutely_15"]["precipitation"].as_array()
+            .cloned()
+            .unwrap_or_default();
+
+        // 現在時刻から60分先(5スロット)の降水量を取得
+        let now_str = Local::now().format("%Y-%m-%dT%H:%M").to_string();
+        let future_entries: Vec<(String, f64)> = times.iter()
+            .zip(precips.iter().chain(std::iter::repeat(&serde_json::Value::from(0.0))))
+            .filter(|(t, _)| t.as_str().unwrap_or("") >= now_str.as_str())
+            .take(5)
+            .map(|(t, p)| {
+                let time_str = t.as_str().unwrap_or("").to_string();
+                let hhmm = if time_str.len() >= 16 { time_str[11..16].to_string() } else { time_str.clone() };
+                let mm = p.as_f64().unwrap_or(0.0);
+                (hhmm, mm)
+            })
+            .collect();
 
         // 降水強度の判定（最大降水量の算出）
         let mut max_rainfall = 0.0;
         let mut rain_timeline = Vec::new();
-        for item in weather_array {
-            let rainfall = item["Rainfall"].as_f64().unwrap_or(0.0);
-            let time_str = item["Date"].as_str().unwrap_or("");
-            let entry_type = item["Type"].as_str().unwrap_or("");
-            
-            if rainfall > max_rainfall {
-                max_rainfall = rainfall;
+        for (hhmm, rainfall) in &future_entries {
+            if *rainfall > max_rainfall {
+                max_rainfall = *rainfall;
             }
-
-            // 時刻表示をHH:MMに整形
-            let formatted_time = if time_str.len() == 12 {
-                format!("{}:{}", &time_str[8..10], &time_str[10..12])
-            } else {
-                time_str.to_string()
-            };
-
-            rain_timeline.push(format!("- {} ({}): {} mm/h", formatted_time, entry_type, rainfall));
+            rain_timeline.push(format!("- {} (forecast): {} mm/15min", hhmm, rainfall));
         }
 
         tracing::info!("HeartbeatService: Weather Patrol completed. Max rainfall forecast: {} mm/h", max_rainfall);
