@@ -510,7 +510,7 @@ impl HeartbeatService {
             rain_timeline.push(format!("- {} (forecast): {} mm/15min", hhmm, rainfall));
         }
 
-        tracing::info!("HeartbeatService: Weather Patrol completed. Max rainfall forecast: {} mm/h", max_rainfall);
+        tracing::info!("HeartbeatService: Weather Patrol completed. Max rainfall forecast: {} mm/15min", max_rainfall);
 
         // 雨が降らない場合は無音 (通知なし)
         if max_rainfall <= 0.0 {
