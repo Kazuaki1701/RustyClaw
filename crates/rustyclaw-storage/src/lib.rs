@@ -51,6 +51,7 @@ impl DbManager {
                 duration_ms INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_usage_created_at ON usage (created_at);
 
             CREATE TABLE IF NOT EXISTS patrol_state (
                 patrol_name TEXT PRIMARY KEY,
@@ -136,23 +137,26 @@ impl DbManager {
     }
 
     /// 使用量をトークン数で時刻バケット集計する。
-    /// - `since_epoch`: 集計開始の unix 秒（None=全期間。窓開始は最初のデータ）
-    /// - `until_epoch`: 集計終了の unix 秒（通常は現在時刻）
-    /// - `granularity_secs`: バケット幅（600=10分, 3600=1時間, 86400=日）
-    /// 戻り値は窓内の全バケットを 0 埋めして昇順で返す（連続した時間軸）。
     pub fn get_usage_timeline(
         &self,
         since_epoch: Option<i64>,
         until_epoch: i64,
         granularity_secs: u64,
     ) -> Vec<serde_json::Value> {
+        use chrono::TimeZone;
         let g = (granularity_secs.max(1)) as i64;
-        let where_clause = if since_epoch.is_some() {
-            "WHERE CAST(strftime('%s', created_at) AS INTEGER) >= ?1"
+        let since_rfc = since_epoch.map(|s| {
+            chrono::Utc.timestamp_opt(s, 0)
+                .earliest()
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_default()
+        });
+        let where_clause = if since_rfc.is_some() {
+            "WHERE created_at >= ?1"
         } else {
             ""
         };
-        let params: Vec<&dyn rusqlite::ToSql> = match since_epoch.as_ref() {
+        let params: Vec<&dyn rusqlite::ToSql> = match since_rfc.as_ref() {
             Some(s) => vec![s],
             None => vec![],
         };
@@ -180,12 +184,18 @@ impl DbManager {
         if sparse.is_empty() {
             return vec![];
         }
+
         // 窓開始: since 指定があればそのフロア、無ければ最初のデータバケット
-        let start = match since_epoch {
+        let first_entry = *sparse.keys().next().unwrap();
+        let mut start = match since_epoch {
             Some(s) => (s / g) * g,
-            None => *sparse.keys().next().unwrap(),
+            None => first_entry,
         };
         let end = (until_epoch / g) * g;
+        // Cap to ensure at most 1000 data points to avoid massive loops and preserve recent data
+        if start < end - 1000 * g {
+            start = end - 1000 * g;
+        }
         let mut out = Vec::new();
         let mut b = start;
         let mut count = 0;

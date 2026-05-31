@@ -894,7 +894,10 @@ function renderNeuronsKpi(d){
 function renderTimeline(rows){
   if(!rows.length){document.getElementById('timelineChart').innerHTML='<text x="4" y="20" fill="#1e3a5f" font-size="8" font-family="Fira Code">No data yet</text>';return}
   const maxT=Math.max(...rows.map(r=>r.tokens??0));
-  if(maxT===0)return;
+  if(maxT===0){
+    document.getElementById('timelineChart').innerHTML='<text x="4" y="20" fill="#1e3a5f" font-size="8" font-family="Fira Code">No token usage in this period</text>';
+    return;
+  }
   const W=900,H=120,PAD=20;
   const xStep=(W-PAD*2)/Math.max(rows.length-1,1);
   const scale=v=>PAD+((H-PAD*2)*(1-v/maxT));

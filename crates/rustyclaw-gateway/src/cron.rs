@@ -351,8 +351,15 @@ pub fn next_run_epoch(
             let h: u32 = h.parse().ok()?;
             let m: u32 = m.parse().ok()?;
             let naive_today = now.date_naive().and_hms_opt(h, m, 0)?;
-            let today = chrono::Local.from_local_datetime(&naive_today).single()?;
-            let target = if today > now { today } else { today + chrono::Duration::days(1) };
+            let today = chrono::Local.from_local_datetime(&naive_today).earliest()?;
+            let target = if today > now {
+                today
+            } else {
+                let naive_tomorrow = now.date_naive()
+                    .checked_add_days(chrono::Days::new(1))?
+                    .and_hms_opt(h, m, 0)?;
+                chrono::Local.from_local_datetime(&naive_tomorrow).earliest()?
+            };
             Some(target.timestamp())
         }
         "interval" => {
@@ -375,11 +382,17 @@ pub fn compute_schedule(
     let cron_json_path = workspace_dir.join("cron.json");
     let content = match std::fs::read_to_string(&cron_json_path) {
         Ok(c) => c,
-        Err(_) => return vec![],
+        Err(e) => {
+            tracing::error!("Failed to read cron.json at {:?}: {}", cron_json_path, e);
+            return vec![];
+        }
     };
     let jobs: Vec<Job> = match serde_json::from_str(&content) {
         Ok(j) => j,
-        Err(_) => return vec![],
+        Err(e) => {
+            tracing::error!("Failed to parse cron.json at {:?}: {}", cron_json_path, e);
+            return vec![];
+        }
     };
     let now = chrono::Local::now();
     let mut out: Vec<serde_json::Value> = Vec::new();
