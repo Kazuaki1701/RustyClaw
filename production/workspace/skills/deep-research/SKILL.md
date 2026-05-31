@@ -1,3 +1,9 @@
+---
+name: deep-research
+description: 特定トピックやWeb上の情報について、多角的な検索・収集と構造的要約を行う深層調査スキル。
+allowed-tools:
+  - run_workspace_script
+---
 # Deep Research
 
 A skill for systematically investigating topics that cannot be answered with a single search or that require cross-referencing multiple sources.

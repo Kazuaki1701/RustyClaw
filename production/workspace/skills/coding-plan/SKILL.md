@@ -1,3 +1,9 @@
+---
+name: coding-plan
+description: 複雑なコーディングタスクの設計・実装・テスト計画を体系的に策定するためのスキル。
+allowed-tools:
+  - run_workspace_script
+---
 # Coding Plan
 
 A skill applied to all coding tasks that modify existing files.

@@ -1350,7 +1350,7 @@ impl Tool for WorkspaceExecuteScriptTool {
     }
 
     fn description(&self) -> &str {
-        "Executes a custom script located strictly within the `workspace/scripts/` directory to run complex local computations, API interactions, or data operations, minimizing LLM roundtrips and token consumption."
+        "Executes a custom script located strictly within the `workspace/scripts/` or a localized skill directory (e.g. `skills/[skill-name]/scripts/`) to run local computations, API interactions, or data operations."
     }
 
     fn parameters(&self) -> Value {
@@ -1359,7 +1359,7 @@ impl Tool for WorkspaceExecuteScriptTool {
             "properties": {
                 "script_name": {
                     "type": "string",
-                    "description": "The exact filename of the script inside `workspace/scripts/` (e.g. '500_get-vital-data-garmin.sh', '502_karakeep-tag-items.sh'). For security, path traversal sequences ('/', '\\', '..') are forbidden."
+                    "description": "The script path relative to workspace. Examples: '500_get-vital-data-garmin.sh' (for legacy scripts inside workspace/scripts/) or 'skills/vitals-coach/scripts/500_get-vital-data-garmin.sh' (for localized skill scripts). Path traversal sequences like '..' or absolute paths are strictly forbidden."
                 },
                 "args": {
                     "type": "array",
@@ -1382,20 +1382,30 @@ impl Tool for WorkspaceExecuteScriptTool {
             },
         };
 
-        // セキュリティチェック：パス走査対策
-        if script_name.contains('/') || script_name.contains('\\') || script_name.contains("..") {
+        // セキュリティチェック：絶対パスおよびパス走査 (..) の防御
+        if script_name.contains("..") || script_name.starts_with('/') || script_name.contains('\\') {
             return ToolResult {
-                content: "Error: Security violation. 'script_name' must not contain path traversal sequences ('/', '\\', '..'). Only filenames directly inside `workspace/scripts/` are allowed.".to_string(),
+                content: "Error: Security violation. Path traversal ('..'), absolute paths, or backward slashes ('\\') are strictly prohibited.".to_string(),
                 is_error: true,
             };
         }
 
-        let scripts_dir = self.workspace_dir.join("scripts");
-        let script_path = scripts_dir.join(script_name);
+        // パス解決：
+        // パターンA (局所化): skills/ で始まる場合は workspace 直下からの相対パス
+        // パターンB (従来フォールバック): それ以外は workspace/scripts/ 配下
+        let (script_path, scripts_dir) = if script_name.starts_with("skills/") {
+            let path = self.workspace_dir.join(script_name);
+            let dir = path.parent().unwrap_or(&self.workspace_dir).to_path_buf();
+            (path, dir)
+        } else {
+            let dir = self.workspace_dir.join("scripts");
+            let path = dir.join(script_name);
+            (path, dir)
+        };
 
         if !script_path.exists() {
             return ToolResult {
-                content: format!("Error: Script '{}' does not exist in `workspace/scripts/`.", script_name),
+                content: format!("Error: Script '{}' does not exist at expected location: {:?}", script_name, script_path),
                 is_error: true,
             };
         }
@@ -2059,6 +2069,45 @@ mod tests {
         })).await;
         assert!(res.is_error);
         assert!(res.content.contains("Security violation"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_execute_script_absolute_path() {
+        let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
+        let res = tool.execute(serde_json::json!({
+            "script_name": "/etc/passwd"
+        })).await;
+        assert!(res.is_error);
+        assert!(res.content.contains("Security violation"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_execute_script_localized_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
+        
+        // 局所化したダミースクリプトを作成
+        let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
+        std::fs::create_dir_all(&localized_script_dir).unwrap();
+        
+        let script_path = localized_script_dir.join("test-run.sh");
+        std::fs::write(&script_path, "#!/bin/bash\necho 'hello vitals'").unwrap();
+
+        // 実行権限の付与（Unix系のみ）
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).unwrap();
+        }
+
+        let res = tool.execute(serde_json::json!({
+            "script_name": "skills/vitals-coach/scripts/test-run.sh"
+        })).await;
+
+        assert!(!res.is_error, "Tool reported error: {}", res.content);
+        assert!(res.content.contains("hello vitals"));
     }
 }
 

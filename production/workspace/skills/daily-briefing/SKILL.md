@@ -1,3 +1,9 @@
+---
+name: daily-briefing
+description: 朝の定期実行において、バイタル、予定、ニュース、重要トピックを一括して要約・ブリーフィング作成するスキル。
+allowed-tools:
+  - run_workspace_script
+---
 # Daily Briefing
 
 Generate a concise, prioritized daily briefing. Gracefully skips unavailable data sources.

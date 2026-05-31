@@ -1,3 +1,9 @@
+---
+name: session-logs
+description: 過去の会話セッション履歴（sessions/*.jsonl）の分析やキーワード検索を高速に行うためのスキル。
+allowed-tools:
+  - run_workspace_script
+---
 # Session Logs
 
 A skill for searching and analyzing RustyClaw session history.

@@ -1,3 +1,9 @@
+---
+name: workspace
+description: ワークスペース内のファイル構造、README、およびスクリプトの使用目的を整理・ナビゲーションするスキル。
+allowed-tools:
+  - run_workspace_script
+---
 # Workspace — Session Working Directory
 
 When file creation or saving is needed, output to a session-specific directory under `runs/` instead of cluttering the workspace root.

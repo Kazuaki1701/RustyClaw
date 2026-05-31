@@ -1,3 +1,9 @@
+---
+name: todo-tracker
+description: 未完了タスクの追跡・更新および進捗ステータスの整理を一元管理するタスク管理スキル。
+allowed-tools:
+  - run_workspace_script
+---
 # Todo Tracker
 
 Treat `TODO.md` as the single source of truth for task management in the workspace.

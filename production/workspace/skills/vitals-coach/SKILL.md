@@ -1,3 +1,9 @@
+---
+name: vitals-coach
+description: Garmin Connectからバイタルデータ（歩数、心拍、ストレス、BB、睡眠）を取得し、体調分析と健康アドバイスを提供するコーチングスキル。
+allowed-tools:
+  - run_workspace_script
+---
 # Vitals Coach Skill
 
 Garmin Connect から取得したバイタルデータ（歩数、心拍、ストレス、Body Battery、睡眠など）を分析し、K様の現在の状態に基づいた具体的なアドバイスを生成・提供します。

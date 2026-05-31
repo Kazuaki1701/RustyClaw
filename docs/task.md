@@ -55,32 +55,32 @@
 ## Phase 35: 標準 Agent Skills 仕様 (agentskills.io) への対応と統合 🔴
 > 計画書 (`docs/superpowers/plans/2026-05-31-standard-agent-skills-integration-plan.md`) に基づき、標準の `SKILL.md` (YAML Frontmatter付) と段階的開示 (Progressive Disclosure) に対応する。
 
-- `[ ]` **1. Rustデータ構造の定義と Frontmatter YAML パーサーの実装 (Phase A)**
+- `[x]` **1. Rustデータ構造の定義と Frontmatter YAML パーサーの実装 (Phase A)**
   - `Cargo.toml` に `gray_matter = "0.2"` を導入。
   - `crates/rustyclaw-gateway/src/skills.rs` に `SkillManifest` と `Skill` 構造体を実装。
   - YAMLのパースおよびエラーハンドリング処理の実装。
 
-- `[ ]` **2. ハイブリッドスキャンエンジンの実装と後方互換性の確保 (Phase A)**
+- `[x]` **2. ハイブリッドスキャンエンジンの実装と後方互換性の確保 (Phase A)**
   - `workspace/skills/` を巡回し、`[skill-name]/SKILL.md` ディレクトリ構造を優先スキャン。
   - 従来のフラットな `[skill-name].md` を検知した際、疑似的にメタデータを生成してロードするフォールバック処理を実装。
 
-- `[ ]` **3. Discovery (レベル1) システムプロンプト自動生成の実装 (Phase B)**
+- `[x]` **3. Discovery (レベル1) システムプロンプト自動生成の実装 (Phase B)**
   - 全スキルの `name` と `description` のみを集約した「Skills Directory」を起動時にキャッシュ。
   - セッション開始時のシステムプロンプト末尾に自動で差し込むインジェクターの実装。
 
-- `[ ]` **4. Activation (レベル2) 動的インジェクションの実装 (Phase B)**
+- `[x]` **4. Activation (レベル2) 動的インジェクションの実装 (Phase B)**
   - LLMリクエスト送信時に、プロンプトテキストおよび会話履歴にスキルのトリガー識別子（例: `use-skill: <name>` 等）が含まれているかをスキャンするエンジンを実装。
   - トリガーされたスキルの `SKILL.md` 本文（Instructions）のみをコンテキストに動的マージする処理の実装。
 
-- `[ ]` **5. Execution (レベル3) スキル内スクリプトの解決とトラバーサル防御の実装 (Phase C)**
+- `[x]` **5. Execution (レベル3) スキル内スクリプトの解決とトラバーサル防御の実装 (Phase C)**
   - `run_workspace_script` のパス解決を `skills/[skill-name]/scripts/[script-name]` に拡張。
   - 親ディレクトリ遡行 (`..` や `/`) などのトラバーサル攻撃を厳格に防御するバリデーター `resolve_secure_script_path` の実装。
 
-- `[ ]` **6. 既存8スキルのマイグレーション (Phase C)**
+- `[x]` **6. 既存8スキルのマイグレーション (Phase C)**
   - 現行の `vitals-coach.md` や `session-logs.md` などのフラット構成を、`[skill-name]/SKILL.md` 形式に移行し、YAML Frontmatterを追加。
   - `500_get-vital-data-garmin.sh` などのスクリプトをそれぞれの `scripts/` ディレクトリに移動し、パス定義を更新。
 
-- `[ ]` **7. 単体テストの記述と自動検証**
+- `[x]` **7. 単体テストの記述と自動検証**
   - YAMLパース、ハイブリッドスキャン、Discovery提示、動的Activation、およびセキュリティパス解決の単体テストを `crates/rustyclaw-gateway/src/skills.rs` 等に記述。
   - `cargo test` で全テストがパスすることを確認。
 
@@ -106,33 +106,11 @@
 
 ---
 
-## Phase 35: 標準 Agent Skills 仕様 (agentskills.io) への対応と統合 🔴
-> 計画書 (`docs/superpowers/plans/2026-05-31-standard-agent-skills-integration-plan.md`) に基づき、標準の `SKILL.md` (YAML Frontmatter付) と段階的開示 (Progressive Disclosure) に対応する。
-
-- `[ ]` **1. YAML Frontmatter ハイブリッドローダーの実装 (Phase A)**
-  - `gray_matter` または `serde_yaml` を導入し、`crates/rustyclaw-gateway/src/skills.rs` を拡張。
-  - `[skill-name]/SKILL.md` 形式を優先パースし、従来のフラット `.md` も疑似ラップして下位互換性を維持。
-
-- `[ ]` **2. 段階的開示 (Progressive Disclosure) エンジンの構築 (Phase B)**
-  - **Discovery**: 起動時に全スキルの `(name, description)` の一覧をキャッシュし、システムプロンプト末尾の「Skills Directory」へ自動インジェクト。
-  - **Activation**: プロンプト分析に基づき、必要な `SKILL.md` の Instructions (Markdown本文) を動的にコンテキストへ追加・削除するロジックの実装。
-
-- `[ ]` **3. スキル局所化リソース (Execution) のセキュアな実行 (Phase C)**
-  - `run_workspace_script` ツールのパス解決を拡張し、`skills/[skill-name]/scripts/[script-name]` への安全なアクセスをサポート。
-
-- `[ ]` **4. テストと RPi4 での実機検証**
-  - 単体テストのパス確認 (`cargo test`)。
-  - RP1（Raspberry Pi 4）へデプロイし、新フォーマットによる Garmin/Briefing 等の動作確認。
-
-- `[ ]` **5. ドキュメントおよび gap 比較表の更新** (DoD)
-
----
-
 ## 🟢 その他の改善案件（独自機能・将来対応）
 
 ---
 
-## Phase 25: 並行制御の最適化とフリーズ防止（Lane Queue 改善・回収）残り 🟢
+## Phase 25: 並行制御 of 最適化とフリーズ防止（Lane Queue 改善・回収）残り 🟢
 > ※ 完了済みの Phase 1〜2 はアーカイブ済み。残 2 件は独自安全改善。  
 > ※ **item 5（Lossless Resume）は GeminiClaw ギャップB に相当するため、GeminiClaw ギャップ回収完了後に 🔴 昇格を検討する。**
 
