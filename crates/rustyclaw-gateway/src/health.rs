@@ -478,7 +478,7 @@ header{
 .page{display:none;flex:1;overflow:hidden;min-height:0}
 .page.active{display:flex;flex-direction:column}
 /* MONITOR */
-.monitor-grid{flex:1;display:grid;grid-template-rows:130px 1fr 1fr;gap:8px;padding:8px 10px;overflow:hidden;min-height:0}
+.monitor-grid{flex:1;display:grid;grid-template-rows:180px 1fr 1fr;gap:8px;padding:8px 10px;overflow:hidden;min-height:0}
 .row1{display:grid;grid-template-columns:2.2fr 1fr 1fr;gap:8px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:0}
 .row3{display:grid;grid-template-columns:3fr 2fr;gap:8px;min-height:0}
@@ -504,7 +504,7 @@ header{
 .panel.chat-p   .panel-label{color:var(--purple);text-shadow:0 0 8px rgba(191,0,255,.5)}
 .panel-body{flex:1;padding:8px 10px;overflow-y:auto;min-height:0;font-family:'Fira Code',monospace;font-size:11px;line-height:1.7}
 .rts{font-size:9px;color:var(--muted);font-family:'Fira Code',monospace}
-.q-item{display:flex;align-items:center;gap:7px;padding:4px 0;font-size:11.5px;border-bottom:1px solid rgba(255,255,255,.03)}
+.q-item{display:flex;align-items:center;gap:7px;padding:3px 0;font-size:11.5px;border-bottom:1px solid rgba(255,255,255,.03)}
 .q-item:last-child{border-bottom:none}
 .q-pill{font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:.06em;flex-shrink:0}
 .pill-exec{background:rgba(0,255,159,.12);color:var(--green);border:1px solid rgba(0,255,159,.3);box-shadow:0 0 6px rgba(0,255,159,.2)}
@@ -515,6 +515,23 @@ header{
 .q-time{color:var(--muted);font-size:10px;flex-shrink:0}
 .cool-bar{height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:2px;overflow:hidden}
 .cool-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--amber),#ff6600);box-shadow:0 0 4px var(--amber);transition:width .5s}
+.lane-sec-lbl{font-size:8.5px;font-weight:700;color:var(--muted);letter-spacing:.08em;margin-bottom:2px;font-family:'Fira Code',monospace}
+.lane-div{height:1px;background:rgba(255,255,255,.04);margin:2px 0}
+.lanes-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:2px}
+.lane-card{padding:5px 6px;border-radius:4px;font-size:10px;display:flex;flex-direction:column;justify-content:space-between;height:45px;transition:all .2s;background:var(--term-bg)}
+.lane-card.active{background:rgba(0,255,159,.03);border:1px solid rgba(0,255,159,0.25);box-shadow:0 0 8px rgba(0,255,159,.03)}
+.lane-card.idle{background:rgba(255,255,255,.01);border:1px dashed rgba(255,255,255,.05);color:var(--muted)}
+.lane-hdr{display:flex;justify-content:space-between;align-items:center;font-size:8px;font-weight:700}
+.lane-n{color:var(--muted)}.lane-card.active .lane-n{color:var(--green)}
+.lane-st{display:flex;align-items:center;gap:3px}.lane-card.active .lane-st{color:var(--green)}
+.lane-dot{width:4px;height:4px;border-radius:50%;background:var(--muted)}
+.lane-card.active .lane-dot{background:var(--green);box-shadow:0 0 4px var(--green);animation:pulse-dot 1.2s infinite}
+.lane-sid{font-size:10px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:2px 0}
+.lane-card.idle .lane-sid{color:rgba(255,255,255,.15);font-style:italic;font-weight:400}
+.lane-meta{display:flex;justify-content:space-between;font-size:8px;color:var(--muted)}
+.lane-desc{max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.q-list-area{flex:1;overflow-y:auto;min-height:0}
+@keyframes pulse-dot{0%{transform:scale(.9);opacity:.6}50%{transform:scale(1.2);opacity:1}100%{transform:scale(.9);opacity:.6}}
 .slot-row{display:flex;gap:4px;margin:6px 0 8px}
 .slot{flex:1;height:16px;border-radius:3px;border:1px solid rgba(0,212,255,.15);background:rgba(255,255,255,.03)}
 .slot.active{background:rgba(0,212,255,.25);border-color:var(--blue);box-shadow:0 0 6px rgba(0,212,255,.4)}
@@ -624,7 +641,7 @@ header{
   <div class="row1">
     <div class="panel queue">
       <div class="panel-head"><span class="panel-label">◈ LANE QUEUE</span><span class="rts" id="queue-ts">—</span></div>
-      <div class="panel-body" id="queuePanel" style="padding:6px 8px;"><div style="color:var(--muted);text-align:center;padding:10px;font-family:'Fira Code',monospace;font-size:11px;">稼働タスクなし（待機中・正常）</div></div>
+      <div class="panel-body" id="queuePanel" style="padding:6px 8px; overflow-y:hidden; display:flex; flex-direction:column; gap:2px;"><div style="color:var(--muted);text-align:center;padding:10px;font-family:'Fira Code',monospace;font-size:11px;">稼働タスクなし（待機中・正常）</div></div>
     </div>
     <div class="panel concur">
       <div class="panel-head"><span class="panel-label">◈ CONCURRENCY</span><span class="rts" id="concur-ts">—</span></div>
@@ -736,21 +753,68 @@ async function updateQueue(){
     const sched=rs.ok?await rs.json():[];
     document.getElementById('queue-ts').textContent='↻ '+now();
     const panel=document.getElementById('queuePanel');
-    let html='';
-    items.forEach((item)=>{
-      const cls=item.status==='Executing'?'pill-exec':item.status==='Waiting'?'pill-wait':'pill-cool';
-      const lbl=item.status==='Executing'?'EXEC':item.status==='Waiting'?'WAIT':'COOL';
+    
+    const executing=items.filter(i=>i.status==='Executing');
+    const waiting=items.filter(i=>i.status!=='Executing');
+    
+    let html='<div class="lane-sec-lbl">LANES (PARALLEL WORKERS)</div>';
+    html+='<div class="lanes-grid">';
+    for(let i=0;i<4;i++){
+      if(i<executing.length){
+        const task=executing[i];
+        const elapsed=Math.floor((Date.now()-task.enqueued_at_ms)/1000);
+        html+=`
+          <div class="lane-card active" title="${escapeHtml(task.description)}">
+            <div class="lane-hdr">
+              <span class="lane-n">LANE 0${i+1}</span>
+              <span class="lane-st"><span class="lane-dot"></span>RUN</span>
+            </div>
+            <div class="lane-sid">${escapeHtml(task.session_id)}</div>
+            <div class="lane-meta">
+              <span class="lane-desc">${escapeHtml(task.description||'Executing...')}</span>
+              <span class="lane-time">${elapsed}s</span>
+            </div>
+          </div>
+        `;
+      }else{
+        html+=`
+          <div class="lane-card idle">
+            <div class="lane-hdr">
+              <span class="lane-n">LANE 0${i+1}</span>
+              <span class="lane-st"><span class="lane-dot"></span>IDLE</span>
+            </div>
+            <div class="lane-sid">[ Ready ]</div>
+            <div class="lane-meta">
+              <span>--</span>
+              <span>--</span>
+            </div>
+          </div>
+        `;
+      }
+    }
+    html+='</div>';
+    html+='<div class="lane-div"></div>';
+    html+='<div class="lane-sec-lbl">PENDING QUEUE & SCHEDULED</div>';
+    html+='<div class="q-list-area">';
+    
+    let qHtml='';
+    waiting.forEach((item)=>{
+      const cls=item.status==='Waiting'?'pill-wait':'pill-cool';
+      const lbl=item.status==='Waiting'?'WAIT':'COOL';
       const elapsed=Math.floor((Date.now()-item.enqueued_at_ms)/1000);
-      html+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span><span class="q-sid">${escapeHtml(item.session_id)}</span><span class="q-desc">${escapeHtml(item.description||'')}</span><span class="q-time">${elapsed}s</span></div>`;
-      if(item.status==='Cooldown'&&item.cooldown_left_secs>0){const pct=Math.min(100,(item.cooldown_left_secs/60)*100);html+=`<div class="cool-bar"><div class="cool-fill" style="width:${pct}%"></div></div>`}
+      qHtml+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span><span class="q-sid">${escapeHtml(item.session_id)}</span><span class="q-desc">${escapeHtml(item.description||'')}</span><span class="q-time">${elapsed}s</span></div>`;
+      if(item.status==='Cooldown'&&item.cooldown_left_secs>0){const pct=Math.min(100,(item.cooldown_left_secs/60)*100);qHtml+=`<div class="cool-bar"><div class="cool-fill" style="width:${pct}%"></div></div>`}
     });
     sched.forEach((s)=>{
       const left=Math.max(0,s.next_run_epoch-Math.floor(Date.now()/1000));
       const h=Math.floor(left/3600),m=Math.floor((left%3600)/60);
       const eta=h>0?`${h}h${m}m`:m>0?`${m}m`:`<1m`;
-      html+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span><span class="q-sid">${escapeHtml(s.name)}</span><span class="q-desc">${escapeHtml(s.trigger_type)}</span><span class="q-time">in ${eta}</span></div>`;
+      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span><span class="q-sid">${escapeHtml(s.name)}</span><span class="q-desc">${escapeHtml(s.trigger_type)}</span><span class="q-time">in ${eta}</span></div>`;
     });
-    if(!html){html='<div style="color:var(--muted);text-align:center;padding:10px;font-family:\'Fira Code\',monospace;font-size:11px;">稼働タスク・予定なし</div>'}
+    if(!qHtml){qHtml='<div style="color:var(--muted);text-align:center;padding:15px;font-size:10px;">待機タスクなし</div>'}
+    html+=qHtml;
+    html+='</div>';
+    
     panel.innerHTML=html;
   }catch{}
 }
