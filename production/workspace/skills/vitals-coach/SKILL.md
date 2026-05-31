@@ -57,16 +57,18 @@ Invoke the Garmin retrieval script located inside this skill's localized path, p
     *   `env`:
         *   `HOMEASSISTANT_TOKEN`: `$vault:homeassistant-token`
 
+The script returns **only the 7 core fields** (Body battery, Average stress level, Steps, Daily step goal, Sleep duration, HRV status, Last synced). Do not attempt to parse other fields — they are not returned.
+
 ### Step 2: Filtration & Threshold Analysis (Level 2)
 Extract only the **Core Health Metrics** and evaluate them against these coaching thresholds:
 
-| Metric | Alert Threshold | Coaching Strategy (Japanese) |
+| Metric (HA sensor name) | Alert Threshold | Coaching Strategy (Japanese) |
 | :--- | :--- | :--- |
-| **Body Battery** | Current < 20 | 激しい活動を控え、早めの就寝や休息を優先するよう提案。 |
-| **Stress Level** | Average > 50 | 深呼吸、スクリーンフリー時間、または軽い休憩を推奨。 |
-| **Steps Taken** | Under 10,000 | 軽いストレッチや散歩を提案（目標10,000歩）。 |
-| **Sleep Duration** | Under 6 hours | 睡眠不足を指摘し、短時間の昼寝や就寝環境の改善をアドバイス。 |
-| **HRV Status** | "Unbalanced" | 身体的疲労の蓄積を指摘し、完全なパッシブリカバリーを推奨。 |
+| **`Garmin Connect Body battery`** | Current < 20 | 激しい活動を控え、早めの就寝や休息を優先するよう提案。 |
+| **`Garmin Connect Average stress level`** | Average > 50 | 深呼吸、スクリーンフリー時間、または軽い休憩を推奨。 |
+| **`Garmin Connect Steps`** | Under 10,000 (参照: `Garmin Connect Daily step goal`) | 軽いストレッチや散歩を提案。 |
+| **`Garmin Connect Sleep duration`** | Under 360 min (6 hours) | 睡眠不足を指摘し、短時間の昼寝や就寝環境の改善をアドバイス。 |
+| **`Garmin Connect HRV status`** | "Unbalanced" または "Unknown" | "Unbalanced": 疲労蓄積を指摘しパッシブリカバリーを推奨。"Unknown": データ未取得のため HRV 評価は省略し他メトリクスで判断。 |
 
 ### Step 3: Deliver (Concise & Empathetic Secretary Tone)
 Formulate a supportive, professional, yet warm secretary-style response in Japanese (K-sama's preference).
@@ -80,7 +82,7 @@ Formulate a supportive, professional, yet warm secretary-style response in Japan
 
 ## Common Mistakes & Antipatterns
 
-*   **Raw Data Dumping**: Outputting 70+ lines of raw JSON, wasting context and tokens. (Fix: Filter strictly to the 5 core health metrics).
+*   **Raw Data Dumping**: The script already filters to 7 core fields. Do not modify the script to output all sensors.
 *   **Assuming Real-time Status**: Ignoring the sync time and declaring hours-old vitals as "fine" during an acute illness. (Fix: Always calculate and declare JST sync latency).
 *   **Missing Vault Keys**: Running without verifying if `homeassistant-token` exists in `vault.json`. (Fix: Verify token presence first and fail gracefully).
 *   **Absolute Script Execution**: Running shell scripts directly. (Fix: Use `run_workspace_script` for secure localized execution).
