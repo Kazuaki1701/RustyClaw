@@ -71,6 +71,37 @@ fn default_max_tokens() -> Option<u32> { Some(2048) }
 fn default_temperature() -> Option<f32> { Some(0.7) }
 fn bool_true() -> bool { true }
 
+/// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
+/// 配列の場合、先頭が primary モデル、以降がフォールバックモデル。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ModelNames {
+    Single(String),
+    Chain(Vec<String>),
+}
+
+impl Default for ModelNames {
+    fn default() -> Self { Self::Single(String::new()) }
+}
+
+impl ModelNames {
+    /// 先頭（primary）モデル名を返す。
+    pub fn primary(&self) -> &str {
+        match self {
+            Self::Single(s) => s,
+            Self::Chain(v)  => v.first().map(|s| s.as_str()).unwrap_or(""),
+        }
+    }
+
+    /// [primary, fallback1, fallback2, ...] のスライスを返す。
+    pub fn as_chain(&self) -> Vec<&str> {
+        match self {
+            Self::Single(s) => vec![s.as_str()],
+            Self::Chain(v)  => v.iter().map(|s| s.as_str()).collect(),
+        }
+    }
+}
+
 /// 用途ごとの LLM 設定（model_list の model_name を参照）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentPurposeConfig {
@@ -562,5 +593,30 @@ mod tests {
         if let Some(tz) = detect_timezone() {
             assert!(!tz.is_empty());
         }
+    }
+
+    #[test]
+    fn test_model_names_single_deserialization() {
+        let s: ModelNames = serde_json::from_str(r#""groq-llama-8b""#).unwrap();
+        assert_eq!(s.primary(), "groq-llama-8b");
+        assert_eq!(s.as_chain(), vec!["groq-llama-8b"]);
+    }
+
+    #[test]
+    fn test_model_names_chain_deserialization() {
+        let c: ModelNames = serde_json::from_str(r#"["groq-70b", "or-deepseek"]"#).unwrap();
+        assert_eq!(c.primary(), "groq-70b");
+        assert_eq!(c.as_chain(), vec!["groq-70b", "or-deepseek"]);
+    }
+
+    #[test]
+    fn test_model_names_mixed_in_config() {
+        let json = r#"{ "single": "groq-8b", "chain": ["groq-70b", "or-deepseek"] }"#;
+        #[derive(serde::Deserialize)]
+        struct Tmp { single: ModelNames, chain: ModelNames }
+        let tmp: Tmp = serde_json::from_str(json).unwrap();
+        assert_eq!(tmp.single.primary(), "groq-8b");
+        assert_eq!(tmp.chain.primary(), "groq-70b");
+        assert_eq!(tmp.chain.as_chain().len(), 2);
     }
 }
