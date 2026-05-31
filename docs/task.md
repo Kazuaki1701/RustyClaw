@@ -123,13 +123,13 @@
   - `504_get-weather.sh`（大森・厚木2地点、気温・風速・今日最高/最低・60分降水量）。
   - `YolpWeatherTool` 構造体およびテストの削除。
 
-- `[ ]` **2. Googleカレンダーの予定管理スキル化（Phase B）**
+- `[x]` **2. Googleカレンダーの予定管理スキル化（Phase B）**
   - `skills/calendar/` スキルフォルダを新設。
   - `505_get-calendar.sh`（7日間予定、title/start/end/location のみ抽出）。
   - `508_write-calendar.sh`（許可 Calendar ID 2件ハードコードガード内蔵）。
   - `GwsCalendarTool`, `GwsCalendarWriteTool` 構造体およびテストの削除。
 
-- `[ ]` **3. Gmailメッセージ取得・ゴミ箱化のスキル化（Phase C）**
+- `[x]` **3. Gmailメッセージ取得・ゴミ箱化のスキル化（Phase C）**
   - `skills/gmail/` スキルフォルダを新設。
   - `506_get-gmail.sh`（id/sender/subject/date/snippet の5フィールド抽出）。
   - `509_delete-gmail.sh`（`_ai-agent` ラベル存在検証ガード内蔵）。
