@@ -108,6 +108,37 @@
 
 ---
 
+## Phase 36: 残存するネイティブツールの完全スキル化・疎結合化 🔴
+> 計画書 ([remaining_native_decoupling_implementation_plan.md](file:///home/kazuaki/.gemini/antigravity-cli/brain/718e6059-1c7d-4545-b99d-f99ed0d9211a/remaining_native_decoupling_implementation_plan.md)) に基づき、天気、カレンダー、Gmail、Obsidian の4種類のネイティブツールを完全デカップリングしてローカルスキル化し、トークン削減前処理を施す。
+
+- `[ ]` **1. 天気予報のスキル化（Phase A）**
+  - `skills/weather/` スキルフォルダを新設。
+  - `504_get-weather.sh` スクリプトの実装（`jq` による極限降雨/気温の要約前処理でトークン約92%削減）。
+  - `YolpWeatherTool` 構造体およびテストの削除。
+
+- `[ ]` **2. Googleカレンダーの予定管理スキル化（Phase B）**
+  - `skills/calendar/` スキルフォルダを新設。
+  - `505_get-calendar.sh` スクリプトの実装（予定タイトル、時刻、場所のみの `jq` マークダウン表要約でトークン約85%削減）。
+  - `508_write-calendar.sh` スクリプトの実装（許可リスト検証ガード内蔵）。
+  - `GwsCalendarTool`, `GwsCalendarWriteTool` 構造体およびテストの削除。
+
+- `[ ]` **3. Gmailメッセージ取得・ゴミ箱化のスキル化（Phase C）**
+  - `skills/gmail/` スキルフォルダを新設。
+  - `506_get-gmail.sh` スクリプトの実装（Sender, Subject, スニペットのみの `jq` 抽出でトークン約80%削減）。
+  - `509_delete-gmail.sh` スクリプトの実装（`_ai-agent` ラベル存在検証ガード内蔵）。
+  - `GwsGmailTool`, `GwsGmailDeleteTool` 構造体およびテストの削除。
+
+- `[ ]` **4. Obsidian 操作の統一スキル化（Phase D）**
+  - `skills/obsidian/` スキルフォルダを新設。
+  - `507_obsidian-ops.sh` スクリプトの実装（検索結果 `jq` トリミング、アペンド動作のBash内蔵、URLエンコード）。
+  - `ObsidianSearchTool`, `ObsidianReadTool`, `ObsidianWriteTool` 構造体およびテストの削除。
+
+- `[ ]` **5. ゲートウェイ自動登録の解除と cargo test のオールグリーン検証**
+
+- `[ ]` **6. RPi4 実機検証と deploy.sh による配備**
+
+---
+
 ## Phase 24: LLM 接続プロバイダ層の耐障害性（レジリエンス）強化 🔴
 > GeminiClaw は 429 検知・バックオフおよびモデルフォールバックを実装済み。RustyClaw での同等機能。
 
