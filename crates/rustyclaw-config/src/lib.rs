@@ -358,40 +358,18 @@ impl Config {
             .collect()
     }
 
-    /// 用途に対応する解決済み LlmModelConfig を返す。
-    /// 該当 purpose が未設定の場合は default にフォールバック。
+    /// 用途に対応する解決済み LlmModelConfig を返す。後方互換維持。
+    /// 内部では get_model_chain()[0] を使用。
+    /// チェーンが空（全モデル disabled）の場合は model_list 先頭 enabled モデルを返す。
     pub fn get_model(&self, purpose: &str) -> LlmModelConfig {
-        let model_name = match purpose {
-            "summary" => self.agents.summary.as_ref()
-                .map(|s| s.primary())
-                .unwrap_or_else(|| self.agents.default.primary()),
-            "memory" => self.agents.memory.as_ref()
-                .map(|s| s.primary())
-                .unwrap_or_else(|| self.agents.default.primary()),
-            "tools" => self.agents.tools.as_ref()
-                .map(|s| s.primary())
-                .unwrap_or_else(|| self.agents.default.primary()),
-            "discord" => self.agents.discord.as_ref()
-                .map(|s| s.primary())
-                .unwrap_or_else(|| self.agents.default.primary()),
-            "line" => self.agents.line.as_ref()
-                .map(|s| s.primary())
-                .unwrap_or_else(|| self.agents.default.primary()),
-            "heartbeat" => self.agents.heartbeat.as_ref()
-                .map(|s| s.primary())
-                .unwrap_or_else(|| self.agents.default.primary()),
-            "patrol" => self.agents.patrol.as_ref()
-                .map(|s| s.primary())
-                .unwrap_or_else(|| self.agents.default.primary()),
-            _ => self.agents.default.primary(),
-        };
-
-        let entry = self.model_list.iter()
-            .find(|m| m.model_name == model_name && m.enabled)
-            .or_else(|| self.model_list.iter().find(|m| m.enabled));
-
-        match entry {
-            Some(e) => LlmModelConfig {
+        // チェーンの先頭を返す
+        if let Some(first) = self.get_model_chain(purpose).into_iter().next() {
+            return first;
+        }
+        // 全 named モデルが disabled → model_list 先頭 enabled モデルを最終手段として返す
+        self.model_list.iter()
+            .find(|m| m.enabled)
+            .map(|e| LlmModelConfig {
                 model_purpose: purpose.to_string(),
                 model_provider: e.provider.clone(),
                 model_name: e.model.clone(),
@@ -399,12 +377,11 @@ impl Config {
                 api_base_url: e.api_base.clone(),
                 max_tokens: e.max_tokens,
                 temperature: e.temperature,
-            },
-            None => LlmModelConfig {
+            })
+            .unwrap_or_else(|| LlmModelConfig {
                 model_purpose: purpose.to_string(),
                 ..Default::default()
-            },
-        }
+            })
     }
 
     /// 環境変数による設定オーバーライド
