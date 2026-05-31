@@ -126,6 +126,11 @@ CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
 ./scripts/deploy.sh
 ```
 
+> **config profile**: `production/config/config.json` は追跡対象外の symlink。本番は release、デバッグは debug を指すよう運用側で設定する（NAS 共有のため rp1 にも反映される）。
+> - 本番: `cd production/config && ln -sfn config.release.json config.json`
+> - デバッグ: `cd production/config && ln -sfn config.debug.json config.json`
+> 前提パッケージ: rp1 に `sqlite3`（state DB 点検用）、`gws`（Google Workspace CLI）。LM Studio 利用時は埋め込みモデル（nomic-embed-text）を常駐ロードしておくと `memory_search` 初回が速い。
+
 **手動** — 稼働中バイナリは置換不可（`ETXTBSY`）。別名転送 → 停止 → 原子的差し替え → 再起動。
 
 ```bash

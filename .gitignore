@@ -46,6 +46,8 @@ tempfile*
 # シークレット vault（絶対にコミットしない）
 /production/config/vault.enc
 /production/config/*.enc
+# アクティブ profile の symlink（debug/release のどちらを指すかはローカル運用判断・追跡しない）
+/production/config/config.json
 # クロスビルド成果物（大容量バイナリ）
 /production/bin/
 # 本番ワークスペースのランタイム生成物（DB・索引・ログ・要約・セッション）
