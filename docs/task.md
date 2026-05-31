@@ -90,6 +90,11 @@
 - `[x]` **9. docs/specs/09_geminiclaw_feature_comparison.md の更新** (DoD)
   - 標準Skills仕様完全準拠および8スキルのマイグレーション完了を比較表に反映。
 
+- `[x]` **10. TDDによる `get-vital-data-garmin` スキル作成と `vitals-coach` のリファクタリング** (writing-skills)
+  - 医療安全免責、Last synced同期遅延検証（UTCからJSTへの時差変換対応）、主要指標要約フィルタリングを組み込んだ `get-vital-data-garmin` をTDDで新規作成。
+  - `vitals-coach` の責務を分析・コーチングに絞り、データ取得は `get-vital-data-garmin` に委託する関心分離（Separation of Concerns）を完了。
+  - 既存テストスイートのコンパイルエラー（legacy struct reference 関連）を修正し、プロジェクト全118テストがオールグリーンであることを検証・コミット。
+
 ---
 
 ## Phase 24: LLM 接続プロバイダ層の耐障害性（レジリエンス）強化 🔴

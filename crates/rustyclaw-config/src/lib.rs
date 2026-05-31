@@ -465,9 +465,10 @@ mod tests {
                 },
             ],
             agents: AgentsConfig {
-                default: AgentPurposeConfig { model_name: "test-8b".to_string() },
-                summary: Some(AgentPurposeConfig { model_name: "test-70b".to_string() }),
-                memory: Some(AgentPurposeConfig { model_name: "test-70b".to_string() }),
+                default: ModelNames::Single("test-8b".to_string()),
+                global_fallback_model_name: None,
+                summary: Some(ModelNames::Single("test-70b".to_string())),
+                memory: Some(ModelNames::Single("test-70b".to_string())),
                 tools: None,
                 discord: None,
                 line: None,
@@ -495,7 +496,7 @@ mod tests {
                 }
             ],
             "agents": {
-                "default": { "model_name": "groq-8b" }
+                "default": "groq-8b"
             },
             "debug_dump": true
         }"#;
@@ -504,7 +505,7 @@ mod tests {
         let config = load_config(tmp_file.path())?;
         assert_eq!(config.model_list.len(), 1);
         assert_eq!(config.model_list[0].model_name, "groq-8b");
-        assert_eq!(config.agents.default.model_name, "groq-8b");
+        assert_eq!(config.agents.default.primary(), "groq-8b");
         assert!(config.debug_dump);
 
         let model = config.get_model("default");
@@ -544,9 +545,9 @@ mod tests {
         assert_eq!(config.get_model("heartbeat").model_name, "llama-3.1-8b-instant");
 
         // 明示設定した場合はそちらを返す
-        config.agents.discord   = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
-        config.agents.heartbeat = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
-        config.agents.tools     = Some(AgentPurposeConfig { model_name: "test-70b".to_string() });
+        config.agents.discord   = Some(ModelNames::Single("test-70b".to_string()));
+        config.agents.heartbeat = Some(ModelNames::Single("test-70b".to_string()));
+        config.agents.tools     = Some(ModelNames::Single("test-70b".to_string()));
         assert_eq!(config.get_model("discord").model_name,   "llama-3.3-70b-versatile");
         assert_eq!(config.get_model("heartbeat").model_name, "llama-3.3-70b-versatile");
         assert_eq!(config.get_model("tools").model_name,     "llama-3.3-70b-versatile");
@@ -557,7 +558,7 @@ mod tests {
         let mut config = make_test_config();
         unsafe { std::env::set_var("RUSTYCLAW_MODEL_NAME", "test-70b"); }
         config.override_with_env();
-        assert_eq!(config.agents.default.model_name, "test-70b");
+        assert_eq!(config.agents.default.primary(), "test-70b");
         let model = config.get_model("default");
         assert_eq!(model.model_name, "llama-3.3-70b-versatile");
         unsafe { std::env::remove_var("RUSTYCLAW_MODEL_NAME"); }

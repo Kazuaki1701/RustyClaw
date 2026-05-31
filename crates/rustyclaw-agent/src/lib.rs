@@ -1258,7 +1258,7 @@ fn resolve_category(session_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustyclaw_config::{ModelEntry, AgentsConfig, AgentPurposeConfig};
+    use rustyclaw_config::{ModelEntry, AgentsConfig, ModelNames};
     use tempfile::tempdir;
     use tokio::net::TcpListener;
     use tokio::io::AsyncWriteExt;
@@ -1278,7 +1278,7 @@ mod tests {
                 context_window: None,
             }],
             agents: AgentsConfig {
-                default: AgentPurposeConfig { model_name: "test-model".to_string() },
+                default: ModelNames::Single("test-model".to_string()),
                 summary: None,
                 memory: None,
                 ..Default::default()
