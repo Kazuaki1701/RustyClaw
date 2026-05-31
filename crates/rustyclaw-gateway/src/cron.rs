@@ -333,6 +333,39 @@ impl CronService {
     }
 }
 
+/// トリガ種別から次回実行の unix 秒を算出する（純粋関数）。
+/// - cron: `expression`="HH:MM"。`now` より未来なら当日、過去なら翌日。
+/// - interval: `last_run` + `minutes`。`last_run` が無ければ `now`（即時）。
+pub fn next_run_epoch(
+    trigger_type: &str,
+    expression: Option<&str>,
+    minutes: Option<u64>,
+    now: chrono::DateTime<chrono::Local>,
+    last_run: Option<i64>,
+) -> Option<i64> {
+    use chrono::TimeZone;
+    match trigger_type {
+        "cron" => {
+            let expr = expression?;
+            let (h, m) = expr.split_once(':')?;
+            let h: u32 = h.parse().ok()?;
+            let m: u32 = m.parse().ok()?;
+            let naive_today = now.date_naive().and_hms_opt(h, m, 0)?;
+            let today = chrono::Local.from_local_datetime(&naive_today).single()?;
+            let target = if today > now { today } else { today + chrono::Duration::days(1) };
+            Some(target.timestamp())
+        }
+        "interval" => {
+            let mins = minutes? as i64;
+            match last_run {
+                Some(lr) => Some(lr + mins * 60),
+                None => Some(now.timestamp()),
+            }
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,5 +432,35 @@ mod tests {
 
         let result = find_next_session_needing_summary(&sessions_dir, ws.path());
         assert!(result.is_none(), "recent sessions (< 5 min idle) must be excluded");
+    }
+}
+
+#[cfg(test)]
+mod next_run_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn cron_type_returns_today_if_future_else_tomorrow() {
+        // 現在 10:00 とする
+        let now = chrono::Local.with_ymd_and_hms(2026, 5, 31, 10, 0, 0).unwrap();
+        // 22:00 は当当日未来 → 同日 22:00
+        let n1 = next_run_epoch("cron", Some("22:00"), None, now, None).unwrap();
+        assert_eq!(n1, chrono::Local.with_ymd_and_hms(2026, 5, 31, 22, 0, 0).unwrap().timestamp());
+        // 04:45 は当日過去 → 翌日 04:45
+        let n2 = next_run_epoch("cron", Some("04:45"), None, now, None).unwrap();
+        assert_eq!(n2, chrono::Local.with_ymd_and_hms(2026, 6, 1, 4, 45, 0).unwrap().timestamp());
+    }
+
+    #[test]
+    fn interval_type_uses_last_run_plus_minutes() {
+        let now = chrono::Local.with_ymd_and_hms(2026, 5, 31, 10, 0, 0).unwrap();
+        let last = now.timestamp() - 60 * 60; // 1時間前
+        // 360分間隔 → last + 360分
+        let n = next_run_epoch("interval", None, Some(360), now, Some(last)).unwrap();
+        assert_eq!(n, last + 360 * 60);
+        // last_run 無し → 即時（now）
+        let n0 = next_run_epoch("interval", None, Some(360), now, None).unwrap();
+        assert_eq!(n0, now.timestamp());
     }
 }
