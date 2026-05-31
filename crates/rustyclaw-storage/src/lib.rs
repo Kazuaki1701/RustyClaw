@@ -135,29 +135,75 @@ impl DbManager {
         })
     }
 
-    pub fn get_usage_timeline(&self, since: Option<&str>) -> Vec<serde_json::Value> {
-        let where_clause = if since.is_some() { "WHERE created_at >= ?1" } else { "" };
-        let since_owned = since.map(|s| s.to_string());
-        let params: Vec<&dyn rusqlite::ToSql> = match since_owned.as_ref() {
+    /// 使用量をトークン数で時刻バケット集計する。
+    /// - `since_epoch`: 集計開始の unix 秒（None=全期間。窓開始は最初のデータ）
+    /// - `until_epoch`: 集計終了の unix 秒（通常は現在時刻）
+    /// - `granularity_secs`: バケット幅（600=10分, 3600=1時間, 86400=日）
+    /// 戻り値は窓内の全バケットを 0 埋めして昇順で返す（連続した時間軸）。
+    pub fn get_usage_timeline(
+        &self,
+        since_epoch: Option<i64>,
+        until_epoch: i64,
+        granularity_secs: u64,
+    ) -> Vec<serde_json::Value> {
+        let g = (granularity_secs.max(1)) as i64;
+        let where_clause = if since_epoch.is_some() {
+            "WHERE CAST(strftime('%s', created_at) AS INTEGER) >= ?1"
+        } else {
+            ""
+        };
+        let params: Vec<&dyn rusqlite::ToSql> = match since_epoch.as_ref() {
             Some(s) => vec![s],
             None => vec![],
         };
-        let mut stmt = match self.conn.prepare(&format!(
-            "SELECT DATE(created_at) AS d, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0) FROM usage {} GROUP BY DATE(created_at) ORDER BY d ASC",
-            where_clause
-        )) {
+        let sql = format!(
+            "SELECT (CAST(strftime('%s', created_at) AS INTEGER) / {g}) * {g} AS bucket, \
+             COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0) \
+             FROM usage {where_clause} GROUP BY bucket ORDER BY bucket ASC",
+            g = g,
+            where_clause = where_clause
+        );
+        let mut stmt = match self.conn.prepare(&sql) {
             Ok(s) => s,
             Err(_) => return vec![],
         };
-        stmt.query_map(params.as_slice(), |row| {
-            Ok(serde_json::json!({
-                "date": row.get::<_, String>(0)?,
-                "runs": row.get::<_, i64>(1)?,
-                "input_tokens": row.get::<_, i64>(2)?,
-                "completion_tokens": row.get::<_, i64>(3)?,
-                "tokens": row.get::<_, i64>(4)?,
-            }))
-        }).map(|rows| rows.flatten().collect()).unwrap_or_default()
+        let sparse: std::collections::BTreeMap<i64, (i64, i64, i64)> = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?),
+                ))
+            })
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default();
+
+        if sparse.is_empty() {
+            return vec![];
+        }
+        // 窓開始: since 指定があればそのフロア、無ければ最初のデータバケット
+        let start = match since_epoch {
+            Some(s) => (s / g) * g,
+            None => *sparse.keys().next().unwrap(),
+        };
+        let end = (until_epoch / g) * g;
+        let mut out = Vec::new();
+        let mut b = start;
+        let mut count = 0;
+        while b <= end {
+            if count > 10_000 {
+                break; // Safety limit
+            }
+            let (i, c, t) = sparse.get(&b).copied().unwrap_or((0, 0, 0));
+            out.push(serde_json::json!({
+                "bucket_epoch": b,
+                "input_tokens": i,
+                "completion_tokens": c,
+                "tokens": t,
+            }));
+            b += g;
+            count += 1;
+        }
+        out
     }
 
     pub fn get_usage_by_trigger(&self, since: Option<&str>) -> Vec<serde_json::Value> {
@@ -482,9 +528,11 @@ mod tests {
         assert_eq!(summary["total_tokens"], 430);
         assert_eq!(summary["by_model"]["model-a"]["tokens"], 430);
 
-        let timeline = db.get_usage_timeline(None);
-        assert_eq!(timeline.len(), 1); // both rows on the same UTC day
-        assert_eq!(timeline[0]["tokens"], 430);
+        let now = chrono::Utc::now().timestamp();
+        let timeline = db.get_usage_timeline(None, now, 86400);
+        assert!(!timeline.is_empty());
+        let day_total: i64 = timeline.iter().map(|r| r["tokens"].as_i64().unwrap_or(0)).sum();
+        assert_eq!(day_total, 430);
 
         let triggers = db.get_usage_by_trigger(None);
         assert_eq!(triggers.len(), 2);
@@ -492,6 +540,33 @@ mod tests {
         // since-filter excluding everything (far future) yields zero runs
         let empty = db.get_usage_summary(Some("2999-01-01"));
         assert_eq!(empty["total_runs"], 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_usage_timeline_hourly_buckets_and_zero_fill() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        let db = DbManager::new(&tmp_dir.path().join("tl.db"))?;
+        // 既知の created_at を 2 件（同一日・2時間離れ）直接挿入する
+        db.conn.execute(
+            "INSERT INTO usage (session_id, prompt_tokens, completion_tokens, total_tokens, model, trigger_type, duration_ms, created_at) \
+             VALUES ('s1', 100, 50, 150, 'm', 'discord', 0, '2026-05-31T01:00:00+00:00')",
+            [],
+        )?;
+        db.conn.execute(
+            "INSERT INTO usage (session_id, prompt_tokens, completion_tokens, total_tokens, model, trigger_type, duration_ms, created_at) \
+             VALUES ('s2', 10, 5, 15, 'm', 'discord', 0, '2026-05-31T03:00:00+00:00')",
+            [],
+        )?;
+        // 窓: 01:00〜03:00 UTC、粒度 1 時間 → 3 バケット（01,02,03時）、02時は 0 埋め
+        let since = 1780189200; // 2026-05-31T01:00:00Z
+        let until = 1780196400; // 2026-05-31T03:00:00Z
+        let rows = db.get_usage_timeline(Some(since), until, 3600);
+        assert_eq!(rows.len(), 3, "01/02/03 時の3バケット（0埋め含む）");
+        assert_eq!(rows[0]["tokens"], 150);
+        assert_eq!(rows[1]["tokens"], 0);   // 02時は0埋め
+        assert_eq!(rows[2]["tokens"], 15);
+        assert_eq!(rows[0]["bucket_epoch"], since);
         Ok(())
     }
 
