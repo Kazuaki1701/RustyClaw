@@ -189,16 +189,16 @@
   - `cron.json` から**次回実行時刻を算出**し `SCHED` ピル＋カウントダウンで表示。`Waiting` を permit 取得前に enqueue して可視化（現状ほぼ出現しない）。
   - 対象: `gateway`（次回実行算出 / enqueue）＋ API（`/api/schedule` or `/api/queue` 統合）＋ フロント
 
-- `[ ]` **STEP 4: LLM I/O インスペクタ刷新（T3・最大単位）** — ISSUE-20 → 21（19適用, 旧 Phase 28b-1 統合）
+- `[x]` **STEP 4: LLM I/O インスペクタ刷新（T3・最大単位）** — ISSUE-20 → 21（19適用, 旧 Phase 28b-1 統合）
   - dump を**プロバイダ層へ集約**し、全 LLM 呼び出し（memory/summary 含む）の req/res を**ペア捕捉**（リングバッファ）。同時に memory-flush 等の未計上トークンも `record_usage` 対象化（過少計上の解消＝旧 Phase 28b-1）。
   - REQUEST/RESPONSE を**単一ペイン＋用途別タブ**化（tools / discord / dashboard / briefing / vitals / karakeep / patrol / heartbeat / summary / daily / memory）。
   - 対象: `providers`（dump集約）＋ `agent`（category付与）＋ `config`（`CompletionOptions`）＋ `health.rs`（API/UI）
 
-- `[ ]` **STEP 5: エージェント自己認識・事実確認の是正（T4）** — ISSUE-04 / 05
+- `[x]` **STEP 5: エージェント自己認識・事実確認の是正（T4）** — ISSUE-04 / 05
   - 自己状態（cron 予定等）の質問に**ツールで事実確認**して答える（現状は記憶ベースで cron 一覧を誤答）。capability の過小申告・誤認識（「LLM だから shell 不可」、保有ツール非言及）を `SOUL.md`/プロンプトで是正。
   - 対象: `SOUL.md` / プロンプト（STEP 3 の schedule をツール化すれば ISSUE-04 を確実化）
 
-- `[ ]` **STEP 6: cron 信頼性回復（T3・要方針決定・実害最大）** — ISSUE-06 / 07
+- `[x]` **STEP 6: cron 信頼性回復（T3・要方針決定・実害最大）** — ISSUE-06 / 07
   - `karakeep-cleanup`/`recommendation` cron が**存在しない `bash scripts/501,502` を前提に無言失敗**中。A) 既存 `karakeep_tag_bookmark` 等の API ツールで prompt 書換（軽・推奨）／ B) 制約付き shell 実行ツール新設（重・要セキュリティ）。
   - 対象: `cron.json`（prompt 書換）もしくは `rustyclaw-tools`（shell ツール）
 

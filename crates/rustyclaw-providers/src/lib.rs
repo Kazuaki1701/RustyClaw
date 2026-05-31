@@ -112,6 +112,61 @@ pub fn set_global_cooldown_from_error(err: &ProviderError) {
     *lock = Some(std::time::Instant::now() + dur + Duration::from_secs(2));
 }
 
+fn get_workspace_dir() -> std::path::PathBuf {
+    if let Ok(env_val) = std::env::var("RUSTYCLAW_WORKSPACE_DIR") {
+        std::path::PathBuf::from(env_val)
+    } else {
+        let p_ws = std::path::PathBuf::from("production/workspace");
+        if p_ws.exists() {
+            p_ws
+        } else {
+            std::path::PathBuf::from("workspace")
+        }
+    }
+}
+
+fn dump_llm_io(
+    category: &str,
+    model: &str,
+    messages: &[Message],
+    response: &LlmResponse,
+) {
+    let ws_dir = get_workspace_dir();
+    let debug_dir = ws_dir.join("memory").join("debug").join("llm");
+    if let Err(e) = std::fs::create_dir_all(&debug_dir) {
+        tracing::error!("Failed to create llm dump directory {:?}: {}", debug_dir, e);
+        return;
+    }
+
+    let file_path = debug_dir.join(format!("{}.json", category));
+
+    #[derive(serde::Serialize)]
+    struct LlmIoDump<'a> {
+        timestamp: i64,
+        model: &'a str,
+        request: &'a [Message],
+        response: &'a LlmResponse,
+    }
+
+    let dump = LlmIoDump {
+        timestamp: chrono::Local::now().timestamp(),
+        model,
+        request: messages,
+        response,
+    };
+
+    match std::fs::File::create(&file_path) {
+        Ok(file) => {
+            if let Err(e) = serde_json::to_writer_pretty(file, &dump) {
+                tracing::error!("Failed to write llm io dump to {:?}: {}", file_path, e);
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to create llm io dump file {:?}: {}", file_path, e);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolCall {
     pub id: String,
@@ -144,7 +199,7 @@ pub struct ToolDef {
     pub parameters: serde_json::Value,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmResponse {
     pub content: String,
     pub role: String,
@@ -155,7 +210,7 @@ pub struct LlmResponse {
     pub model_used: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamChunk {
     pub content: String,
 }
@@ -165,6 +220,7 @@ pub struct CompletionOptions {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub timeout: Duration,
+    pub category: Option<String>,
 }
 
 #[async_trait]
@@ -382,7 +438,7 @@ impl LlmProvider for OpenAiCompatProvider {
         let choice = resp_data.choices.first()
             .context("LLM returned empty choices in response")?;
 
-        Ok(LlmResponse {
+        let res = LlmResponse {
             content: choice.message.content.clone().unwrap_or_default(),
             role: choice.message.role.clone(),
             tool_calls: choice.message.tool_calls.clone(),
@@ -390,7 +446,15 @@ impl LlmProvider for OpenAiCompatProvider {
             completion_tokens: resp_data.usage.as_ref().map(|u| u.completion_tokens),
             total_tokens: resp_data.usage.as_ref().map(|u| u.total_tokens),
             model_used: resp_data.model.clone(),
-        })
+        };
+
+        let mut resolved_category = opts.category.clone().unwrap_or_else(|| "discord".to_string());
+        if res.tool_calls.as_ref().map_or(false, |tc| !tc.is_empty()) {
+            resolved_category = "tools".to_string();
+        }
+        dump_llm_io(&resolved_category, &resolved_model, messages, &res);
+
+        Ok(res)
     }
 
     async fn complete_stream(
@@ -456,8 +520,12 @@ impl LlmProvider for OpenAiCompatProvider {
 
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
+        let resolved_model_clone = resolved_model.clone();
+        let resolved_category = opts.category.clone().unwrap_or_else(|| "discord".to_string());
+        let messages_vec = messages.to_vec();
 
         let output_stream = async_stream::try_stream! {
+            let mut full_response_content = String::new();
             while let Some(chunk_res) = stream.next().await {
                 let chunk = chunk_res.context("Error reading byte chunk from stream")?;
                 let chunk_str = std::str::from_utf8(&chunk)
@@ -482,6 +550,7 @@ impl LlmProvider for OpenAiCompatProvider {
                         if let Ok(parsed) = serde_json::from_str::<OpenAiStreamResponse>(data) {
                             if let Some(choice) = parsed.choices.first() {
                                 if let Some(content) = &choice.delta.content {
+                                    full_response_content.push_str(content);
                                     yield StreamChunk {
                                         content: content.clone(),
                                     };
@@ -491,6 +560,16 @@ impl LlmProvider for OpenAiCompatProvider {
                     }
                 }
             }
+            let llm_res = LlmResponse {
+                content: full_response_content,
+                role: "assistant".to_string(),
+                tool_calls: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                model_used: Some(resolved_model_clone.clone()),
+            };
+            dump_llm_io(&resolved_category, &resolved_model_clone, &messages_vec, &llm_res);
         };
 
         Ok(Box::pin(output_stream))
@@ -896,6 +975,7 @@ mod tests {
             max_tokens: None,
             temperature: None,
             timeout: Duration::from_secs(5),
+            category: None,
         };
 
         let resp = provider.complete(&[], &[], &opts).await?;
@@ -948,6 +1028,7 @@ mod tests {
             max_tokens: None,
             temperature: None,
             timeout: Duration::from_secs(5),
+            category: None,
         };
 
         let stream_res = provider.complete_stream(&[], &[], &opts).await?;
@@ -997,6 +1078,7 @@ mod tests {
             max_tokens: None,
             temperature: None,
             timeout: Duration::from_secs(5),
+            category: None,
         };
 
         let result = provider.complete(&[], &[], &opts).await;
@@ -1055,6 +1137,7 @@ mod tests {
             max_tokens: None,
             temperature: None,
             timeout: Duration::from_secs(5),
+            category: None,
         };
 
         let tool = ToolDef {
@@ -1091,6 +1174,7 @@ mod tests {
             max_tokens: None,
             temperature: None,
             timeout: Duration::from_secs(5),
+            category: None,
         };
 
         let tool = ToolDef {

@@ -300,6 +300,54 @@ impl Tool for KarakeepDeleteTool {
     }
 }
 
+/// Dynamic scheduled cron tasks scheduler retriever
+pub struct CronScheduleTool {
+    schedule_fn: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync>,
+}
+
+impl CronScheduleTool {
+    pub fn new<F>(schedule_fn: F) -> Self
+    where
+        F: Fn() -> serde_json::Value + Send + Sync + 'static,
+    {
+        Self {
+            schedule_fn: std::sync::Arc::new(schedule_fn),
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for CronScheduleTool {
+    fn name(&self) -> &str {
+        "get_cron_schedule"
+    }
+
+    fn description(&self) -> &str {
+        "Get the upcoming scheduled cron tasks and their calculated next execution times."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
+
+    async fn execute(&self, _args: Value) -> ToolResult {
+        let val = (self.schedule_fn)();
+        match serde_json::to_string_pretty(&val) {
+            Ok(json) => ToolResult {
+                content: json,
+                is_error: false,
+            },
+            Err(e) => ToolResult {
+                content: format!("Failed to serialize schedule: {}", e),
+                is_error: true,
+            },
+        }
+    }
+}
+
 fn percent_encode(s: &str) -> String {
     s.chars().flat_map(|c| match c {
         'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => vec![c],
@@ -1413,6 +1461,26 @@ mod tests {
         assert_eq!(params["type"], "object");
         assert!(params["properties"]["bookmark_id"].is_object());
         assert!(params["required"].as_array().unwrap().contains(&serde_json::json!("bookmark_id")));
+    }
+
+    #[tokio::test]
+    async fn test_cron_schedule_tool() {
+        let tool = CronScheduleTool::new(|| {
+            serde_json::json!([
+                {
+                    "id": "test-job",
+                    "name": "Test Job",
+                    "next_run_epoch": 12345678,
+                    "trigger_type": "cron"
+                }
+            ])
+        });
+        assert_eq!(tool.name(), "get_cron_schedule");
+        let params = tool.parameters();
+        assert_eq!(params["type"], "object");
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(!result.is_error);
+        assert!(result.content.contains("test-job"));
     }
 
     #[tokio::test]

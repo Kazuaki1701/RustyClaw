@@ -61,8 +61,9 @@
 | `/logs/app` | GET | `~/.rustyclaw/rustyclaw.log` 末尾 100 行 |
 | `/api/queue` | GET | gmn API Pipeline Queue の現在状態（JSON） |
 | `/api/neurons` | GET | Cloudflare Neurons クォータ使用状況 JSON（`neurons_used`, `quota_limit`, `remaining`, `reset_at`） |
-| `/api/schedule` | GET | cron.json 内の有効ジョブの次回実行予定リスト（JSON） |
+| `/api/schedule` | GET | cron.json 内の有効ジョブの次回実行予定リスト（JSON、内部で `get_cron_schedule` と同一） |
 | `/api/usage/timeline` | GET | トークン使用量の時間別・期間別推移データ（JSON、パラメータ: `gran`, `from`） |
+| `/api/llm/io` | GET | 指定した用途カテゴリ（`?cat=<category>`、tools/discord/memory等11種）の最新LLM APIリクエスト＆レスポンス（JSON） |
 
 **ダッシュボードレイアウト（`/dashboard`）**:
 ```
@@ -71,16 +72,18 @@
 │  Chat パネル       │  🔄 gmn API Pipeline Queue           │
 │  (flex: 4)         ├────────────────────────────────────  │
 │                    │  🟣 MEMORY.md                        │
-│                    ├──────────────┬───────────────────────┤
-│                    │ 🟢 hb-digest │ 🟡 hb-state.json     │
-│                    ├──────────────┴───────────────────────┤
+│                    ├──────────────────────────────────────┤
+│                    │ 🔵 LLM API INSPECTOR                 │
+│                    │ (tools/discord/memory等11タブ切り替え)  │
+│                    ├──────────────────────────────────────┤
 │                    │  🔵 rustyclaw.log                    │
 └────────────────────┴──────────────────────────────────────┘
 ```
 - MEMORY.md / heartbeat 系: 5 秒ポーリング
 - App ログ: 2 秒ポーリング
-- Neurons / Queue パネル: 5 秒ポーリング（`/api/neurons`・`/api/queue`）
+- Neurons / Queue パネル / LLM Inspector: 5 秒ポーリング（`/api/neurons`・`/api/queue`・`/api/llm/io`）
 - `/chat` セッション ID は `"http-dashboard"` 固定（履歴が蓄積される）
+
 
 ---
 

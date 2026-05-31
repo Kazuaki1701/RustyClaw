@@ -775,6 +775,18 @@ impl Gateway {
             }
         }
 
+        let ws_path_clone = self.workspace_path.clone();
+        let db_path_for_tool = self.workspace_path.join("memory.db");
+        tool_registry.register(Arc::new(rustyclaw_tools::CronScheduleTool::new(move || {
+            if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path_for_tool) {
+                let sched = crate::cron::compute_schedule(&ws_path_clone, &db);
+                serde_json::Value::Array(sched)
+            } else {
+                serde_json::Value::Array(vec![])
+            }
+        })));
+        tracing::info!("Registered native CronScheduleTool.");
+
         let tool_registry = Arc::new(tool_registry);
         tracing::info!("Tool registry initialized with {} tools.", tool_registry.tool_count());
 

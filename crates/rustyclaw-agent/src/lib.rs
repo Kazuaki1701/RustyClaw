@@ -87,64 +87,13 @@ impl Pipeline {
     }
 
     /// デバッグ用の生リクエストダンプを出力する
-    fn dump_request(&self, workspace_dir: &Path, messages: &[Message]) {
-        if !self.config.debug_dump {
-            return;
-        }
-
-        let debug_dir = workspace_dir.join("memory").join("debug");
-        if let Err(e) = fs::create_dir_all(&debug_dir) {
-            tracing::error!("Failed to create debug dump directory {:?}: {}", debug_dir, e);
-            return;
-        }
-
-        let file_path = debug_dir.join("last_request.json");
-        match File::create(&file_path) {
-            Ok(file) => {
-                if let Err(e) = serde_json::to_writer_pretty(file, messages) {
-                    tracing::error!("Failed to serialize request dump to {:?}: {}", file_path, e);
-                } else {
-                    tracing::debug!("Successfully dumped raw request to {:?}", file_path);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to create request dump file {:?}: {}", file_path, e);
-            }
-        }
+    fn dump_request(&self, _workspace_dir: &Path, _messages: &[Message]) {
+        // Consolidated in providers layer
     }
 
     /// デバッグ用の生レスポンスダンプを出力する
-    fn dump_response(&self, workspace_dir: &Path, content: &str, role: &str) {
-        if !self.config.debug_dump {
-            return;
-        }
-
-        let debug_dir = workspace_dir.join("memory").join("debug");
-        let file_path = debug_dir.join("last_response.json");
-
-        #[derive(serde::Serialize)]
-        struct DumpResponse {
-            role: String,
-            content: String,
-        }
-
-        let dump_data = DumpResponse {
-            role: role.to_string(),
-            content: content.to_string(),
-        };
-
-        match File::create(&file_path) {
-            Ok(file) => {
-                if let Err(e) = serde_json::to_writer_pretty(file, &dump_data) {
-                    tracing::error!("Failed to serialize response dump to {:?}: {}", file_path, e);
-                } else {
-                    tracing::debug!("Successfully dumped raw response to {:?}", file_path);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to create response dump file {:?}: {}", file_path, e);
-            }
-        }
+    fn dump_response(&self, _workspace_dir: &Path, _content: &str, _role: &str) {
+        // Consolidated in providers layer
     }
 
     /// 前日のセッションからサマリーと履歴を取得し、文脈継続情報を作成する
@@ -404,6 +353,7 @@ Rules:
             max_tokens: memory_model.max_tokens.or(Some(1500)), // MEMORY.md ≦ 1250 tok + daily log ≒ 100 tok
             temperature: memory_model.temperature.or(Some(0.3)),
             timeout: Duration::from_secs(300),
+            category: Some("memory".to_string()),
         };
 
         let response = provider.complete(&messages, &[], &opts).await
@@ -517,6 +467,7 @@ Rules:
             max_tokens: heartbeat_model.max_tokens,
             temperature: heartbeat_model.temperature,
             timeout: Duration::from_secs(900),
+            category: Some("heartbeat".to_string()),
         };
 
         let mut response = self.provider.complete(&messages, &[], &opts).await?;
@@ -582,11 +533,13 @@ Rules:
 
         self.dump_request(workspace_dir, &messages);
 
+        let cat = resolve_category(session_id);
         let opts = CompletionOptions {
             model: self.config.get_model("default").model_name,
             max_tokens: self.config.get_model("default").max_tokens,
             temperature: self.config.get_model("default").temperature,
             timeout: Duration::from_secs(900),
+            category: Some(cat),
         };
 
         // 3. LLMプロバイダ呼び出し
@@ -675,6 +628,7 @@ Rules:
             max_tokens: summary_model.max_tokens.or(Some(1500)),
             temperature: summary_model.temperature.or(Some(0.3)),
             timeout: Duration::from_secs(300),
+            category: Some("summary".to_string()),
         };
 
         let summary_content = if existing_turns > 0 && existing_turns < history.len() {
@@ -849,11 +803,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             .collect();
 
         let model_cfg = self.config.get_model(purpose);
+        let cat = resolve_category(session_id);
         let opts = CompletionOptions {
             model: model_cfg.model_name.clone(),
             max_tokens: model_cfg.max_tokens,
             temperature: model_cfg.temperature,
             timeout: Duration::from_secs(300),
+            category: Some(cat),
         };
 
         let mut loop_count = 0;
@@ -978,11 +934,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         self.dump_request(workspace_dir, &messages);
 
+        let cat = resolve_category(session_id);
         let opts = CompletionOptions {
             model: self.config.get_model("default").model_name,
             max_tokens: self.config.get_model("default").max_tokens,
             temperature: self.config.get_model("default").temperature,
             timeout: Duration::from_secs(900),
+            category: Some(cat),
         };
 
         // 3. LLMプロバイダ呼び出し
@@ -1158,6 +1116,30 @@ fn filter_json_leaks(content: &str) -> String {
     cleaned.trim().to_string()
 }
 
+fn resolve_category(session_id: &str) -> String {
+    if session_id == "memory" {
+        "memory".to_string()
+    } else if session_id == "summary" || session_id.starts_with("cron:session-summary:") {
+        "summary".to_string()
+    } else if session_id == "daily-summary" || session_id == "cron:daily-summary" || session_id.contains("daily-summary") {
+        "daily".to_string()
+    } else if session_id == "cron:heartbeat" || session_id.contains("heartbeat") {
+        "heartbeat".to_string()
+    } else if session_id.contains("briefing") {
+        "briefing".to_string()
+    } else if session_id.contains("vitals") {
+        "vitals".to_string()
+    } else if session_id.contains("karakeep") {
+        "karakeep".to_string()
+    } else if session_id.contains("patrol") {
+        "patrol".to_string()
+    } else if session_id.contains("dashboard") {
+        "dashboard".to_string()
+    } else {
+        "discord".to_string()
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1275,14 +1257,22 @@ mod tests {
 
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        let resp = pipeline.execute(ws_dir.path(), "session-test", "hello").await?;
+        unsafe {
+            std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
+        }
+        let resp = pipeline.execute(ws_dir.path(), "session-test", "hello").await;
+        unsafe {
+            std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
+        }
 
+        let resp = resp?;
         assert_eq!(resp.content, "I am a robot.");
 
-        let req_dump = ws_dir.path().join("memory").join("debug").join("last_request.json");
-        let resp_dump = ws_dir.path().join("memory").join("debug").join("last_response.json");
-        assert!(req_dump.exists());
-        assert!(resp_dump.exists());
+        let inspector_dump = ws_dir.path().join("memory").join("debug").join("llm").join("discord.json");
+        assert!(inspector_dump.exists());
+        let dump_content = fs::read_to_string(inspector_dump)?;
+        let val: serde_json::Value = serde_json::from_str(&dump_content)?;
+        assert_eq!(val["response"]["content"], "I am a robot.");
 
         let logger = SessionLogger::new(ws_dir.path());
         let history = logger.load_history("session-test")?;
@@ -1340,12 +1330,21 @@ mod tests {
         let pipeline = Pipeline::new(config, flush_sem);
         
         // 2. Call pipeline.execute("cron:heartbeat") and verify that it skips history.
-        let resp = pipeline.execute(ws_dir.path(), "cron:heartbeat", "new message").await?;
+        unsafe {
+            std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
+        }
+        let resp = pipeline.execute(ws_dir.path(), "cron:heartbeat", "new message").await;
+        unsafe {
+            std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
+        }
+
+        let resp = resp?;
         assert_eq!(resp.content, "cron response");
 
-        let req_dump_path = ws_dir.path().join("memory").join("debug").join("last_request.json");
+        let req_dump_path = ws_dir.path().join("memory").join("debug").join("llm").join("heartbeat.json");
         let req_dump_content = fs::read_to_string(req_dump_path)?;
-        let sent_messages: Vec<Message> = serde_json::from_str(&req_dump_content)?;
+        let dump_val: serde_json::Value = serde_json::from_str(&req_dump_content)?;
+        let sent_messages: Vec<Message> = serde_json::from_value(dump_val["request"].clone())?;
 
         // Verify that the old history is NOT present in the sent messages.
         for msg in &sent_messages {

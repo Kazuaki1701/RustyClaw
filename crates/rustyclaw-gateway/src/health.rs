@@ -117,6 +117,37 @@ impl HealthServer {
                                         .unwrap_or(raw);
                                     ("200 OK".to_string(), pretty, "application/json; charset=utf-8")
 
+                                } else if request.starts_with("GET /api/llm/io") {
+                                    let cat_opt = extract_query_str(&request, "cat");
+                                    let debug_llm_dir = workspace_path_clone.join("memory").join("debug").join("llm");
+                                    
+                                    if let Some(cat) = cat_opt {
+                                        let path = debug_llm_dir.join(format!("{}.json", cat));
+                                        let json = std::fs::read_to_string(&path).unwrap_or_else(|_| "null".to_string());
+                                        ("200 OK".to_string(), json, "application/json; charset=utf-8")
+                                    } else {
+                                        let categories = vec![
+                                            "tools", "discord", "dashboard", "briefing",
+                                            "vitals", "karakeep", "patrol", "heartbeat",
+                                            "summary", "daily", "memory"
+                                        ];
+                                        let mut map = serde_json::Map::new();
+                                        for c in categories {
+                                            let path = debug_llm_dir.join(format!("{}.json", c));
+                                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                                    map.insert(c.to_string(), val);
+                                                } else {
+                                                    map.insert(c.to_string(), serde_json::Value::Null);
+                                                }
+                                            } else {
+                                                map.insert(c.to_string(), serde_json::Value::Null);
+                                            }
+                                        }
+                                        let json = serde_json::Value::Object(map).to_string();
+                                        ("200 OK".to_string(), json, "application/json; charset=utf-8")
+                                    }
+
                                 } else if request.starts_with("GET /api/queue") {
                                     let mut state = crate::QUEUE_STATE.lock().unwrap().clone();
                                     
@@ -348,6 +379,20 @@ fn extract_query_i64(request: &str, key: &str) -> Option<i64> {
     None
 }
 
+/// GET /path?key=value のクエリから文字列パラメータ値を取り出す。
+fn extract_query_str(request: &str, key: &str) -> Option<String> {
+    let first_line = request.lines().next()?;
+    let query_start = first_line.find('?')?;
+    let query = &first_line[query_start + 1..];
+    let end = query.find(' ').unwrap_or(query.len());
+    for pair in query[..end].split('&') {
+        if let Some(val) = pair.strip_prefix(&format!("{}=", key)) {
+            return Some(val.to_string());
+        }
+    }
+    None
+}
+
 // ── ダッシュボード HTML ────────────────────────────────────────────────────────
 
 
@@ -537,6 +582,25 @@ header{
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(0,212,255,.15);border-radius:2px}
 ::-webkit-scrollbar-thumb:hover{background:rgba(0,212,255,.3)}
+.llm-tab {
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid rgba(0,212,255,0.15);
+  background: rgba(0,0,0,0.4);
+  color: var(--muted);
+  font-family: 'Fira Code', monospace;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.llm-tab.active {
+  background: rgba(0,212,255,0.15);
+  color: var(--cyan);
+  border-color: rgba(0,212,255,0.4);
+  box-shadow: 0 0 6px rgba(0,212,255,0.2);
+}
 </style>
 </head>
 <body>
@@ -580,13 +644,24 @@ header{
     </div>
   </div>
   <div class="row2">
-    <div class="panel request">
-      <div class="panel-head"><span class="panel-label">◈ LLM REQUEST</span><span class="rts" id="req-ts">—</span></div>
-      <div class="panel-body" id="reqPanel" style="white-space:pre-wrap;word-break:break-all;font-size:10.5px;color:rgba(180,210,230,.65);">読み込み中...</div>
-    </div>
-    <div class="panel response">
-      <div class="panel-head"><span class="panel-label">◈ LLM RESPONSE</span><span class="rts" id="res-ts">—</span></div>
-      <div class="panel-body" id="resPanel" style="white-space:pre-wrap;word-break:break-all;font-size:10.5px;color:rgba(0,255,159,.7);">読み込み中...</div>
+    <div class="panel request" style="grid-column: span 2;">
+      <div class="panel-head" style="display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span class="panel-label" style="color: var(--blue); text-shadow: 0 0 8px rgba(0, 212, 255, 0.5);">◈ LLM API INSPECTOR</span>
+          <span class="rts" id="inspector-ts">—</span>
+        </div>
+        <div style="display: flex; gap: 4px; overflow-x: auto; padding: 2px 0;" id="llmTabs"></div>
+      </div>
+      <div class="panel-body" id="inspectorBody" style="display: flex; gap: 8px; min-height: 0; overflow-y: hidden;">
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 4px; min-height: 0;">
+          <div style="font-size: 9px; font-weight: 700; color: var(--purple); font-family: monospace;">REQUEST</div>
+          <div id="reqPanel" style="flex: 1; white-space: pre-wrap; word-break: break-all; font-size: 10.5px; color: rgba(180, 210, 230, 0.65); background: rgba(0,0,0,0.25); padding: 6px; border-radius: 4px; overflow-y: auto;"></div>
+        </div>
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 4px; min-height: 0;">
+          <div style="font-size: 9px; font-weight: 700; color: var(--green); font-family: monospace;">RESPONSE</div>
+          <div id="resPanel" style="flex: 1; white-space: pre-wrap; word-break: break-all; font-size: 10.5px; color: rgba(0, 255, 159, 0.7); background: rgba(0,0,0,0.25); padding: 6px; border-radius: 4px; overflow-y: auto;"></div>
+        </div>
+      </div>
     </div>
   </div>
   <div class="row3">
@@ -702,13 +777,49 @@ async function updateNeurons(){
     document.getElementById('nPct').textContent=pct+'%';
   }catch{}
 }
+let activeLlmCategory = 'tools';
+const llmCategories = ['tools', 'discord', 'dashboard', 'briefing', 'vitals', 'karakeep', 'patrol', 'heartbeat', 'summary', 'daily', 'memory'];
+function initLlmTabs() {
+  const container = document.getElementById('llmTabs');
+  if (!container) return;
+  container.innerHTML = llmCategories.map(cat => 
+    `<button class="llm-tab${cat===activeLlmCategory?' active':''}" onclick="setLlmCategory('${cat}', this)">${cat.toUpperCase()}</button>`
+  ).join('');
+}
+function setLlmCategory(cat, btn) {
+  activeLlmCategory = cat;
+  document.querySelectorAll('.llm-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  updateInspector();
+}
 async function updateInspector(){
   try{
-    const[rq,rs]=await Promise.all([fetch('/debug/request'),fetch('/debug/response')]);
-    const ts=now();
-    if(rq.ok){const txt=await rq.text();document.getElementById('req-ts').textContent=ts;document.getElementById('reqPanel').textContent=txt.length>4000?'...(truncated head)\n'+txt.slice(-4000):txt}
-    if(rs.ok){const txt=await rs.text();document.getElementById('res-ts').textContent=ts;document.getElementById('resPanel').textContent=txt.length>3000?txt.substring(0,3000)+'\n...(truncated)':txt}
-  }catch{}
+    const r = await fetch('/api/llm/io?cat=' + activeLlmCategory);
+    const ts = now();
+    document.getElementById('inspector-ts').textContent = '↻ ' + ts;
+    const reqPanel = document.getElementById('reqPanel');
+    const resPanel = document.getElementById('resPanel');
+    if (!r.ok) {
+      if (reqPanel) reqPanel.textContent = '(no logs yet)';
+      if (resPanel) resPanel.textContent = '(no logs yet)';
+      return;
+    }
+    const d = await r.json();
+    if (d && d.request) {
+      const reqTxt = JSON.stringify(d.request, null, 2);
+      reqPanel.textContent = reqTxt.length > 4000 ? '...(truncated head)\n' + reqTxt.slice(-4000) : reqTxt;
+    } else {
+      reqPanel.textContent = '(no request logged)';
+    }
+    if (d && d.response) {
+      const resTxt = JSON.stringify(d.response, null, 2);
+      resPanel.textContent = resTxt.length > 4000 ? '...(truncated head)\n' + resTxt.slice(-4000) : resTxt;
+    } else {
+      resPanel.textContent = '(no response logged)';
+    }
+  } catch(e) {
+    console.error("Inspector fetch error:", e);
+  }
 }
 async function updateLog(){
   try{
@@ -809,7 +920,7 @@ function renderTriggers(rows){
     return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${r.trigger}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${r.runs} runs</span></div>`;
   }).join('')||'<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
 }
-document.getElementById('hostLabel').textContent=location.host;updateQueue();updateConcurrency();updateNeurons();updateInspector();updateLog();
+initLlmTabs();document.getElementById('hostLabel').textContent=location.host;updateQueue();updateConcurrency();updateNeurons();updateInspector();updateLog();
 setInterval(updateQueue,1000);setInterval(updateConcurrency,1000);setInterval(updateNeurons,5000);setInterval(updateInspector,2000);setInterval(updateLog,2000);
 </script>
 </body>

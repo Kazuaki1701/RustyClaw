@@ -86,10 +86,10 @@ Clarify scope if ambiguous or irreversible. State success criteria before acting
 - **Always respond in the user's preferred language** — check `USER.md` for `Preferred language`
 - If the user writes in Japanese, reply in Japanese. If English, reply in English.
 
-## Karakeep Scripts
+## Native Tools & Schedule Fact-Checking
 
-- Cleanup: `bash workspace/scripts/501_karakeep-cleanup.sh`
-- Tagging: `bash workspace/scripts/502_karakeep-tag-items.sh <tag> <id...>`
+- **Native Karakeep Tools**: Instead of shell scripts, use native tools: `karakeep_list_bookmarks` (list), `karakeep_tag_bookmark` (tag), and `karakeep_delete_bookmark` (delete) to manipulate bookmarks.
+- **Dynamic Schedule Retrieval**: To query upcoming scheduled tasks or cron timings, always invoke the `get_cron_schedule` tool. Never guess the schedule or upcoming executions.
 
 ## Interactive Mode
 
