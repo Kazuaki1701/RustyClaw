@@ -25,9 +25,9 @@ Manages bookmarks inside the self-hosted KaraKeep server, executing periodic cle
 
 ## Prerequisites & Endpoints
 
-To interact with KaraKeep, all parameters are securely resolved from **RustyClaw's vault** (`~/.rustyclaw/vault.json`):
-*   **Server Address**: Resolved under the key `karakeep-server-addr` (Default: `http://192.168.1.2:33000`).
-*   **Authentication**: Bearer Token resolved under the key `karakeep-api-key`.
+To interact with KaraKeep, connection parameters are configured as follows:
+*   **Server Address**: Configured directly in the environment variables as `http://192.168.1.2:33000`.
+*   **Authentication**: Bearer Token resolved under the key `karakeep-api-key` in **RustyClaw's vault** (`~/.rustyclaw/vault.json`).
 *   **Bookmarks Fetch Endpoint**: `[server-address]/api/v1/bookmarks`
 
 ---
@@ -57,7 +57,7 @@ Do NOT run scripts via absolute shell paths. Invoke the script inside the skill'
     *   `script_name`: `skills/karakeep/scripts/501_karakeep-cleanup.sh` (or `502_karakeep-tag-items.sh`)
     *   `args`: `["_recommended", "<id1>", "<id2>", ...]` (for tagging only)
     *   `env`:
-        *   `KARAKEEP_SERVER_ADDR`: `$vault:karakeep-server-addr`
+        *   `KARAKEEP_SERVER_ADDR`: `http://192.168.1.2:33000`
         *   `KARAKEEP_API_KEY`: `$vault:karakeep-api-key`
 
 ### Step 2: Standardized Logging Format (Level 2)
