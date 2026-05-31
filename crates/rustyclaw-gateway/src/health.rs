@@ -726,6 +726,7 @@ function switchTab(id,btn){
   if(id==='stats')loadStats();
 }
 function fmtK(n){if(n>=1e6)return(n/1e6).toFixed(2)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return n.toString()}
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function now(){return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 async function updateQueue(){
   try{
@@ -740,14 +741,14 @@ async function updateQueue(){
       const cls=item.status==='Executing'?'pill-exec':item.status==='Waiting'?'pill-wait':'pill-cool';
       const lbl=item.status==='Executing'?'EXEC':item.status==='Waiting'?'WAIT':'COOL';
       const elapsed=Math.floor((Date.now()-item.enqueued_at_ms)/1000);
-      html+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span><span class="q-sid">${item.session_id}</span><span class="q-desc">${item.description||''}</span><span class="q-time">${elapsed}s</span></div>`;
+      html+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span><span class="q-sid">${escapeHtml(item.session_id)}</span><span class="q-desc">${escapeHtml(item.description||'')}</span><span class="q-time">${elapsed}s</span></div>`;
       if(item.status==='Cooldown'&&item.cooldown_left_secs>0){const pct=Math.min(100,(item.cooldown_left_secs/60)*100);html+=`<div class="cool-bar"><div class="cool-fill" style="width:${pct}%"></div></div>`}
     });
     sched.forEach((s)=>{
       const left=Math.max(0,s.next_run_epoch-Math.floor(Date.now()/1000));
       const h=Math.floor(left/3600),m=Math.floor((left%3600)/60);
       const eta=h>0?`${h}h${m}m`:m>0?`${m}m`:`<1m`;
-      html+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span><span class="q-sid">${s.name}</span><span class="q-desc">${s.trigger_type}</span><span class="q-time">in ${eta}</span></div>`;
+      html+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span><span class="q-sid">${escapeHtml(s.name)}</span><span class="q-desc">${escapeHtml(s.trigger_type)}</span><span class="q-time">in ${eta}</span></div>`;
     });
     if(!html){html='<div style="color:var(--muted);text-align:center;padding:10px;font-family:\'Fira Code\',monospace;font-size:11px;">稼働タスク・予定なし</div>'}
     panel.innerHTML=html;
@@ -836,7 +837,7 @@ async function updateLog(){
       const tsM=line.match(/\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})/);
       const ts=tsM?tsM[1]:'';
       const msg=line.replace(/^\S+\s+(INFO|WARN|ERROR)\s+\S+:\s*/,'').trim();
-      return`<div class="log-line"><span class="log-ts">${ts}</span><span class="log-lv ${lvl}">${lvl.toUpperCase()}</span><span class="log-msg">${msg}</span></div>`;
+      return`<div class="log-line"><span class="log-ts">${ts}</span><span class="log-lv ${lvl}">${lvl.toUpperCase()}</span><span class="log-msg">${escapeHtml(msg)}</span></div>`;
     }).join('');
     if(atBottom)el.scrollTop=el.scrollHeight;
   }catch{}
@@ -883,7 +884,7 @@ function renderSummary(d){
   const colors=['#bf00ff','#00d4ff','#00ff9f','#ffaa00','#ff006e'];
   document.getElementById('modelBreakdown').innerHTML=models.slice(0,6).map(([m,v],i)=>{
     const pct=Math.round((v.tokens/totalTok)*100);
-    return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${m}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${fmtK(v.tokens)}</span></div>`;
+    return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${escapeHtml(m)}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${fmtK(v.tokens)}</span></div>`;
   }).join('')||'<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
 }
 function renderNeuronsKpi(d){

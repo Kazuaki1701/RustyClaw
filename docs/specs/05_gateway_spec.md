@@ -84,6 +84,13 @@
 - Neurons / Queue パネル / LLM Inspector: 5 秒ポーリング（`/api/neurons`・`/api/queue`・`/api/llm/io`）
 - `/chat` セッション ID は `"http-dashboard"` 固定（履歴が蓄積される）
 
+**XSS 防御（DOM レンダリング方針）**:
+ダッシュボードは LAN 公開・認証なしのため、外部由来データを DOM へ反映する際は必ず無害化する。
+- チャットバブル: `.textContent` + `white-space: pre-wrap` で描画（`.innerHTML` 禁止）。
+- ログビューア / キューパネル / スケジュール / モデル内訳: `.innerHTML` テンプレートへ補間する
+  外部由来文字列（ログ本文・`session_id`・`description`・ジョブ名・モデル名等）は共通
+  `escapeHtml()` ヘルパで `& < > " '` をエスケープしてから埋め込む。
+- `/api/llm/io` の `cat` パラメータは 11 カテゴリのホワイトリスト検証でパストラバーサルを遮断。
 
 ---
 

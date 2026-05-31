@@ -723,7 +723,10 @@ impl Gateway {
                 tool_registry.register(Arc::new(rustyclaw_tools::GwsCalendarTool::new(gws_path.clone())));
 
                 if !gws.writable_calendar_ids.is_empty() {
-                    // ISSUE-03: カレンダー解決を並列化して起動ブロッキングを短縮する
+                    // ISSUE-03: カレンダー解決を並列化して起動ブロッキングを短縮する。
+                    // NOTE: writable_calendar_ids は通常 1-2 件のため無制限 spawn で安全。
+                    // 将来この一覧が大幅に増える場合は Semaphore か
+                    // futures::stream::buffer_unordered で並列度を制限すること。
                     let mut handles = Vec::new();
                     for cal_id in gws.writable_calendar_ids.clone() {
                         let gws_path = gws_path.clone();
