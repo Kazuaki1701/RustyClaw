@@ -520,14 +520,15 @@ header{
 .lanes-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:2px}
 .lane-card{padding:6px 8px;border-radius:5px;font-size:10px;display:flex;flex-direction:column;justify-content:space-between;height:65px;transition:all .2s;background:var(--term-bg)}
 .lane-card.active{background:rgba(0,255,159,.03);border:1px solid rgba(0,255,159,0.25);box-shadow:0 0 8px rgba(0,255,159,.03)}
-.lane-card.idle{background:rgba(255,255,255,.01);border:1px dashed rgba(255,255,255,.05);color:var(--muted)}
+.lane-card.idle{background:rgba(255,255,255,0.035);border:1px dashed rgba(255,255,255,0.15);color:var(--muted)}
+.lane-card.idle:hover{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.25)}
 .lane-hdr{display:flex;justify-content:space-between;align-items:center;font-size:8px;font-weight:700}
 .lane-n{color:var(--muted)}.lane-card.active .lane-n{color:var(--green)}
 .lane-st{display:flex;align-items:center;gap:3px}.lane-card.active .lane-st{color:var(--green)}
 .lane-dot{width:4px;height:4px;border-radius:50%;background:var(--muted)}
 .lane-card.active .lane-dot{background:var(--green);box-shadow:0 0 4px var(--green);animation:pulse-dot 1.2s infinite}
 .lane-sid{font-size:10px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:2px 0}
-.lane-card.idle .lane-sid{color:rgba(255,255,255,.15);font-style:italic;font-weight:400}
+.lane-card.idle .lane-sid{color:rgba(255,255,255,0.4);font-style:italic;font-weight:400}
 .lane-meta{display:flex;justify-content:space-between;font-size:8px;color:var(--muted)}
 .lane-desc{max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .q-list-area{flex:1;overflow-y:auto;min-height:0}
