@@ -68,7 +68,6 @@ Extract only the **Core Health Metrics** and evaluate them against these coachin
 | **`Garmin Connect Average stress level`** | Average > 50 | 深呼吸、スクリーンフリー時間、または軽い休憩を推奨。 |
 | **`Garmin Connect Steps`** | Under 10,000 (参照: `Garmin Connect Daily step goal`) | 軽いストレッチや散歩を提案。 |
 | **`Garmin Connect Sleep duration`** | Under 360 min (6 hours) | 睡眠不足を指摘し、短時間の昼寝や就寝環境の改善をアドバイス。 |
-| **`Garmin Connect HRV status`** | "Unbalanced" または "Unknown" | "Unbalanced": 疲労蓄積を指摘しパッシブリカバリーを推奨。"Unknown": データ未取得のため HRV 評価は省略し他メトリクスで判断。 |
 
 ### Step 3: Deliver (Concise & Empathetic Secretary Tone)
 Formulate a supportive, professional, yet warm secretary-style response in Japanese (K-sama's preference).

@@ -15,6 +15,5 @@ curl -s -X POST -H "Authorization: Bearer $HOMEASSISTANT_TOKEN" \
   "Garmin Connect Steps":                 .["Garmin Connect Steps"],
   "Garmin Connect Daily step goal":       .["Garmin Connect Daily step goal"],
   "Garmin Connect Sleep duration":        .["Garmin Connect Sleep duration"],
-  "Garmin Connect HRV status":            .["Garmin Connect HRV status"],
   "Garmin Connect Last synced":           .["Garmin Connect Last synced"]
 }'
