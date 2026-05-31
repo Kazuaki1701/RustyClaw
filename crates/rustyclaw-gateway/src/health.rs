@@ -816,7 +816,15 @@ async function updateQueue(){
     html+=qHtml;
     html+='</div>';
     
+    const listArea=panel.querySelector('.q-list-area');
+    const scrollPos=listArea?listArea.scrollTop:0;
+    
     panel.innerHTML=html;
+    
+    const newListArea=panel.querySelector('.q-list-area');
+    if(newListArea){
+      newListArea.scrollTop=scrollPos;
+    }
   }catch{}
 }
 async function updateConcurrency(){
