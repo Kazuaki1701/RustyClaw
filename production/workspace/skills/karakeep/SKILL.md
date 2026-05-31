@@ -27,7 +27,7 @@ Manages bookmarks inside the self-hosted KaraKeep server, executing periodic cle
 
 To interact with KaraKeep, the following connection parameters must be resolved:
 *   **Default Server Address**: `http://192.168.1.2:33000` (Expected in environment variable `$KARAKEEP_SERVER_ADDR`)
-*   **Authentication**: Bearer Token expected in environment variable `$KARAKEEP_API_KEY`
+*   **Authentication**: Bearer Token resolved from **RustyClaw's vault** (`~/.rustyclaw/vault.json` under key `karakeep-api-key`), with environmental `$KARAKEEP_API_KEY` as an optional override.
 *   **Bookmarks Fetch Endpoint**: `$KARAKEEP_SERVER_ADDR/api/v1/bookmarks`
 
 ---

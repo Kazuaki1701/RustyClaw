@@ -4,6 +4,14 @@
 
 set -e
 
+# 優先順位: 環境変数 → vault.json
+if [ -z "$KARAKEEP_API_KEY" ]; then
+    VAULT="$HOME/.rustyclaw/vault.json"
+    if [ -f "$VAULT" ]; then
+        KARAKEEP_API_KEY=$(python3 -c "import json; d=json.load(open('$VAULT')); print(d.get('karakeep-api-key',''))" 2>/dev/null)
+    fi
+fi
+
 # 環境変数の確認
 if [ -z "$KARAKEEP_API_KEY" ] || [ -z "$KARAKEEP_SERVER_ADDR" ]; then
     echo "Error: KARAKEEP_API_KEY or KARAKEEP_SERVER_ADDR is not set."

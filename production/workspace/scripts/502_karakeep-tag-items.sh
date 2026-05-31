@@ -6,6 +6,19 @@ TAG_NAME=$1
 shift
 IDS=$@
 
+# 優先順位: 環境変数 → vault.json
+if [ -z "$KARAKEEP_API_KEY" ]; then
+    VAULT="$HOME/.rustyclaw/vault.json"
+    if [ -f "$VAULT" ]; then
+        KARAKEEP_API_KEY=$(python3 -c "import json; d=json.load(open('$VAULT')); print(d.get('karakeep-api-key',''))" 2>/dev/null)
+    fi
+fi
+
+if [ -z "$KARAKEEP_API_KEY" ] || [ -z "$KARAKEEP_SERVER_ADDR" ]; then
+    echo "Error: KARAKEEP_API_KEY or KARAKEEP_SERVER_ADDR is not set."
+    exit 1
+fi
+
 if [ -z "$TAG_NAME" ] || [ -z "$IDS" ]; then
     echo "Usage: $0 <tag_name> <id1> <id2> ..."
     exit 1
