@@ -100,6 +100,12 @@
   - `USER.md` からの正確な関心事マッチング判定と、`memory/logs/` への標準テーブル形式ログの自動生成ルールを `karakeep/SKILL.md` として TDD 構築・検証。
   - `cron.json` 内のクローンジョブプロンプトを更新し、新しい `karakeep` スキルの dynamic Activation を明示的にトリガーするよう設定。
 
+- `[x]` **12. スクリプトシークレットの完全疎結合化と `$vault:` 動的環境変数インジェクションの実装**
+  - `WorkspaceExecuteScriptTool` のパラメータに `env` オブジェクトを追加し、`$vault:key_name` プレフィックスによる動的シークレット解決システムを Rust 側で実装。
+  - 多層フォールバック（復号 Vault 優先 ➔ 平文 `vault.json` ➔ 大文字化・アンダースコア化 UNIX環境変数 ➔ 方式Aフェイルファストエラー）を導入。
+  - スキル（`vitals-coach`, `karakeep`）のスクリプトから Python による `vault.json` 読み取り等の不要なシークレット解決ロジックを完全消去し、シンプルな環境変数ガードのみにスリム化。
+  - スキル定義 `SKILL.md` にて `env` を通じた `$vault` 参照指定を導入し、セキュリティと Token-efficiency を極大化。
+
 ---
 
 ## Phase 24: LLM 接続プロバイダ層の耐障害性（レジリエンス）強化 🔴

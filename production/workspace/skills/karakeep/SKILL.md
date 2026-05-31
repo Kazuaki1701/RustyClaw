@@ -51,10 +51,14 @@ Before running the cleanup, you **MUST** ensure the deletion target selection cr
 ## Pattern Implementation
 
 ### Step 1: Execution (Level 3)
-Do NOT run scripts via absolute shell paths. Invoke the script inside the skill's local directory using the secure gateway tool:
+Do NOT run scripts via absolute shell paths. Invoke the script inside the skill's local directory using the secure gateway tool, passing the resolved Vault keys dynamically:
 *   **Tool**: `run_workspace_script`
-*   **Cleanup**: `501_karakeep-cleanup.sh`
-*   **Tagging**: `502_karakeep-tag-items.sh <tag_name> <ids...>`
+*   **Parameters**:
+    *   `script_name`: `skills/karakeep/scripts/501_karakeep-cleanup.sh` (or `502_karakeep-tag-items.sh`)
+    *   `args`: `["_recommended", "<id1>", "<id2>", ...]` (for tagging only)
+    *   `env`:
+        *   `KARAKEEP_SERVER_ADDR`: `$vault:karakeep-server-addr`
+        *   `KARAKEEP_API_KEY`: `$vault:karakeep-api-key`
 
 ### Step 2: Standardized Logging Format (Level 2)
 Append all execution summaries to `production/workspace/memory/logs/YYYY-MM-DD.md` in the following structured layout:

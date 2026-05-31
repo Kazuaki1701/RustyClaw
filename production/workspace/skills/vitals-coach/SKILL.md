@@ -25,8 +25,8 @@ Retrieves consumer-grade Garmin vital statistics via Home Assistant, enforces st
 
 ## Prerequisites & Endpoints
 
-To retrieve vital statistics, the following connection parameters must be resolved:
-*   **Authentication**: HA Bearer Token resolved from **RustyClaw's vault** (`~/.rustyclaw/vault.json` under key `homeassistant-token`).
+To retrieve vital statistics, all parameters are securely resolved from **RustyClaw's vault** (`~/.rustyclaw/vault.json`):
+*   **Authentication**: HA Bearer Token resolved under key `homeassistant-token`.
 *   **Endpoint Address**: `http://192.168.1.30:8123/api/template` (Home Assistant local API).
 
 ---
@@ -50,9 +50,12 @@ Always parse the `"Garmin Connect Last synced"` timestamp from the raw JSON payl
 ## Workflow & Implementation
 
 ### Step 1: Execution (Level 3)
-Invoke the Garmin retrieval script located inside this skill's localized path:
+Invoke the Garmin retrieval script located inside this skill's localized path, passing the decrypted Home Assistant token dynamically via the secure gateway tool:
 *   **Tool**: `run_workspace_script`
-*   **Script Name**: `500_get-vital-data-garmin.sh`
+*   **Parameters**:
+    *   `script_name`: `skills/vitals-coach/scripts/500_get-vital-data-garmin.sh`
+    *   `env`:
+        *   `HOMEASSISTANT_TOKEN`: `$vault:homeassistant-token`
 
 ### Step 2: Filtration & Threshold Analysis (Level 2)
 Extract only the **Core Health Metrics** and evaluate them against these coaching thresholds:
