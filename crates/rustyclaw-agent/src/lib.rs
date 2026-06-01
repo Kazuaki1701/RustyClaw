@@ -379,6 +379,7 @@ impl Pipeline {
             response.total_tokens.unwrap_or(0),
             response.model_used.as_deref().unwrap_or(""),
             trigger,
+            response.provider_id.as_deref(),
             0,
         );
     }
