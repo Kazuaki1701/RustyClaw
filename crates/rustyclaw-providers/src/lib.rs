@@ -494,10 +494,13 @@ impl LlmProvider for OpenAiCompatProvider {
 
         if let Some(neurons_header) = response.headers().get("cf-ai-neurons") {
             if let Ok(neurons_str) = neurons_header.to_str() {
+                tracing::info!("CF Neurons header received: {}", neurons_str);
                 if let Ok(neurons) = neurons_str.parse::<f64>() {
                     record_neuron_usage(neurons);
                 }
             }
+        } else if url.contains("cloudflare.com") {
+            tracing::debug!("CF call completed but cf-ai-neurons header not present in response");
         }
 
         let resp_data: OpenAiResponse = response.json()
@@ -583,10 +586,13 @@ impl LlmProvider for OpenAiCompatProvider {
 
         if let Some(neurons_header) = response.headers().get("cf-ai-neurons") {
             if let Ok(neurons_str) = neurons_header.to_str() {
+                tracing::info!("CF Neurons header received (stream): {}", neurons_str);
                 if let Ok(neurons) = neurons_str.parse::<f64>() {
                     record_neuron_usage(neurons);
                 }
             }
+        } else if url.contains("cloudflare.com") {
+            tracing::debug!("CF stream call completed but cf-ai-neurons header not present in response");
         }
 
         let mut stream = response.bytes_stream();
