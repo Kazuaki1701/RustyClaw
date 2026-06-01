@@ -669,6 +669,11 @@ header{
   border-color: rgba(0,212,255,0.4);
   box-shadow: 0 0 6px rgba(0,212,255,0.2);
 }
+.prov-row{display:flex;align-items:center;gap:6px;font-size:10px;font-family:'Fira Code',monospace}
+.prov-name{width:80px;color:rgba(180,210,230,0.7)}
+.prov-bar-wrap{flex:1;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden}
+.prov-bar-fill{height:100%;border-radius:2px;transition:width 0.3s}
+.prov-secs{width:44px;text-align:right}
 </style>
 </head>
 <body>
@@ -691,14 +696,8 @@ header{
       <div class="panel-body" id="queuePanel" style="padding:6px 8px; overflow-y:hidden; display:flex; flex-direction:column; gap:2px;"><div style="color:var(--muted);text-align:center;padding:10px;font-family:'Fira Code',monospace;font-size:11px;">稼働タスクなし（待機中・正常）</div></div>
     </div>
     <div class="panel concur">
-      <div class="panel-head"><span class="panel-label">◈ CONCURRENCY</span><span class="rts" id="concur-ts">—</span></div>
-      <div class="panel-body">
-        <div class="slot-row" id="slotRow"></div>
-        <div class="stat-line"><span class="sk">Active</span><span class="sv" id="cActive">—</span></div>
-        <div class="stat-line"><span class="sk">Queue depth</span><span class="sv" id="cDepth">—</span></div>
-        <div class="stat-line"><span class="sk">Cooldown</span><span class="sv" id="cCool">—</span></div>
-        <div class="stat-line"><span class="sk">Global limit</span><span class="sv" id="cGlobal">—</span></div>
-      </div>
+      <div class="panel-head"><span class="panel-label">◈ PROVIDER COOLDOWNS</span><span class="rts" id="concur-ts">—</span></div>
+      <div class="panel-body" id="concurPanel" style="padding:6px 8px;display:flex;flex-direction:column;gap:4px;"></div>
     </div>
     <div class="panel neurons">
       <div class="panel-head"><span class="panel-label">◈ CF NEURONS</span><span class="rts" id="neuron-ts">—</span></div>
@@ -862,20 +861,30 @@ async function updateQueue(){
     if(newRight)newRight.scrollTop=scrollPos;
   }catch{}
 }
+const PROVIDER_COLORS = {
+  cloudflare: '#f48120',
+  groq:       '#f55036',
+  openrouter: '#6e45e2',
+  gmn:        '#4285f4',
+};
 async function updateConcurrency(){
   try{
     const r=await fetch('/api/concurrency');if(!r.ok)return;
     const d=await r.json();
     document.getElementById('concur-ts').textContent='↻ '+now();
-    const slots=document.getElementById('slotRow');slots.innerHTML='';
-    for(let i=0;i<d.capacity;i++){const s=document.createElement('div');s.className='slot'+(i<d.active?' active':'');slots.appendChild(s)}
-    document.getElementById('cActive').textContent=d.active+' / '+d.capacity;
-    document.getElementById('cActive').className='sv '+(d.active>=d.capacity?'busy':'ok');
-    document.getElementById('cDepth').textContent=d.queue_depth;
-    document.getElementById('cCool').textContent=d.cooldown_secs>0?d.cooldown_secs.toFixed(1)+'s':'none';
-    document.getElementById('cCool').className='sv '+(d.cooldown_secs>0?'warn':'ok');
-    document.getElementById('cGlobal').textContent=d.global_cooldown?d.global_cooldown.toFixed(1)+'s':'none';
-    document.getElementById('cGlobal').className='sv '+(d.global_cooldown?'warn':'ok');
+    cachedCapacity = d.capacity ?? 4;
+    const panel=document.getElementById('concurPanel');
+    const providers=d.providers??{};
+    panel.innerHTML=Object.entries(providers).map(([name,secs])=>{
+      const pct=Math.min(100,(secs/60)*100).toFixed(1);
+      const color=PROVIDER_COLORS[name]??'#888';
+      const secsLabel=secs>0?secs.toFixed(1)+'s':'<span style="color:var(--muted)">none</span>';
+      return `<div class="prov-row">
+        <span class="prov-name">${escapeHtml(name)}</span>
+        <div class="prov-bar-wrap"><div class="prov-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <span class="prov-secs">${secsLabel}</span>
+      </div>`;
+    }).join('');
   }catch{}
 }
 async function updateNeurons(){
