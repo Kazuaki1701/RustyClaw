@@ -407,20 +407,6 @@ fn extract_query_i64(request: &str, key: &str) -> Option<i64> {
     None
 }
 
-/// GET /path?key=value のクエリから文字列パラメータ値を取り出す。
-fn extract_query_str(request: &str, key: &str) -> Option<String> {
-    let first_line = request.lines().next()?;
-    let query_start = first_line.find('?')?;
-    let query = &first_line[query_start + 1..];
-    let end = query.find(' ').unwrap_or(query.len());
-    for pair in query[..end].split('&') {
-        if let Some(val) = pair.strip_prefix(&format!("{}=", key)) {
-            return Some(val.to_string());
-        }
-    }
-    None
-}
-
 fn extract_query_param(request: &str, key: &str) -> Option<String> {
     let query_start = request.find('?')?;
     let query_end = request[query_start..].find(' ').map(|i| query_start + i).unwrap_or(request.len());
@@ -1049,7 +1035,7 @@ function renderSummary(d){
     return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${escapeHtml(m)}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${fmtK(v.tokens)}</span></div>`;
   }).join('')||'<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
   // BY PROVIDER
-  const byProvider = data.by_provider ?? {};
+  const byProvider = d.by_provider ?? {};
   const providerEntries = Object.entries(byProvider);
   const maxProvTokens = Math.max(1, ...providerEntries.map(([,v])=>v.tokens));
   const PROV_COLORS_STATS = { cloudflare:'#f48120', groq:'#f55036', openrouter:'#6e45e2', gmn:'#4285f4' };

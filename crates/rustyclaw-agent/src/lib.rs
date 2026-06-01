@@ -1325,6 +1325,23 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::io::AsyncWriteExt;
 
+    /// Find the most recent dump file for a given category under llm/<category>/<date>/<time>.json
+    fn find_latest_dump(llm_dir: &std::path::Path, category: &str) -> Option<std::path::PathBuf> {
+        let cat_dir = llm_dir.join(category);
+        let mut date_dirs: Vec<_> = std::fs::read_dir(&cat_dir).ok()?.flatten()
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        date_dirs.sort_unstable_by(|a, b| b.cmp(a));
+        let date_dir = date_dirs.into_iter().next()?;
+        let mut files: Vec<_> = std::fs::read_dir(&date_dir).ok()?.flatten()
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        files.sort_unstable_by(|a, b| b.cmp(a));
+        files.into_iter().next()
+    }
+
     #[tokio::test]
     async fn test_complete_with_fallback_skips_disabled_model() {
         // disabled モデルが先頭の場合、get_model_chain が有効モデルだけを返すことを確認
@@ -1491,9 +1508,10 @@ mod tests {
         let resp = resp?;
         assert_eq!(resp.content, "I am a robot.");
 
-        let inspector_dump = ws_dir.path().join("memory").join("debug").join("llm").join("discord.json");
-        assert!(inspector_dump.exists());
-        let dump_content = fs::read_to_string(inspector_dump)?;
+        let llm_dir = ws_dir.path().join("memory").join("debug").join("llm");
+        let inspector_dump = find_latest_dump(&llm_dir, "discord");
+        assert!(inspector_dump.is_some(), "discord dump file should exist");
+        let dump_content = fs::read_to_string(inspector_dump.unwrap())?;
         let val: serde_json::Value = serde_json::from_str(&dump_content)?;
         assert_eq!(val["response"]["content"], "I am a robot.");
 
@@ -1565,8 +1583,10 @@ mod tests {
         let resp = resp?;
         assert_eq!(resp.content, "cron response");
 
-        let req_dump_path = ws_dir.path().join("memory").join("debug").join("llm").join("heartbeat.json");
-        let req_dump_content = fs::read_to_string(req_dump_path)?;
+        let llm_dir = ws_dir.path().join("memory").join("debug").join("llm");
+        let req_dump_path = find_latest_dump(&llm_dir, "heartbeat");
+        assert!(req_dump_path.is_some(), "heartbeat dump file should exist");
+        let req_dump_content = fs::read_to_string(req_dump_path.unwrap())?;
         let dump_val: serde_json::Value = serde_json::from_str(&req_dump_content)?;
         let sent_messages: Vec<Message> = serde_json::from_value(dump_val["request"].clone())?;
 
