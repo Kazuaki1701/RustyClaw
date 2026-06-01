@@ -115,6 +115,8 @@ pub fn resolve_provider_id(model: &LlmModelConfig) -> String {
         "openai".to_string()
     } else if base.contains("huggingface.co") {
         "huggingface".to_string()
+    } else if base.contains("192.168.") || base.contains("10.") || base.contains("localhost") || base.contains("127.0.0.1") {
+        "local".to_string()
     } else {
         model.model_provider.clone()
     }
@@ -1348,6 +1350,20 @@ mod tests {
             temperature: None,
         };
         assert_eq!(resolve_provider_id(&model), "cloudflare");
+    }
+
+    #[test]
+    fn resolve_provider_id_detects_local() {
+        let model = LlmModelConfig {
+            model_purpose: "default".into(),
+            model_provider: "openai".into(),
+            model_name: "google/gemma-4-e4b".into(),
+            api_key: "lm-studio".into(),
+            api_base_url: "http://192.168.1.110:1234/v1".into(),
+            max_tokens: None,
+            temperature: None,
+        };
+        assert_eq!(resolve_provider_id(&model), "local");
     }
 
     #[test]
