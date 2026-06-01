@@ -557,7 +557,7 @@ header{
 .lane-desc{max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .q-list-area{flex:1;overflow-y:auto;min-height:0}
 @keyframes pulse-dot{0%{transform:scale(.9);opacity:.6}50%{transform:scale(1.2);opacity:1}100%{transform:scale(.9);opacity:.6}}
-.lanes-split{display:grid;grid-template-columns:min-content 1fr;gap:0;height:100%}
+.lanes-split{display:grid;grid-template-columns:136px 1fr;gap:0;height:100%}
 .lanes-left{display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-right:1px solid rgba(255,255,255,0.07)}
 .lanes-right{display:flex;flex-direction:column;gap:2px;padding:6px 8px;overflow-y:auto}
 .lane-badge-row{display:flex;align-items:center;gap:6px;font-size:11px;font-family:'Fira Code',monospace;white-space:nowrap}
