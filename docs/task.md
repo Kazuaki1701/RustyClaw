@@ -148,12 +148,16 @@
 
 ## Phase 24: LLM 接続プロバイダ層の耐障害性（レジリエンス）強化 🔴
 > GeminiClaw は 429 検知・バックオフおよびモデルフォールバックを実装済み。RustyClaw での同等機能。
+>
+> **2026-06-01 再検討結果**: Item 1（指数バックオフ）は `complete_with_fallback()` の多段フォールバックチェーンで実質カバー済みのため不要と判断。Item 2 は設計上のバグとして再定義（下記参照）。
 
-- `[ ]` **1. LLM プロバイダ層への指数バックオフ（Exponential Backoff）ネットワークリトライの実装**
-  - 一過性接続エラーや 5xx エラーに対し、透過的リトライハンドラを導入。
+- `[x]` **1. LLM プロバイダ層へのネットワークリトライ**
+  - `complete_with_fallback()` の多段モデルチェーンが実質的に同等の役割を担っており、追加実装不要と判断。
 
-- `[ ]` **2. クォータ枯渇時の自動モデルオフローダー (Model Offloader) の実装**
-  - クォータ制限期間中、一時的に代替モデル（例: `gemini-3.5-flash` 等）へ自動フォールバック・自動復帰。
+- `[ ]` **2. GLOBAL_COOLDOWN を Per-provider クールダウンへリファクタ**
+  - **現状のバグ**: `GLOBAL_COOLDOWN` が単一の `Mutex<Option<Instant>>` であり、あるプロバイダの 429 が全プロバイダをブロックする。さらに後発のエラーで上書きされる問題がある（例: Cloudflare daily limit の途中に groq の短い 429 が来ると制限時間が短縮される）。
+  - **修正方針**: `HashMap<provider_id, Instant>` による per-provider クールダウン管理に変更。`complete_with_fallback()` がチェーン走査時にクールダウン中モデルをスキップ。
+  - 対象: `crates/rustyclaw-providers/src/lib.rs`（`GLOBAL_COOLDOWN`, `set_global_cooldown_from_error`, `global_cooldown_remaining`）および `crates/rustyclaw-agent/src/lib.rs`（`complete_with_fallback`）
 
 - `[ ]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
