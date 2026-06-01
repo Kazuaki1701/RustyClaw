@@ -718,6 +718,14 @@ header{
           <span class="rts" id="inspector-ts">—</span>
         </div>
         <div style="display: flex; gap: 4px; overflow-x: auto; padding: 2px 0;" id="llmTabs"></div>
+        <div style="display:flex;gap:6px;padding:2px 0;align-items:center;">
+          <select id="llmDateSelect" style="background:#0a1628;color:#7bafd4;border:1px solid rgba(0,212,255,.25);border-radius:3px;font-family:'Fira Code',monospace;font-size:10px;padding:2px 4px;" onchange="onLlmDateChange()">
+            <option value="">-- date --</option>
+          </select>
+          <select id="llmTimeSelect" style="background:#0a1628;color:#7bafd4;border:1px solid rgba(0,212,255,.25);border-radius:3px;font-family:'Fira Code',monospace;font-size:10px;padding:2px 4px;" onchange="updateInspector()">
+            <option value="">-- time --</option>
+          </select>
+        </div>
       </div>
       <div class="panel-body" id="inspectorBody" style="display: flex; gap: 8px; min-height: 0; overflow-y: hidden;">
         <div style="flex: 1; display: flex; flex-direction: column; gap: 4px; min-height: 0;">
@@ -904,21 +912,55 @@ const llmCategories = ['tools', 'discord', 'dashboard', 'briefing', 'vitals', 'k
 function initLlmTabs() {
   const container = document.getElementById('llmTabs');
   if (!container) return;
-  container.innerHTML = llmCategories.map(cat => 
+  container.innerHTML = llmCategories.map(cat =>
     `<button class="llm-tab${cat===activeLlmCategory?' active':''}" onclick="setLlmCategory('${cat}', this)">${cat.toUpperCase()}</button>`
   ).join('');
+  populateLlmDates();
 }
-function setLlmCategory(cat, btn) {
+async function setLlmCategory(cat, btn) {
   activeLlmCategory = cat;
   document.querySelectorAll('.llm-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  await populateLlmDates();
+}
+async function populateLlmDates() {
+  const dateSelect = document.getElementById('llmDateSelect');
+  const timeSelect = document.getElementById('llmTimeSelect');
+  const r = await fetch('/api/llm/dates?cat=' + activeLlmCategory).catch(()=>null);
+  const dates = r?.ok ? await r.json() : [];
+  dateSelect.innerHTML = '<option value="">-- date --</option>' +
+    dates.map(d=>`<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+  if (dates.length > 0) {
+    dateSelect.value = dates[0];
+    await populateLlmTimes();
+  } else {
+    timeSelect.innerHTML = '<option value="">-- time --</option>';
+    updateInspector();
+  }
+}
+async function populateLlmTimes() {
+  const dateSelect = document.getElementById('llmDateSelect');
+  const timeSelect = document.getElementById('llmTimeSelect');
+  const date = dateSelect.value;
+  if (!date) { timeSelect.innerHTML = '<option value="">-- time --</option>'; return; }
+  const r = await fetch(`/api/llm/times?cat=${activeLlmCategory}&date=${date}`).catch(()=>null);
+  const times = r?.ok ? await r.json() : [];
+  timeSelect.innerHTML = '<option value="">-- time --</option>' +
+    times.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  if (times.length > 0) { timeSelect.value = times[0]; }
   updateInspector();
+}
+async function onLlmDateChange() {
+  await populateLlmTimes();
 }
 async function updateInspector(){
   try{
-    const r = await fetch('/api/llm/io?cat=' + activeLlmCategory);
-    const ts = now();
-    document.getElementById('inspector-ts').textContent = '↻ ' + ts;
+    const date = document.getElementById('llmDateSelect')?.value ?? '';
+    const time = document.getElementById('llmTimeSelect')?.value ?? '';
+    let url = '/api/llm/io?cat=' + activeLlmCategory;
+    if (date && time) url += `&date=${date}&time=${time}`;
+    const r = await fetch(url);
+    document.getElementById('inspector-ts').textContent = '↻ ' + now();
     const reqPanel = document.getElementById('reqPanel');
     const resPanel = document.getElementById('resPanel');
     if (!r.ok) {
@@ -927,18 +969,8 @@ async function updateInspector(){
       return;
     }
     const d = await r.json();
-    if (d && d.request) {
-      const reqTxt = JSON.stringify(d.request, null, 2);
-      reqPanel.textContent = reqTxt.length > 4000 ? '...(truncated head)\n' + reqTxt.slice(-4000) : reqTxt;
-    } else {
-      reqPanel.textContent = '(no request logged)';
-    }
-    if (d && d.response) {
-      const resTxt = JSON.stringify(d.response, null, 2);
-      resPanel.textContent = resTxt.length > 4000 ? '...(truncated head)\n' + resTxt.slice(-4000) : resTxt;
-    } else {
-      resPanel.textContent = '(no response logged)';
-    }
+    if (reqPanel) reqPanel.textContent = d?.request ? JSON.stringify(d.request, null, 2) : '(no request logged)';
+    if (resPanel) resPanel.textContent = d?.response ? JSON.stringify(d.response, null, 2) : '(no response logged)';
   } catch(e) {
     console.error("Inspector fetch error:", e);
   }
