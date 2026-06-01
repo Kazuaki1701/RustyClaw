@@ -44,6 +44,21 @@ impl Pipeline {
         let mut last_err: Option<anyhow::Error> = None;
 
         for (idx, model_cfg) in chain.iter().enumerate() {
+            let provider_id = if model_cfg.model_provider == "gmn" || model_cfg.model_provider == "gemini" {
+                "gmn".to_string()
+            } else {
+                rustyclaw_providers::resolve_provider_id(model_cfg)
+            };
+            if let Some(remaining) = rustyclaw_providers::provider_cooldown_remaining(&provider_id) {
+                tracing::info!(
+                    model = %model_cfg.model_name,
+                    provider = %provider_id,
+                    remaining_secs = remaining.as_secs(),
+                    "Provider is cooled down. Skipping in fallback chain..."
+                );
+                continue;
+            }
+
             let opts = CompletionOptions {
                 model: model_cfg.model_name.clone(),
                 max_tokens: model_cfg.max_tokens,
