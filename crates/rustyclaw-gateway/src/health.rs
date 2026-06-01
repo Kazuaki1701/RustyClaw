@@ -117,39 +117,67 @@ impl HealthServer {
                                         .unwrap_or(raw);
                                     ("200 OK".to_string(), pretty, "application/json; charset=utf-8")
 
+                                } else if request.starts_with("GET /api/llm/dates") {
+                                    let cat = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
+                                    let llm_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat);
+                                    let mut dates: Vec<String> = std::fs::read_dir(&llm_dir)
+                                        .map(|rd| rd.flatten()
+                                            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                                            .map(|e| e.file_name().to_string_lossy().to_string())
+                                            .filter(|n| chrono::NaiveDate::parse_from_str(n, "%Y-%m-%d").is_ok())
+                                            .collect())
+                                        .unwrap_or_default();
+                                    dates.sort_unstable_by(|a, b| b.cmp(a));
+                                    ("200 OK".to_string(), serde_json::to_string(&dates).unwrap_or_else(|_| "[]".to_string()), "application/json; charset=utf-8")
+
+                                } else if request.starts_with("GET /api/llm/times") {
+                                    let cat  = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
+                                    let date = extract_query_param(&request, "date").unwrap_or_default();
+                                    let time_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat).join(&date);
+                                    let mut times: Vec<String> = std::fs::read_dir(&time_dir)
+                                        .map(|rd| rd.flatten()
+                                            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                                            .map(|e| e.file_name().to_string_lossy().replace(".json", ""))
+                                            .collect())
+                                        .unwrap_or_default();
+                                    times.sort_unstable_by(|a, b| b.cmp(a));
+                                    ("200 OK".to_string(), serde_json::to_string(&times).unwrap_or_else(|_| "[]".to_string()), "application/json; charset=utf-8")
+
                                 } else if request.starts_with("GET /api/llm/io") {
-                                    let cat_opt = extract_query_str(&request, "cat");
-                                    let debug_llm_dir = workspace_path_clone.join("memory").join("debug").join("llm");
-                                    let categories = [
-                                        "tools", "discord", "dashboard", "briefing",
-                                        "vitals", "karakeep", "patrol", "heartbeat",
-                                        "summary", "daily", "memory"
-                                    ];
-                                    
-                                    if let Some(cat) = cat_opt {
-                                        if categories.contains(&cat.as_str()) {
-                                            let path = debug_llm_dir.join(format!("{}.json", cat));
-                                            let json = std::fs::read_to_string(&path).unwrap_or_else(|_| "null".to_string());
-                                            ("200 OK".to_string(), json, "application/json; charset=utf-8")
-                                        } else {
-                                            ("400 BAD REQUEST".to_string(), "Invalid category".to_string(), "text/plain")
-                                        }
+                                    let cat  = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
+                                    let date = extract_query_param(&request, "date");
+                                    let time = extract_query_param(&request, "time");
+
+                                    let llm_cat_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat);
+
+                                    let file_path = if let (Some(d), Some(t)) = (date, time) {
+                                        Some(llm_cat_dir.join(&d).join(format!("{}.json", t)))
                                     } else {
-                                        let mut map = serde_json::Map::new();
-                                        for c in &categories {
-                                            let path = debug_llm_dir.join(format!("{}.json", c));
-                                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                                                    map.insert(c.to_string(), val);
-                                                } else {
-                                                    map.insert(c.to_string(), serde_json::Value::Null);
-                                                }
-                                            } else {
-                                                map.insert(c.to_string(), serde_json::Value::Null);
-                                            }
-                                        }
-                                        let json = serde_json::Value::Object(map).to_string();
-                                        ("200 OK".to_string(), json, "application/json; charset=utf-8")
+                                        // latest: newest date dir → newest time file
+                                        let latest_date = std::fs::read_dir(&llm_cat_dir).ok()
+                                            .and_then(|rd| {
+                                                let mut dates: Vec<_> = rd.flatten()
+                                                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                                                    .map(|e| e.file_name().to_string_lossy().to_string())
+                                                    .filter(|n| chrono::NaiveDate::parse_from_str(n, "%Y-%m-%d").is_ok())
+                                                    .collect();
+                                                dates.sort_unstable_by(|a, b| b.cmp(a));
+                                                dates.into_iter().next()
+                                            });
+                                        latest_date.and_then(|d| {
+                                            let date_dir = llm_cat_dir.join(&d);
+                                            let mut times: Vec<_> = std::fs::read_dir(&date_dir).ok()?.flatten()
+                                                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                                                .map(|e| e.file_name().to_string_lossy().to_string())
+                                                .collect();
+                                            times.sort_unstable_by(|a, b| b.cmp(a));
+                                            times.into_iter().next().map(|t| date_dir.join(t))
+                                        })
+                                    };
+
+                                    match file_path.and_then(|p| std::fs::read_to_string(&p).ok()) {
+                                        Some(content) => ("200 OK".to_string(), content, "application/json; charset=utf-8"),
+                                        None => ("404 Not Found".to_string(), "{}".to_string(), "application/json; charset=utf-8"),
                                     }
 
                                 } else if request.starts_with("GET /api/queue") {
@@ -181,23 +209,19 @@ impl HealthServer {
                                     ("200 OK".to_string(), json, "application/json; charset=utf-8")
 
                                 } else if request.starts_with("GET /api/concurrency") {
-                                    let available = gmn_sem_clone.available_permits();
-                                    let active = gmn_cap_clone.saturating_sub(available);
-                                    let queue_state = crate::QUEUE_STATE.lock().unwrap();
-                                    let queue_depth = queue_state.items.iter()
-                                        .filter(|i| i.status == "Waiting")
-                                        .count();
-                                    drop(queue_state);
-                                    let cooldown_secs = rustyclaw_providers::global_cooldown_remaining()
-                                        .map(|d| d.as_secs_f64())
-                                        .unwrap_or(0.0);
+                                    let providers_map = {
+                                        let mut m = serde_json::Map::new();
+                                        for p in ["cloudflare", "groq", "openrouter", "gmn"] {
+                                            let secs = rustyclaw_providers::provider_cooldown_remaining(p)
+                                                .map(|d| d.as_secs_f64())
+                                                .unwrap_or(0.0);
+                                            m.insert(p.to_string(), serde_json::json!(secs));
+                                        }
+                                        m
+                                    };
                                     let json = serde_json::json!({
-                                        "active": active,
-                                        "available": available,
                                         "capacity": gmn_cap_clone,
-                                        "queue_depth": queue_depth,
-                                        "cooldown_secs": cooldown_secs,
-                                        "global_cooldown": if cooldown_secs > 0.0 { Some(cooldown_secs) } else { None::<f64> }
+                                        "providers": providers_map,
                                     });
                                     ("200 OK".to_string(), json.to_string(), "application/json; charset=utf-8")
 
@@ -392,6 +416,20 @@ fn extract_query_str(request: &str, key: &str) -> Option<String> {
     for pair in query[..end].split('&') {
         if let Some(val) = pair.strip_prefix(&format!("{}=", key)) {
             return Some(val.to_string());
+        }
+    }
+    None
+}
+
+fn extract_query_param(request: &str, key: &str) -> Option<String> {
+    let query_start = request.find('?')?;
+    let query_end = request[query_start..].find(' ').map(|i| query_start + i).unwrap_or(request.len());
+    let query = &request[query_start + 1..query_end];
+    for pair in query.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k == key {
+                return Some(v.to_string());
+            }
         }
     }
     None
