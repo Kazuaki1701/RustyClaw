@@ -125,12 +125,10 @@ impl Pipeline {
     }
 
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
-        // ── 現在日時を1行で先頭に注入（rate limit 対策で最小文字数）──
-        let now = chrono::Local::now();
-        let runtime_block = format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z"));
-
+        // 静的ブロック（SOUL/AGENTS/MEMORY/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
+        // 動的な [now:] は末尾に置くことで毎回変わる部分がキャッシュ prefix を破壊しないようにする。
         let files = ["SOUL.md", "AGENTS.md", "MEMORY.md", "USER.md"];
-        let mut context = runtime_block;
+        let mut context = String::new();
 
         for filename in &files {
             let path = workspace_dir.join(filename);
@@ -156,6 +154,10 @@ impl Pipeline {
                 ));
             }
         }
+
+        // 動的ブロック（現在時刻）は末尾に配置
+        let now = chrono::Local::now();
+        context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
 
         Ok(context)
     }
@@ -577,11 +579,10 @@ Rules:
     }
 
     /// Heartbeat 専用の軽量システムコンテキストを構築する（SOUL + MEMORY + HEARTBEAT のみ）
+    /// 静的ファイルを先頭に、動的な [now:] を末尾に置くことでプロンプトキャッシュ prefix を安定させる。
     pub fn build_heartbeat_context(&self, workspace_dir: &Path) -> Result<String> {
-        let now = chrono::Local::now();
-        let runtime_block = format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z"));
         let files = ["SOUL.md", "MEMORY.md", "HEARTBEAT.md"];
-        let mut context = runtime_block;
+        let mut context = String::new();
         for filename in &files {
             let path = workspace_dir.join(filename);
             let content = match fs::read_to_string(&path) {
@@ -593,6 +594,9 @@ Rules:
             };
             context.push_str(&format!("# {}\n\n{}\n\n", filename, Self::strip_comments(&content)));
         }
+        // 動的ブロック（現在時刻）は末尾に配置
+        let now = chrono::Local::now();
+        context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
         Ok(context)
     }
 
@@ -1424,12 +1428,13 @@ mod tests {
         let pipeline = Pipeline::new(config, flush_sem);
         let context = pipeline.build_system_context(ws_dir.path()).unwrap();
 
-        // フォーマット: [now: YYYY-MM-DDTHH:MM:SS+HH:MM]
-        let first_line = context.lines().next().unwrap();
-        assert!(first_line.starts_with("[now: "), "datetime line must be first");
-        assert!(first_line.ends_with(']'));
-        assert!(first_line.contains('T'), "must be ISO 8601 format");
+        // 静的ファイルが先頭、[now:] は末尾（プロンプトキャッシュ最適化）
         assert!(context.contains("# SOUL.md"));
+        // フォーマット: [now: YYYY-MM-DDTHH:MM:SS+HH:MM]
+        let last_line = context.trim_end().lines().last().unwrap();
+        assert!(last_line.starts_with("[now: "), "datetime line must be last for cache optimization");
+        assert!(last_line.ends_with(']'));
+        assert!(last_line.contains('T'), "must be ISO 8601 format");
     }
 
     #[test]
