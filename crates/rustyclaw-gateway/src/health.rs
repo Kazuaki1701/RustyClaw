@@ -934,7 +934,7 @@ async function populateLlmTimes() {
   const r = await fetch(`/api/llm/times?cat=${activeLlmCategory}&date=${date}`).catch(()=>null);
   const times = r?.ok ? await r.json() : [];
   timeSelect.innerHTML = '<option value="">-- time --</option>' +
-    times.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+    times.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t.replace(/-/g,':'))}</option>`).join('');
   if (times.length > 0) { timeSelect.value = times[0]; }
   updateInspector();
 }
