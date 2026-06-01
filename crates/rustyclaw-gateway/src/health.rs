@@ -981,12 +981,24 @@ async function updateLog(){
     const el=document.getElementById('appLog');
     const atBottom=el.scrollHeight-el.clientHeight<=el.scrollTop+60;
     const lines=txt.trim().split('\n').slice(-100);
+    const LOG_BADGES = [
+      { pattern: /HeartBeatService/,  label: 'HEARTBEAT', color: '#bf00ff' },
+      { pattern: /rustyclaw_gateway/, label: 'GATEWAY',   color: '#00d4ff' },
+      { pattern: /PatrolService/,     label: 'PATROL',    color: '#ff8c00' },
+      { pattern: /BriefingService/,   label: 'BRIEFING',  color: '#4488ff' },
+      { pattern: /VitalsService/,     label: 'VITALS',    color: '#00ff9f' },
+      { pattern: /DiscordService/,    label: 'DISCORD',   color: '#7b68ee' },
+    ];
     el.innerHTML=lines.map(line=>{
       const lvl=line.includes(' INFO ')?'info':line.includes(' WARN ')?'warn':line.includes(' ERROR ')?'error':'info';
       const tsM=line.match(/\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})/);
       const ts=tsM?tsM[1]:'';
-      const msg=line.replace(/^\S+\s+(INFO|WARN|ERROR)\s+\S+:\s*/,'').trim();
-      return`<div class="log-line"><span class="log-ts">${ts}</span><span class="log-lv ${lvl}">${lvl.toUpperCase()}</span><span class="log-msg">${escapeHtml(msg)}</span></div>`;
+      let msg=line.replace(/^\S+\s+(INFO|WARN|ERROR)\s+\S+:\s*/,'').trim();
+      const svcBadge=LOG_BADGES.find(b=>b.pattern.test(line));
+      const badgeSpan=svcBadge
+        ?`<strong style="color:${svcBadge.color};background:${svcBadge.color}22;border:1px solid ${svcBadge.color}55;padding:0 4px;border-radius:3px;font-size:9px;margin-right:4px;">[${svcBadge.label}]</strong>`
+        :'';
+      return`<div class="log-line"><span class="log-ts">${ts}</span><span class="log-lv ${lvl}">${lvl.toUpperCase()}</span>${badgeSpan}<span class="log-msg">${escapeHtml(msg)}</span></div>`;
     }).join('');
     if(atBottom)el.scrollTop=el.scrollHeight;
   }catch{}
