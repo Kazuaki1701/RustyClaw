@@ -149,14 +149,39 @@ fn dump_llm_io(
     messages: &[Message],
     response: &LlmResponse,
 ) {
+    use chrono::Local;
+
     let ws_dir = get_workspace_dir();
-    let debug_dir = ws_dir.join("memory").join("debug").join("llm");
-    if let Err(e) = std::fs::create_dir_all(&debug_dir) {
-        tracing::error!("Failed to create llm dump directory {:?}: {}", debug_dir, e);
+    let now = Local::now();
+    let date_str = now.format("%Y-%m-%d").to_string();
+    let time_str = now.format("%H-%M-%S").to_string();
+
+    let category_dir = ws_dir.join("memory").join("debug").join("llm").join(category);
+    let date_dir = category_dir.join(&date_str);
+
+    if let Err(e) = std::fs::create_dir_all(&date_dir) {
+        tracing::error!("Failed to create llm dump directory {:?}: {}", date_dir, e);
         return;
     }
 
-    let file_path = debug_dir.join(format!("{}.json", category));
+    // Delete date folders older than 5 days
+    if let Ok(entries) = std::fs::read_dir(&category_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str == date_str {
+                continue;
+            }
+            if let Ok(folder_date) = chrono::NaiveDate::parse_from_str(&name_str, "%Y-%m-%d") {
+                let today = now.date_naive();
+                if (today - folder_date).num_days() > 5 {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+    }
+
+    let file_path = date_dir.join(format!("{}.json", time_str));
 
     #[derive(serde::Serialize)]
     struct LlmIoDump<'a> {
@@ -167,7 +192,7 @@ fn dump_llm_io(
     }
 
     let dump = LlmIoDump {
-        timestamp: chrono::Local::now().timestamp(),
+        timestamp: now.timestamp(),
         model,
         request: messages,
         response,
@@ -179,9 +204,7 @@ fn dump_llm_io(
                 tracing::error!("Failed to write llm io dump to {:?}: {}", file_path, e);
             }
         }
-        Err(e) => {
-            tracing::error!("Failed to create llm io dump file {:?}: {}", file_path, e);
-        }
+        Err(e) => tracing::error!("Failed to create llm io dump file {:?}: {}", file_path, e),
     }
 }
 
@@ -230,6 +253,7 @@ pub struct LlmResponse {
     pub completion_tokens: Option<u32>,
     pub total_tokens: Option<u32>,
     pub model_used: Option<String>,
+    pub provider_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -469,6 +493,7 @@ impl LlmProvider for OpenAiCompatProvider {
             completion_tokens: resp_data.usage.as_ref().map(|u| u.completion_tokens),
             total_tokens: resp_data.usage.as_ref().map(|u| u.total_tokens),
             model_used: resp_data.model.clone(),
+            provider_id: None,
         };
 
         let mut resolved_category = opts.category.clone().unwrap_or_else(|| "discord".to_string());
@@ -592,6 +617,7 @@ impl LlmProvider for OpenAiCompatProvider {
                 completion_tokens: None,
                 total_tokens: None,
                 model_used: Some(resolved_model_clone.clone()),
+                provider_id: None,
             };
             dump_llm_io(&resolved_category, &resolved_model_clone, &messages_vec, &llm_res);
         };
@@ -772,6 +798,7 @@ impl LlmProvider for GmnCliProvider {
             completion_tokens: None,
             total_tokens: None,
             model_used: None,
+            provider_id: None,
         })
     }
 
@@ -941,6 +968,7 @@ impl LlmProvider for NoopProvider {
             completion_tokens: None,
             total_tokens: None,
             model_used: None,
+            provider_id: None,
         })
     }
 
@@ -1240,6 +1268,46 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn dump_llm_io_writes_dated_file_and_cleans_old_dirs() {
+        use std::fs;
+        use chrono::{Local, Duration};
+
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", tmp.path().to_str().unwrap()); }
+
+        // Create a dummy folder 6 days old (should be deleted)
+        let old_date = (Local::now() - Duration::days(6)).format("%Y-%m-%d").to_string();
+        let old_dir = tmp.path().join("memory/debug/llm/tools").join(&old_date);
+        fs::create_dir_all(&old_dir).unwrap();
+
+        let messages = vec![];
+        let response = LlmResponse {
+            content: "test".into(),
+            role: "assistant".into(),
+            tool_calls: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            model_used: None,
+            provider_id: None,
+        };
+        dump_llm_io("tools", "test-model", &messages, &response);
+
+        // Today's dir should contain exactly one JSON file
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today_dir = tmp.path().join("memory/debug/llm/tools").join(&today);
+        let files: Vec<_> = fs::read_dir(&today_dir).unwrap().collect();
+        assert_eq!(files.len(), 1);
+        let filename = files[0].as_ref().unwrap().file_name();
+        assert!(filename.to_str().unwrap().ends_with(".json"));
+
+        // 6-day-old folder must be deleted
+        assert!(!old_dir.exists());
+
+        unsafe { std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR"); }
     }
 
     #[test]
