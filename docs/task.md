@@ -154,10 +154,11 @@
 - `[x]` **1. LLM プロバイダ層へのネットワークリトライ**
   - `complete_with_fallback()` の多段モデルチェーンが実質的に同等の役割を担っており、追加実装不要と判断。
 
-- `[ ]` **2. GLOBAL_COOLDOWN を Per-provider クールダウンへリファクタ**
+- `[ ]` **2. GLOBAL_COOLDOWN を Per-provider クールダウンへリファクタ（GLOBAL_COOLDOWN 削除）**
   - **現状のバグ**: `GLOBAL_COOLDOWN` が単一の `Mutex<Option<Instant>>` であり、あるプロバイダの 429 が全プロバイダをブロックする。さらに後発のエラーで上書きされる問題がある（例: Cloudflare daily limit の途中に groq の短い 429 が来ると制限時間が短縮される）。
-  - **修正方針**: `HashMap<provider_id, Instant>` による per-provider クールダウン管理に変更。`complete_with_fallback()` がチェーン走査時にクールダウン中モデルをスキップ。
-  - 対象: `crates/rustyclaw-providers/src/lib.rs`（`GLOBAL_COOLDOWN`, `set_global_cooldown_from_error`, `global_cooldown_remaining`）および `crates/rustyclaw-agent/src/lib.rs`（`complete_with_fallback`）
+  - **修正方針**: `HashMap<provider_id, Instant>` による per-provider クールダウン管理に変更。`complete_with_fallback()` がチェーン走査時にクールダウン中モデルをスキップ。全プロバイダがクールダウン中の場合はチェーンを使い果たしてエラーを返すため、Gateway 側のブロックゲートは不要となり `GLOBAL_COOLDOWN` を完全削除する。
+  - 削除対象: `GLOBAL_COOLDOWN` static 変数・`set_global_cooldown_from_error()`・`global_cooldown_remaining()` およびこれらを呼び出す gateway/cron.rs 内の全7箇所
+  - 変更対象: `crates/rustyclaw-providers/src/lib.rs`・`crates/rustyclaw-agent/src/lib.rs`（`complete_with_fallback`）・`crates/rustyclaw-gateway/src/lib.rs`・`crates/rustyclaw-gateway/src/cron.rs`・`crates/rustyclaw-gateway/src/health.rs`
 
 - `[ ]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
