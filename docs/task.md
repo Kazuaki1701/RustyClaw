@@ -140,7 +140,7 @@
   - `507_obsidian-ops.sh`（search/read/write/append サブコマンド統合、`$vault:obsidian-api-key` 注入）。
   - `ObsidianSearchTool`, `ObsidianReadTool`, `ObsidianWriteTool` および `percent_encode()` の削除。
 
-- `[ ]` **5. ゲートウェイ自動登録の解除と cargo test のオールグリーン検証**
+- `[x]` **5. ゲートウェイ自動登録の解除と cargo test のオールグリーン検証**
 
 - `[ ]` **6. RPi4 実機検証と deploy.sh による配備**
 
