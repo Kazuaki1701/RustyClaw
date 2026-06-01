@@ -165,6 +165,7 @@ fn dump_llm_io(
     }
 
     // Delete date folders older than 5 days
+    // Spec: "5日超" = older than 5 days → retain today + 5 prior days (6 days total)
     if let Ok(entries) = std::fs::read_dir(&category_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
@@ -1283,6 +1284,11 @@ mod tests {
         let old_dir = tmp.path().join("memory/debug/llm/tools").join(&old_date);
         fs::create_dir_all(&old_dir).unwrap();
 
+        // 4-day-old folder — must be retained
+        let recent_date = (Local::now() - Duration::days(4)).format("%Y-%m-%d").to_string();
+        let recent_dir = tmp.path().join("memory/debug/llm/tools").join(&recent_date);
+        fs::create_dir_all(&recent_dir).unwrap();
+
         let messages = vec![];
         let response = LlmResponse {
             content: "test".into(),
@@ -1306,6 +1312,9 @@ mod tests {
 
         // 6-day-old folder must be deleted
         assert!(!old_dir.exists());
+
+        // 4-day-old folder must still exist
+        assert!(recent_dir.exists(), "4-day-old dir must be retained");
 
         unsafe { std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR"); }
     }
