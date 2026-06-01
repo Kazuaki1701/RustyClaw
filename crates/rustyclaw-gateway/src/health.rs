@@ -535,7 +535,7 @@ header{
 .pill-wait{background:rgba(0,212,255,.10);color:var(--blue); border:1px solid rgba(0,212,255,.3);box-shadow:0 0 6px rgba(0,212,255,.15)}
 .pill-cool{background:rgba(255,170,0,.10);color:var(--amber);border:1px solid rgba(255,170,0,.3);box-shadow:0 0 6px rgba(255,170,0,.15)}
 .q-sid {color:var(--text);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
-.q-desc{color:var(--muted);font-size:10px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+.q-desc{color:var(--muted);font-size:10px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .q-time{color:var(--muted);font-size:10px;flex-shrink:0}
 .cool-bar{height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:2px;overflow:hidden}
 .cool-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--amber),#ff6600);box-shadow:0 0 4px var(--amber);transition:width .5s}
@@ -838,7 +838,7 @@ async function updateQueue(){
       const lbl=item.status==='Waiting'?'WAIT':'COOL';
       const elapsed=Math.floor((Date.now()-item.enqueued_at_ms)/1000);
       const s=serviceBadge(item.session_id);
-      qHtml+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span>${badgeHtml(s)}<span class="q-time">${elapsed}s</span></div>`;
+      qHtml+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span>${badgeHtml(s)}<span class="q-desc">${escapeHtml(item.description||'')}</span><span class="q-time">${elapsed}s</span></div>`;
       if(item.status==='Cooldown'&&item.cooldown_left_secs>0){const pct=Math.min(100,(item.cooldown_left_secs/60)*100);qHtml+=`<div class="cool-bar"><div class="cool-fill" style="width:${pct}%"></div></div>`}
     });
     sched.forEach(s=>{
@@ -846,7 +846,7 @@ async function updateQueue(){
       const h=Math.floor(left/3600),m=Math.floor((left%3600)/60);
       const eta=h>0?`${h}h${m}m`:m>0?`${m}m`:`<1m`;
       const svc=serviceBadge(s.name);
-      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span>${badgeHtml(svc)}<span class="q-time">in ${eta}</span></div>`;
+      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span>${badgeHtml(svc)}<span class="q-desc">${escapeHtml(s.trigger_type||s.name||'')}</span><span class="q-time">in ${eta}</span></div>`;
     });
     if(!qHtml)qHtml='<div style="color:var(--muted);text-align:center;padding:10px;font-size:10px;">待機なし</div>';
 
