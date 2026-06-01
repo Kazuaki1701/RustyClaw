@@ -250,15 +250,56 @@ pub fn generate_skills_directory(skills: &[Skill]) -> String {
         return String::new();
     }
 
-    let mut dir_str = String::from("\n\n## 🛠️ Available Agent Skills (Discovery)\n");
-    dir_str.push_str("You have access to the following specialized capabilities. To activate detailed instructions for a skill, include the skill's identifier (e.g. `[use-skill: vitals-coach]`) in your internal chain of thought.\n\n");
+    let mut dir_str = String::from("\n\n## Available Skills\n");
+    dir_str.push_str(
+        "Skills are NOT callable as tool names. \
+         To execute a skill that has a script, call the `run_workspace_script` tool \
+         with the script path shown below. Do NOT generate a tool call named after the skill itself.\n\n"
+    );
 
     for skill in skills {
-        dir_str.push_str(&format!(
-            "- **`{}`**: {}\n",
-            skill.manifest.name,
-            skill.manifest.description
-        ));
+        // scripts/ 配下の .sh ファイルを列挙（ソート済み）
+        let scripts_dir = skill.path.join("scripts");
+        let mut script_paths: Vec<String> = std::fs::read_dir(&scripts_dir)
+            .map(|rd| {
+                let mut names: Vec<String> = rd
+                    .flatten()
+                    .filter(|e| {
+                        e.path().extension().and_then(|x| x.to_str()) == Some("sh")
+                    })
+                    .map(|e| {
+                        format!(
+                            "skills/{}/scripts/{}",
+                            skill.manifest.name,
+                            e.file_name().to_string_lossy()
+                        )
+                    })
+                    .collect();
+                names.sort();
+                names
+            })
+            .unwrap_or_default();
+
+        if script_paths.is_empty() {
+            // スクリプトなし: LLM が直接処理するタイプ
+            dir_str.push_str(&format!(
+                "- **{}**: {} (instruction-based, no script)\n",
+                skill.manifest.name,
+                skill.manifest.description
+            ));
+        } else {
+            dir_str.push_str(&format!(
+                "- **{}**: {}\n",
+                skill.manifest.name,
+                skill.manifest.description
+            ));
+            for path in &script_paths {
+                dir_str.push_str(&format!(
+                    "  → run_workspace_script: \"{}\"\n",
+                    path
+                ));
+            }
+        }
     }
     dir_str
 }
@@ -403,7 +444,7 @@ mod tests {
         // テストA: トリガーワードが含まれていない場合 (Discoveryのみ追加される)
         let prompt = "How is the weather today?";
         let result = inject_skill_content(dir.path(), prompt);
-        assert!(result.contains("Available Agent Skills"));
+        assert!(result.contains("Available Skills"));
         assert!(result.contains("vitals-coach"));
         assert!(result.contains("topic-patrol"));
         assert!(!result.contains("Garmin instructions"));
