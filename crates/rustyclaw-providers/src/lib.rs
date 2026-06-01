@@ -109,6 +109,8 @@ pub fn resolve_provider_id(model: &LlmModelConfig) -> String {
         "groq".to_string()
     } else if base.contains("cloudflare.com") {
         "cloudflare".to_string()
+    } else if base.contains("openrouter.ai") {
+        "openrouter".to_string()
     } else if base.contains("openai.com") {
         "openai".to_string()
     } else if base.contains("huggingface.co") {
@@ -494,7 +496,7 @@ impl LlmProvider for OpenAiCompatProvider {
             completion_tokens: resp_data.usage.as_ref().map(|u| u.completion_tokens),
             total_tokens: resp_data.usage.as_ref().map(|u| u.total_tokens),
             model_used: resp_data.model.clone(),
-            provider_id: None,
+            provider_id: Some(resolve_provider_id(&self.model)),
         };
 
         let mut resolved_category = opts.category.clone().unwrap_or_else(|| "discord".to_string());
@@ -573,6 +575,7 @@ impl LlmProvider for OpenAiCompatProvider {
         let resolved_model_clone = resolved_model.clone();
         let resolved_category = opts.category.clone().unwrap_or_else(|| "discord".to_string());
         let messages_vec = messages.to_vec();
+        let provider_id_clone = resolve_provider_id(&self.model);
 
         let output_stream = async_stream::try_stream! {
             let mut full_response_content = String::new();
@@ -618,7 +621,7 @@ impl LlmProvider for OpenAiCompatProvider {
                 completion_tokens: None,
                 total_tokens: None,
                 model_used: Some(resolved_model_clone.clone()),
-                provider_id: None,
+                provider_id: Some(provider_id_clone.clone()),
             };
             dump_llm_io(&resolved_category, &resolved_model_clone, &messages_vec, &llm_res);
         };
@@ -799,7 +802,7 @@ impl LlmProvider for GmnCliProvider {
             completion_tokens: None,
             total_tokens: None,
             model_used: None,
-            provider_id: None,
+            provider_id: Some("gmn".to_string()),
         })
     }
 
@@ -1317,6 +1320,34 @@ mod tests {
         assert!(recent_dir.exists(), "4-day-old dir must be retained");
 
         unsafe { std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR"); }
+    }
+
+    #[test]
+    fn resolve_provider_id_detects_openrouter() {
+        let model = LlmModelConfig {
+            model_purpose: "default".into(),
+            model_provider: "openai".into(),
+            model_name: "google/gemma-4-31b-it:free".into(),
+            api_key: "key".into(),
+            api_base_url: "https://openrouter.ai/api/v1".into(),
+            max_tokens: None,
+            temperature: None,
+        };
+        assert_eq!(resolve_provider_id(&model), "openrouter");
+    }
+
+    #[test]
+    fn resolve_provider_id_detects_cloudflare() {
+        let model = LlmModelConfig {
+            model_purpose: "default".into(),
+            model_provider: "openai".into(),
+            model_name: "@cf/qwen/qwen3-30b-a3b-fp8".into(),
+            api_key: "key".into(),
+            api_base_url: "https://api.cloudflare.com/client/v4/accounts/xxx/ai/v1".into(),
+            max_tokens: None,
+            temperature: None,
+        };
+        assert_eq!(resolve_provider_id(&model), "cloudflare");
     }
 
     #[test]
