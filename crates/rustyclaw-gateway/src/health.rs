@@ -637,7 +637,7 @@ header{
 .chart-legend{display:flex;gap:14px;margin-top:6px}
 .leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);font-family:'Fira Code',monospace}
 .leg-dot{width:8px;height:3px;border-radius:1px}
-.stats-bottom{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stats-bottom{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .breakdown{background:var(--term-bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
 .bd-title{font-size:10px;font-weight:700;letter-spacing:.08em;font-family:'Fira Code',monospace;margin-bottom:8px}
 .bd-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03);font-size:11px}
@@ -785,6 +785,7 @@ header{
   <div class="stats-bottom">
     <div class="breakdown" style="border-color:rgba(191,0,255,.2)"><div class="bd-title" style="color:var(--purple)">BY MODEL</div><div id="modelBreakdown"><div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div></div></div>
     <div class="breakdown" style="border-color:rgba(0,229,255,.2)"><div class="bd-title" style="color:var(--cyan)">BY TRIGGER</div><div id="triggerBreakdown"><div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div></div></div>
+    <div class="breakdown" style="border-color:rgba(255,165,0,.2)"><div class="bd-title" style="color:#f48120">BY PROVIDER</div><div id="providerBreakdown"><div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div></div></div>
   </div>
 </div>
 </div>
@@ -1047,6 +1048,26 @@ function renderSummary(d){
     const pct=Math.round((v.tokens/totalTok)*100);
     return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${escapeHtml(m)}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${fmtK(v.tokens)}</span></div>`;
   }).join('')||'<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
+  // BY PROVIDER
+  const byProvider = data.by_provider ?? {};
+  const providerEntries = Object.entries(byProvider);
+  const maxProvTokens = Math.max(1, ...providerEntries.map(([,v])=>v.tokens));
+  const PROV_COLORS_STATS = { cloudflare:'#f48120', groq:'#f55036', openrouter:'#6e45e2', gmn:'#4285f4' };
+  document.getElementById('providerBreakdown').innerHTML = providerEntries.length
+    ? providerEntries.map(([name, v]) => {
+        const pct = ((v.tokens / maxProvTokens) * 100).toFixed(1);
+        const color = PROV_COLORS_STATS[name] ?? '#888';
+        return `<div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(180,210,230,0.7);margin-bottom:2px">
+            <span>${escapeHtml(name)}</span>
+            <span>${fmtK(v.tokens)} tok / ${v.runs} runs</span>
+          </div>
+          <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:2px">
+            <div style="height:100%;width:${pct}%;background:${color};border-radius:2px"></div>
+          </div>
+        </div>`;
+      }).join('')
+    : '<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
 }
 function renderNeuronsKpi(d){
   const today=d.today_used??0;
