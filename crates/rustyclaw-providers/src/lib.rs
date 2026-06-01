@@ -500,7 +500,7 @@ impl LlmProvider for OpenAiCompatProvider {
                 }
             }
         } else if url.contains("cloudflare.com") {
-            tracing::debug!("CF call completed but cf-ai-neurons header not present in response");
+            tracing::info!("CF call: cf-ai-neurons header not present in response (OpenAI-compat endpoint may not return it)");
         }
 
         let resp_data: OpenAiResponse = response.json()
