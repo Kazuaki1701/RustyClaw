@@ -845,8 +845,9 @@ async function updateQueue(){
       const left=Math.max(0,s.next_run_epoch-Math.floor(Date.now()/1000));
       const h=Math.floor(left/3600),m=Math.floor((left%3600)/60);
       const eta=h>0?`${h}h${m}m`:m>0?`${m}m`:`<1m`;
-      const svc=serviceBadge(s.name);
-      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span>${badgeHtml(svc)}<span class="q-desc">${escapeHtml(s.trigger_type||s.name||'')}</span><span class="q-time">in ${eta}</span></div>`;
+      const matched=SERVICE_BADGES.find(b=>('cron:'+s.id).startsWith(b.prefix));
+      const svc=matched||{label:'CRON',color:'#aaaaaa'};
+      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span>${badgeHtml(svc)}<span class="q-desc">${escapeHtml(s.name||'')}</span><span class="q-time">in ${eta}</span></div>`;
     });
     if(!qHtml)qHtml='<div style="color:var(--muted);text-align:center;padding:10px;font-size:10px;">待機なし</div>';
 
