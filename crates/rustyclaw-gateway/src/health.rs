@@ -571,6 +571,14 @@ header{
 .lane-desc{max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .q-list-area{flex:1;overflow-y:auto;min-height:0}
 @keyframes pulse-dot{0%{transform:scale(.9);opacity:.6}50%{transform:scale(1.2);opacity:1}100%{transform:scale(.9);opacity:.6}}
+.lanes-split{display:grid;grid-template-columns:1fr 1fr;gap:0;height:100%}
+.lanes-left{display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-right:1px solid rgba(255,255,255,0.07)}
+.lanes-right{display:flex;flex-direction:column;gap:2px;padding:6px 8px;overflow-y:auto}
+.lane-badge-row{display:flex;align-items:center;gap:6px;font-size:11px;font-family:'Fira Code',monospace;white-space:nowrap}
+.lane-dot-run{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0;box-shadow:0 0 4px var(--green)}
+.lane-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;font-family:'Fira Code',monospace}
+.lane-badge-idle{color:var(--muted);font-family:'Fira Code',monospace;font-size:10px}
+.lane-elapsed{color:var(--muted);font-size:10px;margin-left:auto}
 .slot-row{display:flex;gap:4px;margin:10px 0 12px}
 .slot{flex:1;height:16px;border-radius:3px;border:1px solid rgba(0,212,255,.15);background:rgba(255,255,255,.03)}
 .slot.active{background:rgba(0,212,255,.25);border-color:var(--blue);box-shadow:0 0 6px rgba(0,212,255,.4)}
@@ -784,6 +792,26 @@ function switchTab(id,btn){
 function fmtK(n){if(n>=1e6)return(n/1e6).toFixed(2)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return n.toString()}
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function now(){return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+const SERVICE_BADGES = [
+  { prefix: 'cron:heartbeat',      label: 'HEARTBEAT', color: '#bf00ff' },
+  { prefix: 'cron:topic-patrol',   label: 'PATROL',    color: '#ff8c00' },
+  { prefix: 'cron:daily-briefing', label: 'BRIEFING',  color: '#4488ff' },
+  { prefix: 'cron:vitals',         label: 'VITALS',    color: '#00ff9f' },
+  { prefix: 'cron:karakeep',       label: 'KARAKEEP',  color: '#ffe066' },
+  { prefix: 'cron:daily-summary',  label: 'SUMMARY',   color: '#00e5ff' },
+  { prefix: 'discord-',            label: 'DISCORD',   color: '#7b68ee' },
+  { prefix: 'http-dashboard',      label: 'DASHBOARD', color: '#00d4ff' },
+  { prefix: 'cli-',                label: 'CLI',       color: '#cccccc' },
+];
+function serviceBadge(sessionId) {
+  const s = SERVICE_BADGES.find(b => sessionId.startsWith(b.prefix));
+  return s || { label: 'UNKNOWN', color: '#888888' };
+}
+function badgeHtml(s) {
+  const style = `background:${s.color}22;color:${s.color};border:1px solid ${s.color}55`;
+  return `<span class="lane-badge" style="${style}">${escapeHtml(s.label)}</span>`;
+}
+let cachedCapacity = 4;
 async function updateQueue(){
   try{
     const[rq,rs]=await Promise.all([fetch('/api/queue'),fetch('/api/schedule')]);
@@ -792,77 +820,46 @@ async function updateQueue(){
     const sched=rs.ok?await rs.json():[];
     document.getElementById('queue-ts').textContent='↻ '+now();
     const panel=document.getElementById('queuePanel');
-    
+
     const executing=items.filter(i=>i.status==='Executing');
     const waiting=items.filter(i=>i.status!=='Executing');
-    
-    let html='<div class="lane-sec-lbl">LANES (PARALLEL WORKERS)</div>';
-    html+='<div class="lanes-grid">';
-    for(let i=0;i<4;i++){
+
+    // Left column: LANES (capacity from updateConcurrency cache)
+    let lanesHtml='';
+    for(let i=0;i<cachedCapacity;i++){
       if(i<executing.length){
         const task=executing[i];
         const elapsed=Math.floor((Date.now()-task.enqueued_at_ms)/1000);
-        html+=`
-          <div class="lane-card active" title="${escapeHtml(task.description)}">
-            <div class="lane-hdr">
-              <span class="lane-n">LANE 0${i+1}</span>
-              <span class="lane-st"><span class="lane-dot"></span>RUN</span>
-            </div>
-            <div class="lane-sid">${escapeHtml(task.session_id)}</div>
-            <div class="lane-meta">
-              <span class="lane-desc">${escapeHtml(task.description||'Executing...')}</span>
-              <span class="lane-time">${elapsed}s</span>
-            </div>
-          </div>
-        `;
+        const s=serviceBadge(task.session_id);
+        lanesHtml+=`<div class="lane-badge-row"><span class="lane-dot-run"></span>${badgeHtml(s)}<span class="lane-elapsed">${elapsed}s</span></div>`;
       }else{
-        html+=`
-          <div class="lane-card idle">
-            <div class="lane-hdr">
-              <span class="lane-n">LANE 0${i+1}</span>
-              <span class="lane-st"><span class="lane-dot"></span>IDLE</span>
-            </div>
-            <div class="lane-sid">[ Ready ]</div>
-            <div class="lane-meta">
-              <span>--</span>
-              <span>--</span>
-            </div>
-          </div>
-        `;
+        lanesHtml+=`<div class="lane-badge-row"><span class="lane-badge-idle">[  ────  ]</span><span class="lane-elapsed">--</span></div>`;
       }
     }
-    html+='</div>';
-    html+='<div class="lane-div"></div>';
-    html+='<div class="lane-sec-lbl">PENDING QUEUE & SCHEDULED</div>';
-    html+='<div class="q-list-area">';
-    
+
+    // Right column: PENDING + SCHEDULED
     let qHtml='';
-    waiting.forEach((item)=>{
+    waiting.forEach(item=>{
       const cls=item.status==='Waiting'?'pill-wait':'pill-cool';
       const lbl=item.status==='Waiting'?'WAIT':'COOL';
       const elapsed=Math.floor((Date.now()-item.enqueued_at_ms)/1000);
-      qHtml+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span><span class="q-sid">${escapeHtml(item.session_id)}</span><span class="q-desc">${escapeHtml(item.description||'')}</span><span class="q-time">${elapsed}s</span></div>`;
+      const s=serviceBadge(item.session_id);
+      qHtml+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span>${badgeHtml(s)}<span class="q-time">${elapsed}s</span></div>`;
       if(item.status==='Cooldown'&&item.cooldown_left_secs>0){const pct=Math.min(100,(item.cooldown_left_secs/60)*100);qHtml+=`<div class="cool-bar"><div class="cool-fill" style="width:${pct}%"></div></div>`}
     });
-    sched.forEach((s)=>{
+    sched.forEach(s=>{
       const left=Math.max(0,s.next_run_epoch-Math.floor(Date.now()/1000));
       const h=Math.floor(left/3600),m=Math.floor((left%3600)/60);
       const eta=h>0?`${h}h${m}m`:m>0?`${m}m`:`<1m`;
-      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span><span class="q-sid">${escapeHtml(s.name)}</span><span class="q-desc">${escapeHtml(s.trigger_type)}</span><span class="q-time">in ${eta}</span></div>`;
+      const svc=serviceBadge(s.name);
+      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span>${badgeHtml(svc)}<span class="q-time">in ${eta}</span></div>`;
     });
-    if(!qHtml){qHtml='<div style="color:var(--muted);text-align:center;padding:15px;font-size:10px;">待機タスクなし</div>'}
-    html+=qHtml;
-    html+='</div>';
-    
-    const listArea=panel.querySelector('.q-list-area');
-    const scrollPos=listArea?listArea.scrollTop:0;
-    
-    panel.innerHTML=html;
-    
-    const newListArea=panel.querySelector('.q-list-area');
-    if(newListArea){
-      newListArea.scrollTop=scrollPos;
-    }
+    if(!qHtml)qHtml='<div style="color:var(--muted);text-align:center;padding:10px;font-size:10px;">待機なし</div>';
+
+    const scrollPos=panel.querySelector('.lanes-right')?.scrollTop??0;
+    panel.innerHTML=`<div class="lanes-split"><div class="lanes-left">${lanesHtml}</div><div class="lanes-right">${qHtml}</div></div>`;
+    const newRight=panel.querySelector('.lanes-right');
+    if(newRight)newRight.scrollTop=scrollPos;
   }catch{}
 }
 async function updateConcurrency(){
