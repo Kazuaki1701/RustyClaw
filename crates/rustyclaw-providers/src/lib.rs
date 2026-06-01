@@ -104,6 +104,23 @@ impl ProviderError {
 }
 
 pub fn resolve_provider_id(model: &LlmModelConfig) -> String {
+    // config_name（config.json の model_name キー）のプレフィックスで分類する。
+    // config_name が空の場合は api_base_url にフォールバック。
+    let name = model.config_name.to_lowercase();
+    if name.starts_with("lms-") {
+        return "local".to_string();
+    } else if name.starts_with("cf-") {
+        return "cloudflare".to_string();
+    } else if name.starts_with("groq-") {
+        return "groq".to_string();
+    } else if name.starts_with("or-") {
+        return "openrouter".to_string();
+    } else if name.starts_with("hf-") {
+        return "huggingface".to_string();
+    } else if name.starts_with("gmn") {
+        return "gmn".to_string();
+    }
+    // フォールバック: api_base_url で判別
     let base = model.api_base_url.to_lowercase();
     if base.contains("groq.com") {
         "groq".to_string()
@@ -115,7 +132,7 @@ pub fn resolve_provider_id(model: &LlmModelConfig) -> String {
         "openai".to_string()
     } else if base.contains("huggingface.co") {
         "huggingface".to_string()
-    } else if base.contains("192.168.") || base.contains("10.") || base.contains("localhost") || base.contains("127.0.0.1") {
+    } else if base.contains("192.168.") || base.contains("localhost") || base.contains("127.0.0.1") {
         "local".to_string()
     } else {
         model.model_provider.clone()
@@ -1045,6 +1062,7 @@ mod tests {
             model_purpose: "default".to_string(),
             model_provider: "openai".to_string(),
             model_name: "gpt-4o-mini".to_string(),
+            config_name: String::new(),
             api_key: "dummy_key".to_string(),
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
@@ -1098,6 +1116,7 @@ mod tests {
             model_purpose: "default".to_string(),
             model_provider: "openai".to_string(),
             model_name: "gpt-4o-mini".to_string(),
+            config_name: String::new(),
             api_key: "dummy_key".to_string(),
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
@@ -1207,6 +1226,7 @@ mod tests {
             model_purpose: "default".to_string(),
             model_provider: "openai".to_string(),
             model_name: "gpt-4o-mini".to_string(),
+            config_name: String::new(),
             api_key: "dummy_key".to_string(),
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
@@ -1330,6 +1350,7 @@ mod tests {
             model_purpose: "default".into(),
             model_provider: "openai".into(),
             model_name: "google/gemma-4-31b-it:free".into(),
+            config_name: "or-gemma-4-31b".into(),
             api_key: "key".into(),
             api_base_url: "https://openrouter.ai/api/v1".into(),
             max_tokens: None,
@@ -1344,6 +1365,7 @@ mod tests {
             model_purpose: "default".into(),
             model_provider: "openai".into(),
             model_name: "@cf/qwen/qwen3-30b-a3b-fp8".into(),
+            config_name: "cf-qwen3-30b".into(),
             api_key: "key".into(),
             api_base_url: "https://api.cloudflare.com/client/v4/accounts/xxx/ai/v1".into(),
             max_tokens: None,
@@ -1358,6 +1380,7 @@ mod tests {
             model_purpose: "default".into(),
             model_provider: "openai".into(),
             model_name: "google/gemma-4-e4b".into(),
+            config_name: "lms-gemma-4-e4b".into(),
             api_key: "lm-studio".into(),
             api_base_url: "http://192.168.1.110:1234/v1".into(),
             max_tokens: None,
