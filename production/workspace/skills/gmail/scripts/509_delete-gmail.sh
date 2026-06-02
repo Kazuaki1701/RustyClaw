@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# systemd サービスは ~/.cargo/bin を PATH に含まないため補完する
+export PATH="$HOME/.cargo/bin:$PATH"
+
 MESSAGE_ID="${1:-}"
 REQUIRED_LABEL="_ai-agent"
 

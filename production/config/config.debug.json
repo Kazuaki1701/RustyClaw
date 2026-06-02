@@ -1,4 +1,15 @@
 {
+  "agents": {
+    "global_fallback_model_name": "groq-llama-8b",
+    "default":   "lms-gemma-4-e4b",
+    "tools":     "lms-gemma-4-e4b",
+    "discord":   ["cf-gemma-4-26b", "lms-gemma-4-e4b"],
+    "line":      ["lms-gemma-4-e4b", "groq-llama-8b"],
+    "heartbeat": ["lms-gemma-4-e4b", "groq-llama-8b"],
+    "patrol":    ["lms-gemma-4-e4b", "groq-llama-8b"],
+    "summary":   ["lms-gemma-4-e4b", "groq-llama-8b"],
+    "memory":    ["lms-gemma-4-e4b", "groq-llama-8b"]
+  },
   "model_list": [
     {
       "model_name": "groq-llama-8b",
@@ -234,17 +245,6 @@
       "context_window": "16k"
     }
   ],
-  "agents": {
-    "global_fallback_model_name": "groq-llama-8b",
-    "default":   "lms-gemma-4-e4b",
-    "tools":     "lms-gemma-4-e4b",
-    "discord":   ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "line":      ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "heartbeat": ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "patrol":    ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "summary":   ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "memory":    ["lms-gemma-4-e4b", "groq-llama-8b"]
-  },
   "debug_dump": true,
   "timezone": "Asia/Tokyo",
   "channels": {

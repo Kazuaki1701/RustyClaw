@@ -3,13 +3,16 @@
 
 set -euo pipefail
 
+# systemd サービスは ~/.cargo/bin を PATH に含まないため補完する
+export PATH="$HOME/.cargo/bin:$PATH"
+
 if ! command -v gws &>/dev/null; then
     echo '{"error": "gws not found in PATH"}' >&2
     exit 1
 fi
 
-now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-end=$(date -u -d '+7 days' +%Y-%m-%dT%H:%M:%SZ)
+now=$(date +%Y-%m-%dT%H:%M:%S%:z)
+end=$(date -d '+7 days' +%Y-%m-%dT%H:%M:%S%:z)
 
 gws calendar events list \
     --params "{\"calendarId\":\"primary\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \

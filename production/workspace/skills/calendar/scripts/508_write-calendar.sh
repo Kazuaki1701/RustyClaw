@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# systemd サービスは ~/.cargo/bin を PATH に含まないため補完する
+export PATH="$HOME/.cargo/bin:$PATH"
+
 CALENDAR_ID="${1:-}"
 SUMMARY="${2:-}"
 START="${3:-}"
