@@ -20,6 +20,12 @@ gws calendar events list \
   | jq '[.items[]? | {
       title:    (.summary // ""),
       start:    (.start.dateTime // .start.date // ""),
-      end:      (.end.dateTime   // .end.date   // ""),
+      end:      (
+                  if .end.dateTime then .end.dateTime
+                  elif .end.date then
+                    # 全日イベントの end は翌日 (exclusive)。1日引いて実際の最終日にする
+                    (.end.date | strptime("%Y-%m-%d") | mktime - 86400 | strftime("%Y-%m-%d"))
+                  else "" end
+                ),
       location: (.location // "")
   }]'
