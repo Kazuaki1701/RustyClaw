@@ -129,7 +129,7 @@ impl Pipeline {
         } else if tpm <= 12000 {
             20   // groq-llama-70b 等: 末尾 20 件 (~6K トークン)
         } else {
-            40   // CF / LMS / 上位モデル: 末尾 40 件
+            10   // CF / LMS: neurons 節約のため末尾 10 件
         }
     }
 
@@ -161,14 +161,13 @@ impl Pipeline {
             context.push_str(&format!("# {}\n\n{}\n\n", filename, Self::strip_comments(&content)));
         }
 
-        // proactive-posts.md を注入（存在する場合のみ）
+        // proactive-posts.md を注入（最終1件のみ）
         let posts_path = workspace_dir.join("memory").join("proactive-posts.md");
         if let Ok(posts) = fs::read_to_string(&posts_path) {
-            let trimmed = posts.trim();
-            if !trimmed.is_empty() {
+            if let Some(last_entry) = posts.lines().filter(|l| !l.trim().is_empty()).last() {
                 context.push_str(&format!(
                     "# Recent AI Proactive Posts\n\n{}\n\n",
-                    trimmed
+                    last_entry
                 ));
             }
         }
