@@ -98,6 +98,67 @@ impl SummaryProto {
             summary_sem: Arc::new(Semaphore::new(1)),
         }
     }
+
+    pub async fn chat(&self, user_input: &str) -> Result<String> {
+        // 1. 現在のセッション状態を読み取る
+        let (system_prompt, history) = {
+            let s = self.session.read().await;
+            let system = if s.current_summary.is_empty() {
+                "あなたは親切なアシスタントです。".to_string()
+            } else {
+                format!(
+                    "あなたは親切なアシスタントです。\n\n## これまでの会話の要約\n{}",
+                    s.current_summary
+                )
+            };
+            (system, s.recent_messages.clone())
+        };
+
+        // 2. メインLLMを呼び出す
+        let client = make_client(&self.config.base_url, &self.config.api_key)?;
+        let model = client.completion_model(&self.config.main_model);
+
+        let request = model
+            .completion_request(Message::user(user_input))
+            .preamble(system_prompt)
+            .messages(history)
+            .build();
+
+        let response = model
+            .completion(request)
+            .await
+            .context("main LLM call failed")?;
+
+        let assistant_text = extract_text(&response.choice)?;
+
+        // 3. セッション状態を更新し、サマリートリガー判定を行う
+        let maybe_snapshot = {
+            let mut s = self.session.write().await;
+            s.raw_history
+                .push(("user".to_string(), user_input.to_string()));
+            s.raw_history
+                .push(("assistant".to_string(), assistant_text.clone()));
+            s.recent_messages.push(Message::user(user_input));
+            s.recent_messages.push(Message::assistant(&assistant_text));
+            s.counter += 1;
+
+            if s.counter >= SUMMARY_INTERVAL {
+                let snapshot = s.recent_messages.clone();
+                s.recent_messages.clear();
+                s.counter = 0;
+                Some(snapshot)
+            } else {
+                None
+            }
+        };
+
+        // 4. 必要に応じてバックグラウンド要約を起動（Task 5 で実装）
+        if let Some(_snapshot) = maybe_snapshot {
+            // spawn_summary_task will be added in Task 5
+        }
+
+        Ok(assistant_text)
+    }
 }
 
 #[cfg(test)]
