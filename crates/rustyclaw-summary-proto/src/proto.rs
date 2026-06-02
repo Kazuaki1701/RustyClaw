@@ -152,13 +152,73 @@ impl SummaryProto {
             }
         };
 
-        // 4. 必要に応じてバックグラウンド要約を起動（Task 5 で実装）
-        if let Some(_snapshot) = maybe_snapshot {
-            // spawn_summary_task will be added in Task 5
+        // 4. 必要に応じてバックグラウンド要約を起動
+        if let Some(snapshot) = maybe_snapshot {
+            self.spawn_summary_task(snapshot);
         }
 
         Ok(assistant_text)
     }
+
+    fn spawn_summary_task(&self, snapshot: Vec<Message>) {
+        let Ok(permit) = self.summary_sem.clone().try_acquire_owned() else {
+            tracing::warn!("summary semaphore busy – skipping this update");
+            return;
+        };
+
+        let config = self.config.clone();
+        let session = self.session.clone();
+
+        tokio::spawn(async move {
+            let _permit = permit; // タスク終了時に自動解放
+            if let Err(e) = run_summary(config, session, snapshot).await {
+                tracing::warn!("background summary failed: {:#}", e);
+            }
+        });
+    }
+}
+
+async fn run_summary(
+    config: Arc<Config>,
+    session: Arc<RwLock<ChatSession>>,
+    snapshot: Vec<Message>,
+) -> Result<()> {
+    let history_text = snapshot
+        .iter()
+        .map(message_to_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let summary_prompt = format!(
+        "以下の会話を200字以内の日本語で要約してください。重要なトピックと結論に焦点を当ててください。\n\n{}",
+        history_text
+    );
+
+    let client = make_client(&config.base_url, &config.api_key)?;
+    let model = client.completion_model(&config.summary_model);
+
+    let request = model
+        .completion_request(Message::user(&summary_prompt))
+        .preamble("あなたは会話を簡潔に要約するアシスタントです。".to_string())
+        .build();
+
+    let response = model
+        .completion(request)
+        .await
+        .context("summary LLM call failed")?;
+
+    let new_summary = extract_text(&response.choice)?;
+
+    {
+        let mut s = session.write().await;
+        s.current_summary = new_summary;
+        if let Err(e) = s.persist_summary() {
+            tracing::warn!("failed to persist summary.md: {:#}", e);
+        }
+    }
+
+    tracing::info!("background summary updated successfully");
+    Ok(())
 }
 
 #[cfg(test)]
