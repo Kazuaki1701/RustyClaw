@@ -2,92 +2,150 @@
 name: topic-patrol
 description: 登録された技術情報源（RSS、Webサイト）を定期巡回し、新規トピックを要約・収集するパトロールスキル。
 allowed-tools:
-  - run_workspace_script
+  - web_search
+  - web_fetch
+  - workspace_read
+  - workspace_write
 ---
 # Topic Patrol
 
 Explore the web based on the user's interests and share discoveries like a curious friend — not a news bot.
 
-```
-1. Read     → USER.md (Interests + Work Context) + prior state
-2. Explore  → Route to the right source tool per topic
-3. Filter   → "Would I tell a friend about this?"
-4. Share    → Conversational message as your direct response (or stay silent)
-5. Record   → Update state + findings log via workspace tools
-```
+## What you receive in the user message
 
-## Trigger Patterns
+The system provides the following in the user message:
 
-- **Cron job** — scheduled every 4-8 hours.
-- **Manual** — user says "patrol", "track this topic", "what's new in {X}", or "anything interesting lately?"
+- `配信:` — determines which mode to run:
+  - `配信: スキップ` → **探索モード**: explore topics, record as deferred, no Discord output
+  - `配信: 許可` → **配信モード**: deliver previously deferred findings to Discord, no new exploration
 
-When triggered manually, reply directly in the conversation. When triggered by cron, your text response is sent to the target channel.
+**Read this value first and choose the correct execution flow below.**
 
 ## Execution Flow
 
-### Step 1: Understand the User
+> **Before starting:** Check `配信:` in the user message.
+> - `配信: スキップ` → follow **探索モード** (Steps 1–5 below)
+> - `配信: 許可` → follow **配信モード** (Deliver Mode below), then skip to Step 5
 
-1. Read `USER.md` inside your system prompt context:
-   - **Interests** section — primary exploration source. Each topic may have an optional `sources:` line (see Source Routing below).
-   - **Work Context** section — anchor findings to what the user is currently working on.
-   - If Interests is empty, fall back to Work Context topics. If both are empty, skip and stay silent.
-2. Read `patrol/state.json` using `workspace_read` (default if missing/error: `{ "lastRun": null, "rotationIndex": 0 }`).
-3. Read `patrol/findings.md` using `workspace_read` (default if missing/error: empty) — for deduplication.
+---
 
-### Step 2: Explore
+### Deliver Mode（`配信: 許可` のとき）
 
-Run **2-3 queries**, rotating through Interests across runs via `rotationIndex`. Wrap around to 0 when it exceeds the number of Interest topics.
+1. Call `workspace_read` on `patrol/findings.md`.
+2. Find all entries with status `deferred (quiet hours)` that have **not** been delivered yet.
+3. From these, select the **1–2 most interesting** entries using the "Would I tell a friend?" criteria (Step 3 below).
+4. If no deferred entries exist, respond with nothing and go to Step 5-3.
+5. For each selected entry, post to Discord:
+   - Write a short, natural explanation of WHY it is interesting.
+   - End with the source as a Markdown link: `[タイトル](URL)`
+6. Append a `delivered` record to `patrol/findings.md` using `workspace_write` with `mode: append`:
+   ```
+   - {topic}: {summary} — delivered (from deferred {YYYY-MM-DD})
+     Source: {URL}
+   ```
+7. For each delivered URL, call:
+   ```
+   run_workspace_script skills/topic-patrol/scripts/511_karakeep-add-bookmark.sh
+   args: ["{URL}"]
+   ```
+8. Go to **Step 5-3** (update state.json). Skip Steps 1–5.
+
+---
+
+### Step 1: Read prior findings and select topics
+> _(探索モードのみ。配信モードは上の Deliver Mode セクションを参照)_
+
+1. Call `workspace_read` on `patrol/findings.md`. If the file is missing, treat it as empty.
+2. From the `## Interests` section of `USER.md` (already in your system context), pick **2 topics** to investigate this run. Select topics that do **not** appear in the most recent `##` section of `patrol/findings.md`. This ensures natural rotation without repeating recent topics.
+3. If all topics appear in the most recent section, pick any 2 freely.
+
+### Step 2: Investigate each topic
+
+For **each of the 2 selected topics**, do the following in order:
+
+1. Call `web_search` with the query `{topic} latest 2026`.
+2. Call `web_fetch` on the **top URL** from the search results.
+   - This step is **mandatory**. Do not skip it.
+   - If `web_fetch` fails, record the URL as `unverified` and continue.
 
 #### Source Routing
 
-Each Interest topic in `USER.md` may have an optional `sources:` line. Route queries to the appropriate tool based on source type:
+If a topic in `USER.md` has a `sources:` annotation, route as follows:
 
-| Source prefix | Tool | Example query |
-|---|---|---|
-| _(no sources specified)_ | `web_search` + `web_fetch` | `{interest} latest news 2026` |
-| `HN` | `web_search` with `site:news.ycombinator.com` | `site:news.ycombinator.com {interest}` |
-| `Reddit/{subreddit}` | `web_search` with `site:reddit.com/r/{subreddit}` | `site:reddit.com/r/ {interest}` |
-| URL (e.g. `https://blog.nodejs.org`) | `web_fetch` directly | Read the page and look for new content |
-
-**Fallback rule**: If a specific tool is not available, fall back to `web_search` with a `site:` filter or topic keywords. Never error on a missing tool — degrade gracefully.
-
-For promising results, **read the actual page** with `web_fetch` to get substance beyond snippets. Do not curate based on search snippets alone.
+| Source prefix | Action |
+|---|---|
+| _(none)_ | `web_search` → `web_fetch` top URL |
+| `HN` | `web_search` with `site:news.ycombinator.com {topic}` |
+| `Reddit/{sub}` | `web_search` with `site:reddit.com/r/{sub} {topic}` |
+| URL | `web_fetch` the URL directly |
 
 ### Step 3: Filter — "Would I tell a friend?"
 
-For each finding, consider:
-- **Novel?** — not already in `patrol/findings.md`.
-- **Interesting?** — not a generic press release or product announcement.
-- **Relevant?** — connects to the user's work or stated interests.
-- **Worth sharing?** — would make someone say "oh cool, I didn't know that".
+For each finding, check all four:
+- **Novel?** — not already in `patrol/findings.md`
+- **Interesting?** — not a generic press release or product announcement
+- **Relevant?** — connects to the user's work or stated interests
+- **Worth sharing?** — would make someone say "oh cool, I didn't know that"
 
-If nothing clears the bar, share nothing — silence is better than noise.
+If nothing passes all four, do not share anything. Silence is the correct response.
 
-### Step 4: Share (only when worth it)
+### Step 4: Deliver
 
-Check the current time via the `[now: ...]` runtime prefix in your system prompt. Respect **quiet hours (23:00–08:00)** based on the user's timezone.
-- **During Quiet Hours**: Defer delivery. Do NOT output the findings as your response text. Simply record them in `patrol/findings.md` as `deferred (quiet hours)` and reply with an empty response or absolute silence.
-- **Outside Quiet Hours**: Explain WHY it's interesting in a natural, conversational tone. Connect it to the user's current work. Limit to **1-2 topics** per message.
+Check the `配信:` value in the user message:
 
-### Step 5: Update State
+**`配信: スキップ (quiet hours)`** — Do NOT output any findings as response text. Go directly to Step 5 and record as `deferred (quiet hours)`. Reply with nothing.
 
-1. Append to **`patrol/findings.md`** using `workspace_write` (whether shared, skipped, or deferred):
-   ```markdown
-   ## YYYY-MM-DD
-   - {topic}: {one-line summary} — shared / skipped ({reason}) / deferred (quiet hours)
-   ```
-   **Important**: Parse and prune entries older than 14 days to keep the file small, then write the updated content back.
-   
-2. Update **`patrol/state.json`** using `workspace_write`:
-   ```json
-   { "lastRun": "YYYY-MM-DDTHH:MM:SS+09:00", "rotationIndex": 2 }
-   ```
-   If nothing was found, still update `lastRun` and increment `rotationIndex`.
+**`配信: 許可`** — Write a short, natural response (1–2 topics max). Explain WHY it is interesting. Connect it to the user's current work. End with the source as a Markdown link on its own line:
+
+```
+[記事タイトルまたはサイト名](https://verified-url-from-web-fetch)
+```
+
+Use the page title obtained from `web_fetch`. Never omit this line.
+
+### Step 5: Record
+
+**5-0. Prune `patrol/findings.md`** by calling:
+```
+run_workspace_script skills/topic-patrol/scripts/510_prune-findings.sh
+```
+This removes old sections automatically. Do not skip this step.
+
+**5-1. Append to `patrol/findings.md`** using `workspace_write` with `mode: append`.
+
+Write one entry per topic investigated (whether shared, skipped, or deferred):
+
+```
+## YYYY-MM-DD
+- {topic}: {one-line summary} — shared / skipped ({reason}) / deferred (quiet hours)
+  Source: {URL from web_fetch, or "unverified" if web_fetch failed}
+```
+
+Do not rewrite or delete existing content. Only append.
+
+**5-2. Register the URL in KaraKeep** (only when `配信: 許可` and a finding was shared):
+
+For each URL shared in Step 4, call:
+```
+run_workspace_script skills/topic-patrol/scripts/511_karakeep-add-bookmark.sh
+args: ["{shared URL}"]
+```
+
+This registers the URL with the `_ai-patrol` tag. Skip if the URL is "unverified".
+
+**5-3. Write `patrol/state.json`** using `workspace_write` with `mode: write`:
+
+```json
+{ "lastRun": "{current datetime in ISO 8601}" }
+```
 
 ## Prohibited Patterns
 
+- Sharing a finding without a source link in the response
+- Reporting "nothing found" — silence is the correct response
+- Sending duplicates (check `patrol/findings.md` first)
 - Formatted news-briefing style (numbered lists, emoji headers, "report" framing)
 - Cramming 3+ topics into a single message
-- Sharing something just because it's new — it must be genuinely interesting
-- Reporting "nothing found" — silence is the correct response
-- Sending duplicates without checking `patrol/findings.md`
+- Rewriting or pruning `patrol/findings.md` — only append
+- Bookmarking an unverified URL (web_fetch failed) to KaraKeep
+- Picking the same 2 topics as the most recent `##` section in `patrol/findings.md`
