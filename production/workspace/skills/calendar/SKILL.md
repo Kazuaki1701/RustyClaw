@@ -1,19 +1,19 @@
 ---
 name: calendar
-description: Use when the user asks to check, list, or create Google Calendar events. Covers reading upcoming schedules and writing new events to allowed calendars.
+description: Use when the user asks to check, list, or create Google Calendar events. When listing, default to checking all family members (Kazuaki, Yuuki, Ayumi).
 ---
 
 # Calendar Skill
 
 ## Overview
-Reads upcoming Google Calendar events and creates new events via the `gws` CLI. Write operations are guarded by a hardcoded allowlist — only the two permitted calendars can receive new events.
+Reads upcoming Google Calendar events (defaulting to all family members) and creates new events via the `gws` CLI. Write operations are guarded by a hardcoded allowlist — only the two permitted calendars can receive new events.
 
 ---
 
 ## When to Use
 
 ### Triggering Scenarios:
-- The user asks about today's or this week's schedule.
+- The user asks about today's or this week's schedule (always check all family members' calendars).
 - The user asks to add, create, or schedule a calendar event.
 - Any scheduled calendar patrol cron triggers.
 
