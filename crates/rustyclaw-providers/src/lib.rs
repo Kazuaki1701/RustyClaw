@@ -514,9 +514,16 @@ impl LlmProvider for OpenAiCompatProvider {
             .context("Failed to parse LLM JSON response")?;
 
         if neurons_from_header.is_none() && url.contains("cloudflare.com") {
-            if let Some(total) = resp_data.usage.as_ref().map(|u| u.total_tokens).filter(|&t| t > 0) {
-                tracing::info!("CF Neurons estimated from total_tokens={} (header absent)", total);
-                record_neuron_usage(total as f64);
+            if let Some(usage) = &resp_data.usage {
+                if usage.prompt_tokens > 0 || usage.completion_tokens > 0 {
+                    let model_name = resp_data.model.as_deref().unwrap_or(&resolved_model);
+                    let neurons = calc_cf_neurons(model_name, usage.prompt_tokens, usage.completion_tokens);
+                    tracing::info!(
+                        "CF Neurons calculated: {:.2} (prompt={}, completion={}, model={})",
+                        neurons, usage.prompt_tokens, usage.completion_tokens, model_name
+                    );
+                    record_neuron_usage(neurons);
+                }
             }
         }
 
@@ -1481,6 +1488,23 @@ mod tests {
         let err_cf_rpm3 = ProviderError::RateLimit("too many requests".to_string());
         assert_eq!(err_cf_rpm3.reset_after(), Some(std::time::Duration::from_secs(60)));
     }
+}
+
+/// CF Workers AI のモデル別 neurons/M tokens レートから消費 neurons を計算する。
+/// レートは CF 公式ドキュメントの値（2026-05-30 確認）。
+/// 未知のモデルは gemma-4-26b 相当のレートにフォールバック。
+fn calc_cf_neurons(model: &str, prompt_tokens: u32, completion_tokens: u32) -> f64 {
+    // (input_neurons_per_m, output_neurons_per_m)
+    let (input_rate, output_rate): (f64, f64) = if model.contains("qwen3-30b") {
+        (4_625.0, 30_475.0)
+    } else if model.contains("granite") {
+        (1_542.0, 10_158.0)
+    } else {
+        // gemma-4-26b および未知モデルのデフォルト
+        (9_091.0, 27_273.0)
+    };
+    prompt_tokens as f64 * input_rate / 1_000_000.0
+        + completion_tokens as f64 * output_rate / 1_000_000.0
 }
 
 static NEURON_USAGE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
