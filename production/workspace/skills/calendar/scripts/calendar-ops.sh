@@ -35,10 +35,11 @@ JQ_DEFS='
 
 case "$CMD" in
     list)
+        CALENDAR_ID="${2:-primary}"
         now=$(date +%Y-%m-%dT%H:%M:%S%:z)
         end=$(date -d '+7 days' +%Y-%m-%dT%H:%M:%S%:z)
         gws calendar events list \
-            --params "{\"calendarId\":\"primary\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \
+            --params "{\"calendarId\":\"${CALENDAR_ID}\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \
             --format json \
           | jq "${JQ_DEFS}"'
               [.items[]? |
