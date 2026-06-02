@@ -17,15 +17,21 @@ end=$(date -d '+7 days' +%Y-%m-%dT%H:%M:%S%:z)
 gws calendar events list \
     --params "{\"calendarId\":\"primary\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \
     --format json \
-  | jq '[.items[]? | {
-      title:    (.summary // ""),
-      start:    (.start.dateTime // .start.date // ""),
-      end:      (
-                  if .end.dateTime then .end.dateTime
-                  elif .end.date then
-                    # 全日イベントの end は翌日 (exclusive)。1日引いて実際の最終日にする
-                    (.end.date | strptime("%Y-%m-%d") | mktime - 86400 | strftime("%Y-%m-%d"))
-                  else "" end
-                ),
-      location: (.location // "")
-  }]'
+  | jq '[.items[]? |
+      (["日","月","火","水","木","金","土"][
+        ((.start.date // (.start.dateTime | split("T")[0]))
+          | strptime("%Y-%m-%d"))[6]
+      ]) as $wday |
+      {
+          title:    (.summary // ""),
+          start:    (.start.dateTime // .start.date // ""),
+          weekday:  $wday,
+          end:      (
+                      if .end.dateTime then .end.dateTime
+                      elif .end.date then
+                        # 全日イベントの end は翌日 (exclusive)。1日引いて実際の最終日にする
+                        (.end.date | strptime("%Y-%m-%d") | mktime - 86400 | strftime("%Y-%m-%d"))
+                      else "" end
+                    ),
+          location: (.location // "")
+      }]'
