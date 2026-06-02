@@ -1382,6 +1382,7 @@ mod tests {
                     enabled: false,
                     rpm: None, rpd: None, tpm: None, tpd: None,
                     context_window: None,
+                    cf_aig_gateway_id: None,
                 },
                 rustyclaw_config::ModelEntry {
                     model_name: "enabled-m".to_string(),
@@ -1394,6 +1395,7 @@ mod tests {
                     enabled: true,
                     rpm: None, rpd: None, tpm: None, tpd: None,
                     context_window: None,
+                    cf_aig_gateway_id: None,
                 },
             ],
             agents: rustyclaw_config::AgentsConfig {
@@ -1424,6 +1426,7 @@ mod tests {
                 enabled: true,
                 rpm: None, rpd: None, tpm: None, tpd: None,
                 context_window: None,
+                cf_aig_gateway_id: None,
             }],
             agents: AgentsConfig {
                 default: ModelNames::Single("test-model".to_string()),

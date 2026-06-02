@@ -1102,6 +1102,7 @@ mod tests {
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
             temperature: None,
+            cf_aig_gateway_id: None,
         };
         let provider = OpenAiCompatProvider::new(model);
         let opts = CompletionOptions {
@@ -1156,6 +1157,7 @@ mod tests {
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
             temperature: None,
+            cf_aig_gateway_id: None,
         };
         let provider = OpenAiCompatProvider::new(model);
         let opts = CompletionOptions {
@@ -1266,6 +1268,7 @@ mod tests {
             api_base_url: format!("http://{}", addr),
             max_tokens: None,
             temperature: None,
+            cf_aig_gateway_id: None,
         };
         let provider = OpenAiCompatProvider::new(model);
         let opts = CompletionOptions {
@@ -1390,6 +1393,7 @@ mod tests {
             api_base_url: "https://openrouter.ai/api/v1".into(),
             max_tokens: None,
             temperature: None,
+            cf_aig_gateway_id: None,
         };
         assert_eq!(resolve_provider_id(&model), "openrouter");
     }
@@ -1405,6 +1409,7 @@ mod tests {
             api_base_url: "https://api.cloudflare.com/client/v4/accounts/xxx/ai/v1".into(),
             max_tokens: None,
             temperature: None,
+            cf_aig_gateway_id: None,
         };
         assert_eq!(resolve_provider_id(&model), "cloudflare");
     }
@@ -1420,6 +1425,7 @@ mod tests {
             api_base_url: "http://192.168.1.110:1234/v1".into(),
             max_tokens: None,
             temperature: None,
+            cf_aig_gateway_id: None,
         };
         assert_eq!(resolve_provider_id(&model), "local");
     }
