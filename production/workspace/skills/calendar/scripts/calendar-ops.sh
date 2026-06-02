@@ -1,24 +1,26 @@
 #!/bin/bash
 set -euo pipefail
-export PATH="$HOME/.cargo/bin:$PATH"   # systemd は ~/.cargo/bin を持たない
+export PATH="$HOME/.cargo/bin:$PATH"
 
 CMD="${1:-}"
 
-# 書き込み可能なカレンダーIDリストのハードコード
-ALLOWED=(
-    "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com"
-    "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com"
-)
+# 各カレンダーIDのハードコード
+CAL_PRIMARY="primary"
+CAL_YUKI="28hs0ibka0oa84810dupunrskk@group.calendar.google.com"
+CAL_AYUMI="ayabe.ayumi@gmail.com"
+CAL_AI_AGENT="6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com"
 
-# 書き込み処理で使用するデフォルトのカレンダーID (_AI-AGENT)
-WRITE_CALENDAR_ID="6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com"
+# 許可カレンダーリストのハードコード（write系チェック用）
+ALLOWED=(
+    "$CAL_AI_AGENT"
+    "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com" # 学習計画カレンダーも一応残す
+)
 
 if ! command -v gws &>/dev/null; then
     echo '{"error": "gws not found in PATH"}' >&2
     exit 1
 fi
 
-# 許可カレンダーチェック（write 系で共通利用）
 check_allowed() {
     local target="$1"
     for id in "${ALLOWED[@]}"; do
@@ -29,7 +31,6 @@ check_allowed() {
     exit 1
 }
 
-# jq 共通定義（曜日・exclusive end 補正）
 JQ_DEFS='
   def wday_ja: ["日","月","火","水","木","金","土"][(strptime("%Y-%m-%d"))[6]];
   def adj_end: if .end.dateTime then .end.dateTime
@@ -37,54 +38,56 @@ JQ_DEFS='
                else "" end;
 '
 
+# イベント一覧取得のヘルパー関数
+fetch_events() {
+    local cal_id="$1"
+    local now="$2"
+    local end="$3"
+    gws calendar events list \
+        --params "{\"calendarId\":\"${cal_id}\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \
+        --format json \
+      | jq "${JQ_DEFS}"'
+          [.items[]? |
+            ((.start.date // (.start.dateTime | split("T")[0])) | wday_ja) as $start_wday |
+            adj_end as $end |
+            (($end | split("T")[0]) | wday_ja) as $end_wday |
+            {
+                event_id:    (.id // ""),
+                title:       (.summary // ""),
+                start:       (.start.dateTime // .start.date // ""),
+                start_wday:  $start_wday,
+                end:         $end,
+                end_wday:    $end_wday,
+                location:    (.location // "")
+            }]'
+}
+
+now=$(date +%Y-%m-%dT%H:%M:%S%:z)
+end=$(date -d '+7 days' +%Y-%m-%dT%H:%M:%S%:z)
+
 case "$CMD" in
-    list)
-        TARGET_ID="${2:-all}"
-        now=$(date +%Y-%m-%dT%H:%M:%S%:z)
-        end=$(date -d '+7 days' +%Y-%m-%dT%H:%M:%S%:z)
-
-        fetch_events() {
-            local cal_id="$1"
-            gws calendar events list \
-                --params "{\"calendarId\":\"${cal_id}\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \
-                --format json \
-              | jq "${JQ_DEFS}"'
-                  [.items[]? |
-                    ((.start.date // (.start.dateTime | split("T")[0])) | wday_ja) as $start_wday |
-                    adj_end as $end |
-                    (($end | split("T")[0]) | wday_ja) as $end_wday |
-                    {
-                        event_id:    (.id // ""),
-                        title:       (.summary // ""),
-                        start:       (.start.dateTime // .start.date // ""),
-                        start_wday:  $start_wday,
-                        end:         $end,
-                        end_wday:    $end_wday,
-                        location:    (.location // "")
-                    }]'
-        }
-
-        if [ "$TARGET_ID" = "all" ]; then
-            res1=$(fetch_events "primary")
-            res2=$(fetch_events "28hs0ibka0oa84810dupunrskk@group.calendar.google.com")
-            res3=$(fetch_events "ayabe.ayumi@gmail.com")
-            
-            jq -n --argjson r1 "$res1" --argjson r2 "$res2" --argjson r3 "$res3" \
-                '$r1 + $r2 + $r3 | sort_by(.start)'
-        else
-            fetch_events "$TARGET_ID"
-        fi
+    list_family)
+        res1=$(fetch_events "$CAL_PRIMARY" "$now" "$end")
+        res2=$(fetch_events "$CAL_YUKI" "$now" "$end")
+        res3=$(fetch_events "$CAL_AYUMI" "$now" "$end")
+        
+        jq -n --argjson r1 "$res1" --argjson r2 "$res2" --argjson r3 "$res3" \
+            '$r1 + $r2 + $r3 | sort_by(.start)'
         ;;
 
-    create)
+    list_ai_agent)
+        fetch_events "$CAL_AI_AGENT" "$now" "$end"
+        ;;
+
+    create_ai_agent)
         SUMMARY="${2:-}"; START="${3:-}"; END="${4:-}"; DESCRIPTION="${5:-}"
         if [ -z "$SUMMARY" ] || [ -z "$START" ] || [ -z "$END" ]; then
-            echo "Usage: $0 create <summary> <start> <end> [description]" >&2
+            echo "Usage: $0 create_ai_agent <summary> <start> <end> [description]" >&2
             exit 1
         fi
-        check_allowed "$WRITE_CALENDAR_ID"
+        check_allowed "$CAL_AI_AGENT"
         gws calendar events insert \
-            --params "{\"calendarId\":\"${WRITE_CALENDAR_ID}\"}" \
+            --params "{\"calendarId\":\"${CAL_AI_AGENT}\"}" \
             --json "{\"summary\":\"${SUMMARY}\",\"description\":\"${DESCRIPTION}\",\"start\":{\"dateTime\":\"${START}\"},\"end\":{\"dateTime\":\"${END}\"}}" \
             --format json \
           | jq "${JQ_DEFS}"'
@@ -96,27 +99,27 @@ case "$CMD" in
                 end:$end, end_wday:$end_wday, calendar_id:(.organizer.email//"") }'
         ;;
 
-    delete)
+    delete_ai_agent)
         EVENT_ID="${2:-}"
         if [ -z "$EVENT_ID" ]; then
-            echo "Usage: $0 delete <event_id>" >&2
+            echo "Usage: $0 delete_ai_agent <event_id>" >&2
             exit 1
         fi
-        check_allowed "$WRITE_CALENDAR_ID"
+        check_allowed "$CAL_AI_AGENT"
         gws calendar events delete \
-            --params "{\"calendarId\":\"${WRITE_CALENDAR_ID}\",\"eventId\":\"${EVENT_ID}\"}" \
+            --params "{\"calendarId\":\"${CAL_AI_AGENT}\",\"eventId\":\"${EVENT_ID}\"}" \
             --format json
         echo "{\"status\":\"deleted\",\"event_id\":\"${EVENT_ID}\"}"
         ;;
 
-    update)
+    update_ai_agent)
         EVENT_ID="${2:-}"
         if [ -z "$EVENT_ID" ]; then
-            echo "Usage: $0 update <event_id> [options]" >&2
+            echo "Usage: $0 update_ai_agent <event_id> [options]" >&2
             echo "Options: --summary <val> --start <val> --end <val> --description <val>" >&2
             exit 1
         fi
-        check_allowed "$WRITE_CALENDAR_ID"
+        check_allowed "$CAL_AI_AGENT"
 
         SUMMARY=""
         START=""
@@ -143,7 +146,7 @@ case "$CMD" in
             + (if $d  != "" then {description: $d} else {} end)')
 
         gws calendar events patch \
-            --params "{\"calendarId\":\"${WRITE_CALENDAR_ID}\",\"eventId\":\"${EVENT_ID}\"}" \
+            --params "{\"calendarId\":\"${CAL_AI_AGENT}\",\"eventId\":\"${EVENT_ID}\"}" \
             --json "$body" \
             --format json \
           | jq "${JQ_DEFS}"'
@@ -156,7 +159,7 @@ case "$CMD" in
         ;;
 
     *)
-        echo "Usage: $0 {list|create|delete|update} ..." >&2
+        echo "Usage: $0 {list_family|list_ai_agent|create_ai_agent|delete_ai_agent|update_ai_agent} ..." >&2
         exit 1
         ;;
 esac

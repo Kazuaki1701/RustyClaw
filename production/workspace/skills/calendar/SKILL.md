@@ -33,40 +33,35 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 
 | args[0] | 説明 | 追加 args |
 |---|---|---|
-| list   | 今後7日の予定取得（event_id 含む） | [calendar_id] (省略時は all: 家族全員) |
-| create | 予定作成 (対象: _AI-AGENT) | summary, start, end, [description] |
-| delete | 予定削除 (対象: _AI-AGENT) | event_id |
-| update | 予定更新 (対象: _AI-AGENT, patch) | event_id, [--summary <val>] [--start <val>] [--end <val>] [--description <val>] |
+| list_family | 家族全員の今後7日の予定取得 | なし |
+| list_ai_agent | _AI-AGENT カレンダーの今後7日の予定取得 | なし |
+| create_ai_agent | _AI-AGENT への予定作成 | summary, start, end, [description] |
+| delete_ai_agent | _AI-AGENT の予定削除 | event_id |
+| update_ai_agent | _AI-AGENT の予定更新 (patch) | event_id, [--summary <val>] [--start <val>] [--end <val>] [--description <val>] |
 
-`delete`/`update` の `event_id` は `list` の出力から取得します。
+`delete_ai_agent`/`update_ai_agent` の `event_id` は `list_ai_agent` の出力から取得します。
 `start`/`end` は RFC3339 形式（例: `2026-06-01T10:00:00+09:00`）。
 
-**Family Calendar IDs:**
-- **かずあき様 (K様)**: `primary` (Google API上、直接 `"primary"` というIDを指定することで本人のカレンダーを解決します)
-- **ゆうき様**: `28hs0ibka0oa84810dupunrskk@group.calendar.google.com`
-- **あゆみ様**: `ayabe.ayumi@gmail.com`
 
-**Permitted Write Calendar IDs:**
-- `6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com` (AI AGENTカレンダー / `_AI-AGENT`)
-- `d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com` (学習計画カレンダー)
-
-※ `create`/`delete`/`update` （書き込み操作）では、スクリプト内部で自動的に `_AI-AGENT` カレンダーIDが適用されるため、引数として `calendar_id` を渡す必要はありません。
 
 ### Examples for Common User Requests
 
 以下の代表的な依頼パターンについて、引数の組み立て例を参考に実行してください。
 
 *   **「今日 / 明日の家族全員の予定を教えて」**
-    *   *手順*: カレンダーIDを指定せずに `list` を実行すると、自動的に家族全員（かずあき様、ゆうき様、あゆみ様）の予定が日付順にソートされてマージ出力される。そこから今日/明日の予定をモデル自身で抽出してユーザーに提示する。
-    *   `args`: `["list"]` (または `["list", "all"]`)
+    *   *手順*: `list_family` を実行すると、自動的に家族全員（かずあき様、ゆうき様、あゆみ様）の予定が日付順にソートされてマージ出力される。そこから今日/明日の予定をモデル自身で抽出してユーザーに提示する。
+    *   `args`: `["list_family"]`
+*   **「_AI-AGENTの予定を教えて」 / 「学習計画の登録状況を教えて」**
+    *   *手順*: `list_ai_agent` を実行して、AI AGENTカレンダーに登録されている予定を取得する。
+    *   `args`: `["list_ai_agent"]`
 *   **「試験勉強に向けた学習計画を予定に書いて」**
-    *   *手順*: AI AGENTカレンダーに対して `create` を実行する（カレンダーIDは不要）。
-    *   `args`: `["create", "学習計画: [学習内容]", "2026-06-03T19:00:00+09:00", "2026-06-03T21:00:00+09:00", "基本情報技術者試験の対策勉強"]`
+    *   *手順*: `create_ai_agent` を実行して、AI AGENTカレンダーに予定を作成する。
+    *   `args`: `["create_ai_agent", "学習計画: [学習内容]", "2026-06-03T19:00:00+09:00", "2026-06-03T21:00:00+09:00", "基本情報技術者試験の対策勉強"]`
 *   **「今日実施予定だった学習計画を明日にずらして」**
-    *   *手順1 (調査)*: AI AGENTカレンダー（`_AI-AGENT`）に対して `list` を実行して、本日予定されている該当イベントの `event_id` を見つける。
-        *   `args`: `["list", "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com"]`
-    *   *手順2 (更新)*: 特定した `event_id` に対して `update` を実行し、開始・終了時間を明日の日付に変更する（カレンダーIDは不要）。
-        *   `args`: `["update", "<event_id>", "--start", "2026-06-03T19:00:00+09:00", "--end", "2026-06-03T21:00:00+09:00"]`
+    *   *手順1 (調査)*: `list_ai_agent` を実行して、本日予定されている該当イベントの `event_id` を見つける。
+        *   `args`: `["list_ai_agent"]`
+    *   *手順2 (更新)*: 特定した `event_id` に対して `update_ai_agent` を実行し、開始・終了時間を明日の日付に変更する。
+        *   `args`: `["update_ai_agent", "<event_id>", "--start", "2026-06-03T19:00:00+09:00", "--end", "2026-06-03T21:00:00+09:00"]`
 
 ---
 
