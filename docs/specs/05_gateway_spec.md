@@ -60,7 +60,7 @@
 | `/logs/heartbeat-state` | GET | `workspace/memory/heartbeat-state.json`（pretty-print） |
 | `/logs/app` | GET | `~/.rustyclaw/rustyclaw.log` 末尾 100 行 |
 | `/api/queue` | GET | gmn API Pipeline Queue の現在状態（JSON） |
-| `/api/neurons` | GET | Cloudflare Neurons クォータ使用状況 JSON（`neurons_used`, `quota_limit`, `remaining`, `reset_at`） |
+| `/api/neurons` | GET | Cloudflare Neurons クォータ使用状況 JSON（`neurons_used`, `quota_limit`, `remaining`, `reset_in`, `next_reset_jst`） |
 | `/api/schedule` | GET | cron.json 内の有効ジョブの次回実行予定リスト（JSON、内部で `get_cron_schedule` と同一） |
 | `/api/usage/timeline` | GET | トークン使用量の時間別・期間別推移データ（JSON、パラメータ: `gran`, `from`） |
 | `/api/llm/io` | GET | 指定した用途カテゴリ（`?cat=<category>`、tools/discord/memory等11種）の最新LLM APIリクエスト＆レスポンス（JSON） |

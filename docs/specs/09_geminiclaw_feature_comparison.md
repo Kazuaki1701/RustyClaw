@@ -154,6 +154,7 @@
 | **GLOBAL_COOLDOWN（CF 対応）** | — | ✅ | OpenAiCompatProvider で 429 時にセット |
 | reset_after() CF RPM パース | — | ✅ | "too many requests" → デフォルト 60s |
 | CF neurons 日次上限パース | — | ✅ | internalCode 4006 → 翌 09:00 JST まで待機 |
+| CF neurons 使用量トラッキング | — | ✅ | `cf-ai-neurons` ヘッダー優先、不在時は `total_tokens` で代替計上。`~/.rustyclaw/neuron_usage.json` に UTC 日付単位で累積保存（Mutex で排他制御）|
 | gmn_sem(1) 全直列化 | — | ✅ | |
 
 ---

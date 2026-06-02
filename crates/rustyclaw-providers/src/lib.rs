@@ -473,9 +473,18 @@ impl LlmProvider for OpenAiCompatProvider {
 
         tracing::info!("Sending LLM request to OpenAI compat API at {}", url);
         
-        let response = self.client.post(&url)
-            .header("Authorization", format!("Bearer {}", self.model.api_key))
-            .json(&request_body)
+        let mut req = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.model.api_key));
+        if let Some(gateway_id) = &self.model.cf_aig_gateway_id {
+            req = req.header("cf-aig-gateway-id", gateway_id);
+            if url.contains("gateway.ai.cloudflare.com") {
+                req = req.header("cf-aig-authorization", format!("Bearer {}", self.model.api_key));
+            }
+        } else if url.contains("gateway.ai.cloudflare.com") {
+            req = req.header("cf-aig-authorization", format!("Bearer {}", self.model.api_key));
+        }
+
+        let response = req.json(&request_body)
             .send()
             .await
             .context("HTTP POST request failed during LLM call")?;
@@ -492,20 +501,24 @@ impl LlmProvider for OpenAiCompatProvider {
             return Err(ProviderError::ExecutionFailed(format!("LLM API returned error status {}: {}", status, error_text)));
         }
 
-        if let Some(neurons_header) = response.headers().get("cf-ai-neurons") {
-            if let Ok(neurons_str) = neurons_header.to_str() {
-                tracing::info!("CF Neurons header received: {}", neurons_str);
-                if let Ok(neurons) = neurons_str.parse::<f64>() {
-                    record_neuron_usage(neurons);
-                }
-            }
-        } else if url.contains("cloudflare.com") {
-            tracing::info!("CF call: cf-ai-neurons header not present in response (OpenAI-compat endpoint may not return it)");
+        let neurons_from_header = response.headers().get("cf-ai-neurons")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok());
+        if let Some(neurons) = neurons_from_header {
+            tracing::info!("CF Neurons header received: {}", neurons);
+            record_neuron_usage(neurons);
         }
 
         let resp_data: OpenAiResponse = response.json()
             .await
             .context("Failed to parse LLM JSON response")?;
+
+        if neurons_from_header.is_none() && url.contains("cloudflare.com") {
+            if let Some(total) = resp_data.usage.as_ref().map(|u| u.total_tokens).filter(|&t| t > 0) {
+                tracing::info!("CF Neurons estimated from total_tokens={} (header absent)", total);
+                record_neuron_usage(total as f64);
+            }
+        }
 
         let choice = resp_data.choices.first()
             .context("LLM returned empty choices in response")?;
@@ -565,9 +578,18 @@ impl LlmProvider for OpenAiCompatProvider {
 
         tracing::info!("Sending streaming LLM request to OpenAI compat API at {}", url);
 
-        let response = self.client.post(&url)
-            .header("Authorization", format!("Bearer {}", self.model.api_key))
-            .json(&request_body)
+        let mut req = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.model.api_key));
+        if let Some(gateway_id) = &self.model.cf_aig_gateway_id {
+            req = req.header("cf-aig-gateway-id", gateway_id);
+            if url.contains("gateway.ai.cloudflare.com") {
+                req = req.header("cf-aig-authorization", format!("Bearer {}", self.model.api_key));
+            }
+        } else if url.contains("gateway.ai.cloudflare.com") {
+            req = req.header("cf-aig-authorization", format!("Bearer {}", self.model.api_key));
+        }
+
+        let response = req.json(&request_body)
             .send()
             .await
             .context("HTTP POST stream request failed during LLM call")?;
@@ -1461,36 +1483,38 @@ mod tests {
     }
 }
 
+static NEURON_USAGE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
 fn record_neuron_usage(neurons: f64) {
-    {
-        let neuron_path = get_app_dir().join("neuron_usage.json");
-        let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        
-        let mut neurons_used = 0.0;
-        let mut last_reset_date = today_utc.clone();
-        
-        if neuron_path.exists() {
-            if let Ok(file) = std::fs::File::open(&neuron_path) {
-                if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
-                    if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
-                        if date_str == today_utc {
-                            neurons_used = json.get("neurons_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            last_reset_date = date_str.to_string();
-                        }
+    let _guard = NEURON_USAGE_LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap();
+
+    let neuron_path = get_app_dir().join("neuron_usage.json");
+    let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    let mut neurons_used = 0.0;
+
+    if neuron_path.exists() {
+        if let Ok(file) = std::fs::File::open(&neuron_path) {
+            if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
+                if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
+                    if date_str == today_utc {
+                        neurons_used = json.get("neurons_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     }
                 }
             }
         }
-        
-        neurons_used += neurons;
-        
-        let updated_json = serde_json::json!({
-            "last_reset_date": last_reset_date,
-            "neurons_used": neurons_used
-        });
-        if let Ok(serialized) = serde_json::to_string_pretty(&updated_json) {
-            let _ = std::fs::create_dir_all(neuron_path.parent().unwrap());
-            let _ = std::fs::write(&neuron_path, serialized);
+    }
+
+    neurons_used += neurons;
+
+    let updated_json = serde_json::json!({
+        "last_reset_date": today_utc,
+        "neurons_used": neurons_used
+    });
+    if let Ok(serialized) = serde_json::to_string_pretty(&updated_json) {
+        let _ = std::fs::create_dir_all(neuron_path.parent().unwrap());
+        if let Err(e) = std::fs::write(&neuron_path, serialized) {
+            tracing::error!("Failed to write neuron_usage.json: {}", e);
         }
     }
 }
@@ -1498,16 +1522,14 @@ fn record_neuron_usage(neurons: f64) {
 pub fn get_neuron_stats() -> serde_json::Value {
     let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let mut neurons_used = 0.0;
-    
-    {
-        let neuron_path = get_app_dir().join("neuron_usage.json");
-        if neuron_path.exists() {
-            if let Ok(file) = std::fs::File::open(&neuron_path) {
-                if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
-                    if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
-                        if date_str == today_utc {
-                            neurons_used = json.get("neurons_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        }
+
+    let neuron_path = get_app_dir().join("neuron_usage.json");
+    if neuron_path.exists() {
+        if let Ok(file) = std::fs::File::open(&neuron_path) {
+            if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
+                if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
+                    if date_str == today_utc {
+                        neurons_used = json.get("neurons_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     }
                 }
             }
