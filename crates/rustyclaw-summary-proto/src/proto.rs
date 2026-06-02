@@ -253,4 +253,19 @@ mod tests {
         let m = Message::assistant("はい");
         assert_eq!(message_to_text(&m), "Assistant: はい");
     }
+
+    /// LM Studio が稼働していることが前提の結合テスト。
+    /// cargo test -p rustyclaw-summary-proto -- --ignored で実行。
+    #[tokio::test]
+    #[ignore]
+    async fn integration_chat_reaches_lm_studio() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::from_env().unwrap();
+        let session = crate::session::ChatSession::load(dir.path()).unwrap();
+        let proto = SummaryProto::new(config, session);
+
+        let resp = proto.chat("こんにちは").await;
+        assert!(resp.is_ok(), "LLM call failed: {:?}", resp.err());
+        assert!(!resp.unwrap().is_empty());
+    }
 }
