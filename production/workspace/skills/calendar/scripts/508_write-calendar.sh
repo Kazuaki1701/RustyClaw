@@ -46,4 +46,22 @@ fi
 gws calendar events insert \
     --params "{\"calendarId\":\"${CALENDAR_ID}\"}" \
     --json "{\"summary\":\"${SUMMARY}\",\"description\":\"${DESCRIPTION}\",\"start\":{\"dateTime\":\"${START}\"},\"end\":{\"dateTime\":\"${END}\"}}" \
-    --format json
+    --format json \
+  | jq '
+      def wday_ja: ["日","月","火","水","木","金","土"][(strptime("%Y-%m-%d"))[6]];
+      def adj_end: if .end.dateTime then .end.dateTime
+                   elif .end.date then (.end.date | strptime("%Y-%m-%d") | mktime - 86400 | strftime("%Y-%m-%d"))
+                   else "" end;
+      ((.start.date // (.start.dateTime | split("T")[0])) | wday_ja) as $start_wday |
+      adj_end as $end |
+      (($end | split("T")[0]) | wday_ja) as $end_wday |
+      {
+          status:      "created",
+          title:       (.summary // ""),
+          start:       (.start.dateTime // .start.date // ""),
+          start_wday:  $start_wday,
+          end:         $end,
+          end_wday:    $end_wday,
+          calendar_id: (.organizer.email // ""),
+          event_id:    (.id // "")
+      }'
