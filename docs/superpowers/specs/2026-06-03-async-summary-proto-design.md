@@ -115,14 +115,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 | 変数 | 内容 | デフォルト値 |
 |------|------|------------|
-| `LMS_BASE_URL` | LM Studio エンドポイント | `http://127.0.0.1:1234/v1` |
+| `LMS_BASE_URL` | LM Studio エンドポイント | `http://192.168.1.110:1234/v1` |
 | `LMS_API_KEY` | プレースホルダー | `"lm-studio"` |
-| `MAIN_MODEL` | メインLLMモデル名 | `google/gemma-4-8b`（LM Studio にロード済みのモデル識別子に合わせる） |
-| `SUMMARY_MODEL` | 要約LLMモデル名 | 同上 |
+| `MAIN_MODEL` | メインLLMモデル名 | `google/gemma-4-e4b` |
+| `SUMMARY_MODEL` | 要約LLMモデル名 | `google/gemma-4-e4b` |
 | `WORKSPACE_DIR` | ファイル保存先 | `./production/workspace/proto` |
 
 - `.env` ファイル対応なし（shell export で指定）
-- `LMS_BASE_URL` は開発機ローカル実行前提のため `127.0.0.1`。rp1 デプロイ時は `192.168.1.110:1234` に変更し LM Studio の「Serve on Local Network」を ON にすること
+- 実行環境は RPi4（rp1）。LM Studio は開発機（192.168.1.110）で稼働しており、LAN 越しにアクセスする
+- **実行前に必ず確認**: LM Studio の Developer タブ「Serve on Local Network」が ON になっていること（LM Studio 起動のたびにリセットされる場合あり）
+- クロスコンパイル（aarch64）が必要。既存の `deploy.sh` を利用してデプロイする
 
 ---
 
