@@ -38,7 +38,7 @@ Usage:
   calendar-ops.sh list
   calendar-ops.sh create <calendar_id> <summary> <start_rfc3339> <end_rfc3339> [description]
   calendar-ops.sh delete <calendar_id> <event_id>
-  calendar-ops.sh update <calendar_id> <event_id> [summary] [start_rfc3339] [end_rfc3339] [description]
+  calendar-ops.sh update <calendar_id> <event_id> [--summary <summary>] [--start <start_rfc3339>] [--end <end_rfc3339>] [--description <description>]
 ```
 
 ### 共通ヘッダ
@@ -146,10 +146,30 @@ delete)
 ### update（patch セマンティクス）
 ```bash
 update)
-    CALENDAR_ID="${2:-}"; EVENT_ID="${3:-}"; SUMMARY="${4:-}"; START="${5:-}"; END="${6:-}"; DESCRIPTION="${7:-}"
-    [ -z "$CALENDAR_ID" ] || [ -z "$EVENT_ID" ] && {
-        echo "Usage: $0 update <calendar_id> <event_id> [summary] [start] [end] [description]" >&2; exit 1; }
+    CALENDAR_ID="${2:-}"; EVENT_ID="${3:-}"
+    if [ -z "$CALENDAR_ID" ] || [ -z "$EVENT_ID" ]; then
+        echo "Usage: $0 update <calendar_id> <event_id> [options]" >&2
+        echo "Options: --summary <val> --start <val> --end <val> --description <val>" >&2
+        exit 1
+    fi
     check_allowed "$CALENDAR_ID"
+
+    SUMMARY=""
+    START=""
+    END=""
+    DESCRIPTION=""
+
+    shift 3
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --summary)     SUMMARY="${2:-}";     shift 2 ;;
+            --start)       START="${2:-}";       shift 2 ;;
+            --end)         END="${2:-}";         shift 2 ;;
+            --description) DESCRIPTION="${2:-}"; shift 2 ;;
+            *) echo "Unknown option: $1" >&2; exit 1 ;;
+        esac
+    done
+
     # 指定されたフィールドのみを含む JSON を構築（patch セマンティクス）
     body=$(jq -n \
         --arg s "$SUMMARY" --arg st "$START" --arg en "$END" --arg d "$DESCRIPTION" '
@@ -199,7 +219,7 @@ run_workspace_script: "skills/calendar/scripts/calendar-ops.sh"
 | list   | 今後7日の予定取得（event_id 含む） | なし |
 | create | 予定作成 | calendar_id, summary, start, end, [description] |
 | delete | 予定削除 | calendar_id, event_id |
-| update | 予定更新（patch） | calendar_id, event_id, [summary], [start], [end], [description] |
+| update | 予定更新（patch） | calendar_id, event_id, [--summary <val>] [--start <val>] [--end <val>] [--description <val>] |
 
 start/end は RFC3339（例: 2026-06-03T10:00:00+09:00）。
 delete/update の event_id は list の出力から取得する。

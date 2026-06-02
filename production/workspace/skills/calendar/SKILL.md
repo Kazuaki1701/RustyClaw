@@ -18,29 +18,28 @@ Reads upcoming Google Calendar events and creates new events via the `gws` CLI. 
 - Any scheduled calendar patrol cron triggers.
 
 ### When NOT to use:
-- Deleting or modifying existing events (not supported).
 - Calendars outside the permitted allowlist.
 
 ---
 
 ## Workflow
 
-### Read: list upcoming events
-
 - **Tool**: `run_workspace_script`
 - **Parameters**:
-  - `script_name`: `skills/calendar/scripts/505_get-calendar.sh`
-  - *(no `env` required)*
+  - `script_name`: `skills/calendar/scripts/calendar-ops.sh`
+  - `args`: `["<subcommand>", ...]`
 
-Returns a JSON array of events for the next 7 days. Each element: `{title, start, end, location}`.
+### Operations
 
-### Write: create a new event
+| args[0] | 説明 | 追加 args |
+|---|---|---|
+| list   | 今後7日の予定取得（event_id 含む） | なし |
+| create | 予定作成 | calendar_id, summary, start, end, [description] |
+| delete | 予定削除 | calendar_id, event_id |
+| update | 予定更新（patch） | calendar_id, event_id, [--summary <val>] [--start <val>] [--end <val>] [--description <val>] |
 
-- **Tool**: `run_workspace_script`
-- **Parameters**:
-  - `script_name`: `skills/calendar/scripts/508_write-calendar.sh`
-  - `args`: `["<calendar_id>", "<summary>", "<start_datetime_RFC3339>", "<end_datetime_RFC3339>", "<description>"]`
-  - *(no `env` required)*
+`delete`/`update` の `event_id` は `list` の出力から取得します。
+`start`/`end` は RFC3339 形式（例: `2026-06-01T10:00:00+09:00`）。
 
 **Permitted calendar IDs:**
 - `6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com` (AI AGENT)
