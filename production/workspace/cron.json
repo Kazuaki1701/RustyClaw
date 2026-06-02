@@ -11,14 +11,25 @@
     "channel_id": "1491909716945928392"
   },
   {
-    "id": "topic-patrol",
-    "name": "Topic Patrol",
+    "id": "topic-patrol-explore",
+    "name": "Topic Patrol (Explore / 深夜探索)",
     "enabled": true,
     "trigger": {
-      "type": "interval",
-      "minutes": 360
+      "type": "cron",
+      "expression": "02:00"
     },
-    "prompt": "Run the topic-patrol skill.",
+    "prompt": "Run the topic-patrol skill.\n\n配信: スキップ",
+    "channel_id": "1485590981251432560"
+  },
+  {
+    "id": "topic-patrol-deliver",
+    "name": "Topic Patrol (Deliver / 朝の配信)",
+    "enabled": true,
+    "trigger": {
+      "type": "cron",
+      "expression": "09:00"
+    },
+    "prompt": "Run the topic-patrol skill.\n\n配信: 許可",
     "channel_id": "1485590981251432560"
   },
   {
