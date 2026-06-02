@@ -35,26 +35,41 @@ JQ_DEFS='
 
 case "$CMD" in
     list)
-        CALENDAR_ID="${2:-primary}"
+        TARGET_ID="${2:-all}"
         now=$(date +%Y-%m-%dT%H:%M:%S%:z)
         end=$(date -d '+7 days' +%Y-%m-%dT%H:%M:%S%:z)
-        gws calendar events list \
-            --params "{\"calendarId\":\"${CALENDAR_ID}\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \
-            --format json \
-          | jq "${JQ_DEFS}"'
-              [.items[]? |
-                ((.start.date // (.start.dateTime | split("T")[0])) | wday_ja) as $start_wday |
-                adj_end as $end |
-                (($end | split("T")[0]) | wday_ja) as $end_wday |
-                {
-                    event_id:    (.id // ""),
-                    title:       (.summary // ""),
-                    start:       (.start.dateTime // .start.date // ""),
-                    start_wday:  $start_wday,
-                    end:         $end,
-                    end_wday:    $end_wday,
-                    location:    (.location // "")
-                }]'
+
+        fetch_events() {
+            local cal_id="$1"
+            gws calendar events list \
+                --params "{\"calendarId\":\"${cal_id}\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \
+                --format json \
+              | jq "${JQ_DEFS}"'
+                  [.items[]? |
+                    ((.start.date // (.start.dateTime | split("T")[0])) | wday_ja) as $start_wday |
+                    adj_end as $end |
+                    (($end | split("T")[0]) | wday_ja) as $end_wday |
+                    {
+                        event_id:    (.id // ""),
+                        title:       (.summary // ""),
+                        start:       (.start.dateTime // .start.date // ""),
+                        start_wday:  $start_wday,
+                        end:         $end,
+                        end_wday:    $end_wday,
+                        location:    (.location // "")
+                    }]'
+        }
+
+        if [ "$TARGET_ID" = "all" ]; then
+            res1=$(fetch_events "primary")
+            res2=$(fetch_events "28hs0ibka0oa84810dupunrskk@group.calendar.google.com")
+            res3=$(fetch_events "ayabe.ayumi@gmail.com")
+            
+            jq -n --argjson r1 "$res1" --argjson r2 "$res2" --argjson r3 "$res3" \
+                '$r1 + $r2 + $r3 | sort_by(.start)'
+        else
+            fetch_events "$TARGET_ID"
+        fi
         ;;
 
     create)

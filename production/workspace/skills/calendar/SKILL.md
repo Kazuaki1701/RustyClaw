@@ -33,7 +33,7 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 
 | args[0] | 説明 | 追加 args |
 |---|---|---|
-| list   | 今後7日の予定取得（event_id 含む） | [calendar_id] (省略時は primary) |
+| list   | 今後7日の予定取得（event_id 含む） | [calendar_id] (省略時は all: 家族全員) |
 | create | 予定作成 | calendar_id, summary, start, end, [description] |
 | delete | 予定削除 | calendar_id, event_id |
 | update | 予定更新（patch） | calendar_id, event_id, [--summary <val>] [--start <val>] [--end <val>] [--description <val>] |
@@ -42,7 +42,7 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 `start`/`end` は RFC3339 形式（例: `2026-06-01T10:00:00+09:00`）。
 
 **Family Calendar IDs:**
-- **かずあき様 (K様)**: `primary`
+- **かずあき様 (K様)**: `primary` (Google API上、直接 `"primary"` というIDを指定することで本人のカレンダーを解決します)
 - **ゆうき様**: `28hs0ibka0oa84810dupunrskk@group.calendar.google.com`
 - **あゆみ様**: `ayabe.ayumi@gmail.com`
 
@@ -57,11 +57,8 @@ Any other `calendar_id` for write operations will be blocked with `WRITE BLOCKED
 以下の代表的な依頼パターンについて、引数の組み立て例を参考に実行してください。
 
 *   **「今日 / 明日の家族全員の予定を教えて」**
-    *   *手順*: 家族全員（かずあき様、ゆうき様、あゆみ様）の各カレンダーIDについて順に `list` を実行し、マージした結果から今日/明日の予定をモデル自身で抽出してユーザーに提示する。
-    *   `args` (順次実行):
-        1. `["list", "primary"]` (または `["list"]`)
-        2. `["list", "28hs0ibka0oa84810dupunrskk@group.calendar.google.com"]`
-        3. `["list", "ayabe.ayumi@gmail.com"]`
+    *   *手順*: カレンダーIDを指定せずに `list` を実行すると、自動的に家族全員（かずあき様、ゆうき様、あゆみ様）の予定が日付順にソートされてマージ出力される。そこから今日/明日の予定をモデル自身で抽出してユーザーに提示する。
+    *   `args`: `["list"]` (または `["list", "all"]`)
 *   **「試験勉強に向けた学習計画を予定に書いて」**
     *   *手順*: AI AGENTカレンダー（`_AI-AGENT`）に対して `create` を実行する。
     *   `args`: `["create", "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com", "学習計画: [学習内容]", "2026-06-03T19:00:00+09:00", "2026-06-03T21:00:00+09:00", "基本情報技術者試験の対策勉強"]`
