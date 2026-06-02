@@ -5,7 +5,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 CMD="${1:-}"
 
 # 各カレンダーIDのハードコード
-CAL_PRIMARY="primary"
+CAL_KAZUAKI="ayabe.kazuaki@gmail.com" # かずあき様
 CAL_YUKI="28hs0ibka0oa84810dupunrskk@group.calendar.google.com"
 CAL_AYUMI="ayabe.ayumi@gmail.com"
 CAL_AI_AGENT="6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com"
@@ -67,7 +67,7 @@ end=$(date -d '+7 days' +%Y-%m-%dT%H:%M:%S%:z)
 
 case "$CMD" in
     list_family)
-        res1=$(fetch_events "$CAL_PRIMARY" "$now" "$end")
+        res1=$(fetch_events "$CAL_KAZUAKI" "$now" "$end")
         res2=$(fetch_events "$CAL_YUKI" "$now" "$end")
         res3=$(fetch_events "$CAL_AYUMI" "$now" "$end")
         

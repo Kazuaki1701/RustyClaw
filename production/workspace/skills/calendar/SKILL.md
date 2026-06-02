@@ -42,6 +42,12 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 `delete_ai_agent`/`update_ai_agent` の `event_id` は `list_ai_agent` の出力から取得します。
 `start`/`end` は RFC3339 形式（例: `2026-06-01T10:00:00+09:00`）。
 
+### カレンダーID構成
+
+- **かずあき様**: `ayabe.kazuaki@gmail.com`
+- **ゆうき様**: `28hs0ibka0oa84810dupunrskk@group.calendar.google.com`
+- **あゆみ様**: `ayabe.ayumi@gmail.com`
+- **_AI-AGENT**: `6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com`
 
 
 ### Examples for Common User Requests
