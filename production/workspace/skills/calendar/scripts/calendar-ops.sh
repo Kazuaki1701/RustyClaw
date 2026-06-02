@@ -64,7 +64,7 @@ fetch_events() {
 }
 
 now=$(date +%Y-%m-%dT%H:%M:%S%:z)
-end=$(date -d '+7 days' +%Y-%m-%dT%H:%M:%S%:z)
+end=$(date -d '+3 days' +%Y-%m-%dT%H:%M:%S%:z)
 
 case "$CMD" in
     list_family)

@@ -33,8 +33,8 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 
 | args[0] | 説明 | 追加 args |
 |---|---|---|
-| list_family | 家族全員の今後7日の予定取得 | なし |
-| list_ai_agent | _AI-AGENT カレンダーの今後7日の予定取得 | なし |
+| list_family | 家族全員の今後3日の予定取得 | なし |
+| list_ai_agent | _AI-AGENT カレンダーの今後3日の予定取得 | なし |
 | create_ai_agent | _AI-AGENT への予定作成 | summary, start, end, [description] |
 | delete_ai_agent | _AI-AGENT の予定削除 | event_id |
 | update_ai_agent | _AI-AGENT の予定更新 (patch) | event_id, [--summary <val>] [--start <val>] [--end <val>] [--description <val>] |
