@@ -6,14 +6,15 @@ CMD="${1:-}"
 
 # 各カレンダーIDのハードコード
 CAL_KAZUAKI="ayabe.kazuaki@gmail.com" # かずあき様
-CAL_YUKI="28hs0ibka0oa84810dupunrskk@group.calendar.google.com"
-CAL_AYUMI="ayabe.ayumi@gmail.com"
-CAL_AI_AGENT="6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com"
+CAL_YUKI="28hs0ibka0oa84810dupunrskk@group.calendar.google.com" # ゆうき
+CAL_AYUMI="ayabe.ayumi@gmail.com"   # あゆみ
+CAL_AI_AGENT="6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com" #_AI_AGENT
+CAL_STUDY="d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com" # 学習計画カレンダー
 
 # 許可カレンダーリストのハードコード（write系チェック用）
 ALLOWED=(
     "$CAL_AI_AGENT"
-    "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com" # 学習計画カレンダーも一応残す
+    "$CAL_STUDY"   
 )
 
 if ! command -v gws &>/dev/null; then
