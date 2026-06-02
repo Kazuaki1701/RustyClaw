@@ -77,6 +77,8 @@ If a topic in `USER.md` has a `sources:` annotation, route as follows:
 | _(none)_ | `web_search` → `web_fetch` top URL |
 | `HN` | `web_search` with `site:news.ycombinator.com {topic}` |
 | `Reddit/{sub}` | `web_search` with `site:reddit.com/r/{sub} {topic}` |
+| `github:{owner}/{repo}` | `web_fetch https://github.com/{owner}/{repo}/releases` — scan latest release notes |
+| `rss:{url}` | `web_fetch {url}` — parse feed entries and pick the newest item |
 | URL | `web_fetch` the URL directly |
 
 ### Step 3: Filter — "Would I tell a friend?"
