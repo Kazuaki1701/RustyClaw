@@ -34,9 +34,9 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 | args[0] | 説明 | 追加 args |
 |---|---|---|
 | list   | 今後7日の予定取得（event_id 含む） | [calendar_id] (省略時は all: 家族全員) |
-| create | 予定作成 | calendar_id, summary, start, end, [description] |
-| delete | 予定削除 | calendar_id, event_id |
-| update | 予定更新（patch） | calendar_id, event_id, [--summary <val>] [--start <val>] [--end <val>] [--description <val>] |
+| create | 予定作成 (対象: _AI-AGENT) | summary, start, end, [description] |
+| delete | 予定削除 (対象: _AI-AGENT) | event_id |
+| update | 予定更新 (対象: _AI-AGENT, patch) | event_id, [--summary <val>] [--start <val>] [--end <val>] [--description <val>] |
 
 `delete`/`update` の `event_id` は `list` の出力から取得します。
 `start`/`end` は RFC3339 形式（例: `2026-06-01T10:00:00+09:00`）。
@@ -50,7 +50,7 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 - `6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com` (AI AGENTカレンダー / `_AI-AGENT`)
 - `d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com` (学習計画カレンダー)
 
-Any other `calendar_id` for write operations will be blocked with `WRITE BLOCKED` and exit code 1.
+※ `create`/`delete`/`update` （書き込み操作）では、スクリプト内部で自動的に `_AI-AGENT` カレンダーIDが適用されるため、引数として `calendar_id` を渡す必要はありません。
 
 ### Examples for Common User Requests
 
@@ -60,13 +60,13 @@ Any other `calendar_id` for write operations will be blocked with `WRITE BLOCKED
     *   *手順*: カレンダーIDを指定せずに `list` を実行すると、自動的に家族全員（かずあき様、ゆうき様、あゆみ様）の予定が日付順にソートされてマージ出力される。そこから今日/明日の予定をモデル自身で抽出してユーザーに提示する。
     *   `args`: `["list"]` (または `["list", "all"]`)
 *   **「試験勉強に向けた学習計画を予定に書いて」**
-    *   *手順*: AI AGENTカレンダー（`_AI-AGENT`）に対して `create` を実行する。
-    *   `args`: `["create", "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com", "学習計画: [学習内容]", "2026-06-03T19:00:00+09:00", "2026-06-03T21:00:00+09:00", "基本情報技術者試験の対策勉強"]`
+    *   *手順*: AI AGENTカレンダーに対して `create` を実行する（カレンダーIDは不要）。
+    *   `args`: `["create", "学習計画: [学習内容]", "2026-06-03T19:00:00+09:00", "2026-06-03T21:00:00+09:00", "基本情報技術者試験の対策勉強"]`
 *   **「今日実施予定だった学習計画を明日にずらして」**
     *   *手順1 (調査)*: AI AGENTカレンダー（`_AI-AGENT`）に対して `list` を実行して、本日予定されている該当イベントの `event_id` を見つける。
         *   `args`: `["list", "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com"]`
-    *   *手順2 (更新)*: 特定した `event_id` に対して `update` を実行し、開始・終了時間を明日の日付に変更する。
-        *   `args`: `["update", "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com", "<event_id>", "--start", "2026-06-03T19:00:00+09:00", "--end", "2026-06-03T21:00:00+09:00"]`
+    *   *手順2 (更新)*: 特定した `event_id` に対して `update` を実行し、開始・終了時間を明日の日付に変更する（カレンダーIDは不要）。
+        *   `args`: `["update", "<event_id>", "--start", "2026-06-03T19:00:00+09:00", "--end", "2026-06-03T21:00:00+09:00"]`
 
 ---
 
