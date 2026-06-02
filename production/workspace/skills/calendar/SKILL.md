@@ -68,5 +68,5 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 ## Common Mistakes & Antipatterns
 
 - **スクリプトを直接シェルで実行しない。** `run_workspace_script` を使うこと。
-- **許可外カレンダー ID への書き込みは不可。** 常に上記2件の ID を使うこと。
+- **書き込み操作（create/delete/update）でカレンダーIDを指定しないこと。** スクリプト内部で自動的に `_AI-AGENT` カレンダーが対象になります。
 - **start/end は RFC3339 形式**（例: `2026-06-01T10:00:00+09:00`）。
