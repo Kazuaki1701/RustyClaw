@@ -47,6 +47,22 @@ Reads upcoming Google Calendar events and creates new events via the `gws` CLI. 
 
 Any other `calendar_id` will be blocked with `WRITE BLOCKED` and exit code 1.
 
+### Examples for Common User Requests
+
+以下の代表的な依頼パターンについて、引数の組み立て例を参考に実行してください。
+
+*   **「今日 / 明日の家族全員の予定を教えて」**
+    *   *手順*: `list` を実行してカレンダーの全予定を取得し、そこから該当する日付（今日/明日など）の予定をモデル自身で抽出してユーザーに提示する。
+    *   `args`: `["list"]`
+*   **「試験勉強に向けた学習計画を予定に書いて」**
+    *   *手順*: 学習計画カレンダーに対して `create` を実行する。
+    *   `args`: `["create", "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com", "学習計画: [学習内容]", "2026-06-03T19:00:00+09:00", "2026-06-03T21:00:00+09:00", "基本情報技術者試験の対策勉強"]`
+*   **「今日実施予定だった学習計画を明日にずらして」**
+    *   *手順1 (調査)*: `list` を実行して、本日予定されている該当イベントの `event_id` を見つける。
+        *   `args`: `["list"]`
+    *   *手順2 (更新)*: 特定した `event_id` に対して `update` を実行し、開始・終了時間を明日の日付に変更する。
+        *   `args`: `["update", "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com", "<event_id>", "--start", "2026-06-03T19:00:00+09:00", "--end", "2026-06-03T21:00:00+09:00"]`
+
 ---
 
 ## Common Mistakes & Antipatterns
