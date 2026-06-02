@@ -11,12 +11,12 @@ fetch_weather() {
     local include_forecast_text="${3:-0}"
 
     local raw
-    raw=$(curl -sf "${BASE_URL}?city=${city}") || {
-        echo "{\"location\":\"${name}\",\"error\":\"API request failed\"}"
+    raw=$(curl -sSf "${BASE_URL}?city=${city}") || {
+        jq -n --arg loc "$name" --arg err "API request failed" '{"location":$loc,"error":$err}'
         return
     }
 
-    echo "$raw" | jq --arg name "$name" --argjson include_text "$include_forecast_text" '
+    echo "$raw" | jq --arg name "$name" --arg include_text "$include_forecast_text" '
         . as $root |
         ($root.forecasts[0].temperature.max.celsius | if . == null then null else tonumber end) as $max_c |
         ($root.forecasts[0].temperature.min.celsius | if . == null then null else tonumber end) as $min_c |
@@ -29,9 +29,9 @@ fetch_weather() {
             wind:           $root.forecasts[0].detail.wind,
             chance_of_rain: $root.forecasts[0].chanceOfRain
         } |
-        if $include_text == 1 then . + {forecast_text: $root.description.bodyText} else . end
+        if $include_text == "1" then . + {forecast_text: $root.description.bodyText} else . end
     ' || {
-        echo "{\"location\":\"${name}\",\"error\":\"jq parse error\"}"
+        jq -n --arg loc "$name" --arg err "jq parse error" '{"location":$loc,"error":$err}'
         return
     }
 }
