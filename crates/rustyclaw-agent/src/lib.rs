@@ -1317,6 +1317,22 @@ fn extract_delimited_block(text: &str, start_tag: &str, end_tag: &str) -> Option
     if content.is_empty() { None } else { Some(content) }
 }
 
+/// config.json の context_window 文字列（"8k", "131k", "256k", "1M" 等）をトークン数に変換する。
+/// 未設定または認識不能な場合は保守的なデフォルト 32,768 を返す。
+fn parse_context_window(context_window: Option<&str>) -> usize {
+    let s = match context_window {
+        Some(s) if !s.is_empty() => s.trim().to_lowercase(),
+        _ => return 32_768,
+    };
+    if let Some(num) = s.strip_suffix('m') {
+        num.trim().parse::<usize>().unwrap_or(1) * 1_048_576
+    } else if let Some(num) = s.strip_suffix('k') {
+        num.trim().parse::<usize>().unwrap_or(32) * 1_024
+    } else {
+        s.parse::<usize>().unwrap_or(32_768)
+    }
+}
+
 /// 70/20/10 戦略でテキストを `max_bytes` 以内に切り詰める。
 fn truncate_70_20(content: &str, max_bytes: usize) -> String {
     if content.len() <= max_bytes {
@@ -1972,5 +1988,25 @@ Keep it short.\n\
         assert!(system_context.contains("Your Previous Posts in This Channel"));
         assert!(system_context.contains("It might rain soon, grab an umbrella!"));
         assert!(system_context.contains("2026-05-31 12:00:00"));
+    }
+
+    #[test]
+    fn test_parse_context_window_k_suffix() {
+        assert_eq!(parse_context_window(Some("8k")), 8_192);
+        assert_eq!(parse_context_window(Some("16k")), 16_384);
+        assert_eq!(parse_context_window(Some("32k")), 32_768);
+        assert_eq!(parse_context_window(Some("131k")), 134_144);
+        assert_eq!(parse_context_window(Some("256k")), 262_144);
+    }
+
+    #[test]
+    fn test_parse_context_window_m_suffix() {
+        assert_eq!(parse_context_window(Some("1M")), 1_048_576);
+    }
+
+    #[test]
+    fn test_parse_context_window_none_or_empty() {
+        assert_eq!(parse_context_window(None), 32_768);
+        assert_eq!(parse_context_window(Some("")), 32_768);
     }
 }
