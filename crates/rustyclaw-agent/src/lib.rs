@@ -456,6 +456,25 @@ impl Pipeline {
             conversation_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
         }
 
+        let memory_model = config.get_model("memory");
+
+        // コンテキストサイズ安全チェック: flush プロンプトの推定トークン数がモデルの
+        // context_window の 80% を超える場合はスキップして 400 エラーを防ぐ。
+        let flush_text_tokens = (conversation_text.chars().count() * 3 / 2) + 2_000;
+        let flush_model_cw = config.model_list.iter()
+            .find(|m| m.model == memory_model.model_name && m.enabled)
+            .and_then(|m| m.context_window.as_deref());
+        let flush_ctx_limit = (parse_context_window(flush_model_cw) * 4) / 5;
+        if flush_text_tokens > flush_ctx_limit {
+            tracing::warn!(
+                session = %session_id,
+                estimated_tokens = flush_text_tokens,
+                ctx_limit = flush_ctx_limit,
+                "memory flush: skipping — estimated tokens exceeds model context limit"
+            );
+            return Ok(());
+        }
+
         // 既存の MEMORY.md を読み込む（なければ空）
         let memory_path = workspace_dir.join("MEMORY.md");
         let existing_memory = fs::read_to_string(&memory_path).unwrap_or_default();
@@ -491,8 +510,6 @@ Rules:
             if existing_memory.is_empty() { "(empty)" } else { &existing_memory },
             conversation_text,
         );
-
-        let memory_model = config.get_model("memory");
         let provider = create_provider(memory_model.clone());
         let messages = vec![
             Message {

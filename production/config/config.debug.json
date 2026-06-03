@@ -8,7 +8,7 @@
     "heartbeat": ["lms-gemma-4-26b", "groq-llama-8b"],
     "patrol":    ["lms-gemma-4-26b", "groq-llama-8b"],
     "summary":   ["lms-gemma-4-26b", "groq-llama-8b"],
-    "memory":    ["lms-gemma-4-26b", "groq-llama-8b"]
+    "memory":    ["groq-llama-8b"]
   },
   "model_list": [
     {
