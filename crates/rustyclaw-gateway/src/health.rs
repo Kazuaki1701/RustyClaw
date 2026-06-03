@@ -889,7 +889,7 @@ async function updateNeurons(){
     const r=await fetch('/api/neurons');if(!r.ok)return;
     const d=await r.json();
     document.getElementById('neuron-ts').textContent='↻ '+now();
-    const today=d.today_used??0;const limit=10000;const pct=Math.min(100,(today/limit)*100).toFixed(1);
+    const today=Math.round(d.neurons_used??0);const limit=10000;const pct=Math.min(100,(today/limit)*100).toFixed(0);
     document.getElementById('nFill').style.width=pct+'%';
     document.getElementById('nToday').textContent=today.toLocaleString();
     document.getElementById('nRem').textContent=(limit-today).toLocaleString();

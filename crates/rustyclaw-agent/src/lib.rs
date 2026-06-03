@@ -617,50 +617,93 @@ Rules:
         Ok(context)
     }
 
-    /// Heartbeat 専用実行（軽量コンテキスト使用、履歴なし）
+    /// Heartbeat 専用実行（軽量コンテキスト使用、履歴なし、ツールループ付き）
     pub async fn execute_heartbeat(
         &self,
         workspace_dir: &Path,
         session_id: &str,
         user_message: &str,
+        tool_registry: &ToolRegistry,
     ) -> Result<LlmResponse> {
         let system_context = self.build_heartbeat_context(workspace_dir)?;
 
         let logger = SessionLogger::new(workspace_dir);
-        let mut messages = Vec::new();
-        messages.push(Message {
-            role: "system".to_string(),
-            content: system_context,
-            name: None,
-            ..Default::default()
-        });
         let user_msg = Message {
             role: "user".to_string(),
             content: user_message.to_string(),
             name: None,
             ..Default::default()
         };
-        messages.push(user_msg.clone());
-
-        self.dump_request(workspace_dir, &messages);
-
-        let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &[], Duration::from_secs(900)).await?;
-        response.content = filter_json_leaks(&response.content);
+        let mut messages = vec![
+            Message { role: "system".to_string(), content: system_context, name: None, ..Default::default() },
+            user_msg.clone(),
+        ];
 
         logger.append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
-        let assistant_msg = Message {
-            role: response.role.clone(),
-            content: response.content.clone(),
-            name: None,
-            ..Default::default()
-        };
-        logger.append_message(session_id, &assistant_msg)
-            .context("Failed to save assistant response in session log (fail-closed)")?;
 
-        self.dump_response(workspace_dir, &response.content, &response.role);
+        let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
+            .to_llm_schemas()
+            .iter()
+            .map(|schema| rustyclaw_providers::ToolDef {
+                name: schema["name"].as_str().unwrap_or("").to_string(),
+                description: schema["description"].as_str().unwrap_or("").to_string(),
+                parameters: schema["input_schema"].clone(),
+            })
+            .collect();
 
-        Ok(response)
+        let max_loops = 5;
+        for _ in 0..max_loops {
+            self.dump_request(workspace_dir, &messages);
+
+            let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &provider_tools, Duration::from_secs(900)).await?;
+            response.content = filter_json_leaks(&response.content);
+
+            let assistant_msg = Message {
+                role: response.role.clone(),
+                content: response.content.clone(),
+                tool_calls: response.tool_calls.clone(),
+                name: None,
+                ..Default::default()
+            };
+            messages.push(assistant_msg.clone());
+            logger.append_message(session_id, &assistant_msg)
+                .context("Failed to save assistant response in session log (fail-closed)")?;
+            self.dump_response(workspace_dir, &response.content, &response.role);
+
+            if let Some(ref calls) = response.tool_calls {
+                if !calls.is_empty() {
+                    for call in calls {
+                        tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
+                        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                        let tool_result = if let Some(tool) = tool_registry.get(&call.function.name) {
+                            tool.execute(args).await
+                        } else {
+                            rustyclaw_tools::ToolResult {
+                                content: format!("Error: Tool '{}' not found in registry", call.function.name),
+                                is_error: true,
+                            }
+                        };
+                        let tool_msg = Message {
+                            role: "tool".to_string(),
+                            content: tool_result.content,
+                            tool_call_id: Some(call.id.clone()),
+                            name: Some(call.function.name.clone()),
+                            ..Default::default()
+                        };
+                        messages.push(tool_msg.clone());
+                        logger.append_message(session_id, &tool_msg)
+                            .context("Failed to save tool result message in session log (fail-closed)")?;
+                    }
+                    continue;
+                }
+            }
+
+            return Ok(response);
+        }
+
+        Err(anyhow::anyhow!("Heartbeat agent loop exceeded maximum step limit of {}", max_loops))
     }
 
     /// 通常（一括）の対話実行

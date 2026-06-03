@@ -263,7 +263,7 @@ impl LaneRegistry {
                                         crate::queue_update_or_insert(&session_id, "Executing", 0.0, desc);
                                         tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
                                         let pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
-                                        match pipeline.execute_heartbeat(&workspace_path, &session_id, &heartbeat_prompt).await {
+                                        match pipeline.execute_heartbeat(&workspace_path, &session_id, &heartbeat_prompt, &tool_registry).await {
                                             Ok(response) => {
                                                 tracing::info!("Heartbeat LLM execution successful. Processing response...");
                                                 if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
