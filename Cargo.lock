@@ -2414,7 +2414,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "rustyclaw-agent"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2434,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-channels"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2447,7 +2447,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-cli"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-config"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2485,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-gateway"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-mcp"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2527,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-providers"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2546,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-storage"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-summary-proto"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "rig-core",
@@ -2577,7 +2577,7 @@ dependencies = [
 
 [[package]]
 name = "rustyclaw-tools"
-version = "0.1.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
  "async-trait",

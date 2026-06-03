@@ -510,23 +510,27 @@ mod tests {
         let summaries_dir = ws.path().join("memory").join("summaries");
         std::fs::create_dir_all(&summaries_dir).unwrap();
 
-        // アイドル10分のセッションを作成
-        let session_path = sessions_dir.join("discord-test-20260603.jsonl");
+        // JSONL mtime = 400s ago (passes 5-min idle check: 400 > 300)
+        let session_path = sessions_dir.join("discord-test-session.jsonl");
         let mut f = std::fs::File::create(&session_path).unwrap();
         writeln!(f, r#"{{"role":"user","content":"hi"}}"#).unwrap();
-        let old_time = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
-        let ft = filetime::FileTime::from_system_time(old_time);
-        filetime::set_file_mtime(&session_path, ft).unwrap();
+        let jsonl_time = std::time::SystemTime::now() - std::time::Duration::from_secs(400);
+        filetime::set_file_mtime(&session_path, filetime::FileTime::from_system_time(jsonl_time)).unwrap();
 
-        // サマリーファイルを 2 分前に作成（最近要約済み）
-        let summary_path = summaries_dir.join("2026-06-03-discord-test-20260603.md");
+        // session_date は JSONL mtime から動的に生成（production コードと同じロジック）
+        let local_modified: chrono::DateTime<chrono::Local> = jsonl_time.into();
+        let session_date = local_modified.format("%Y-%m-%d").to_string();
+
+        // Summary mtime = 500s ago:
+        //   sm(500s) < modified(400s) → true → needs_summary=true without guard
+        //   summary_age_secs=500 < 600 → 10-min guard fires → session skipped
+        let summary_path = summaries_dir.join(format!("{}-discord-test-session.md", session_date));
         std::fs::write(&summary_path, "<!-- turns: 1 -->").unwrap();
-        let recent_time = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
-        let ft2 = filetime::FileTime::from_system_time(recent_time);
-        filetime::set_file_mtime(&summary_path, ft2).unwrap();
+        let summary_time = std::time::SystemTime::now() - std::time::Duration::from_secs(500);
+        filetime::set_file_mtime(&summary_path, filetime::FileTime::from_system_time(summary_time)).unwrap();
 
         let result = find_next_session_needing_summary(&sessions_dir, ws.path());
-        assert!(result.is_none(), "recently summarized session (< 10 min ago) must be excluded");
+        assert!(result.is_none(), "recently summarized session (summary < 10 min old) must be excluded by mtime guard");
     }
 }
 
