@@ -98,38 +98,21 @@ impl Pipeline {
         ))
     }
 
-    /// 用途ごとのモデルの TPM 制限に基づいて、会話履歴の圧縮しきい値を動的に決定する。
-    fn get_history_limit(&self, purpose: &str) -> usize {
-        let model_cfg = self.config.get_model(purpose);
-        let tpm = self.config.model_list.iter()
-            .find(|m| m.model == model_cfg.model_name && m.enabled)
-            .and_then(|m| m.tpm)
-            .unwrap_or(40000); // 未設定の場合は十分大きな値をデフォルトとする
-
-        if tpm <= 6000 {
-            800
-        } else if tpm <= 12000 {
-            1500
-        } else {
-            3000
-        }
-    }
-
-    /// TPM 上限に基づくメッセージ件数ハードキャップ。
-    /// トークン推定のアンダーフロー問題の補完として、compact_if_needed_with_overhead 後に適用する。
+    /// context_window ベースのメッセージ件数ハードキャップ。
+    /// モデルの context_window 文字列を parse_context_window() で解釈し、
+    /// 大きいモデルほど多くの履歴を保持できるようにする。
     fn get_history_message_limit(&self, purpose: &str) -> usize {
         let model_cfg = self.config.get_model(purpose);
-        let tpm = self.config.model_list.iter()
+        let cw = self.config.model_list.iter()
             .find(|m| m.model == model_cfg.model_name && m.enabled)
-            .and_then(|m| m.tpm)
-            .unwrap_or(40000);
-
-        if tpm <= 6000 {
-            10   // groq-llama-8b 等: 末尾 10 件 (~3K トークン)
-        } else if tpm <= 12000 {
-            20   // groq-llama-70b 等: 末尾 20 件 (~6K トークン)
-        } else {
-            10   // CF / LMS: neurons 節約のため末尾 10 件
+            .and_then(|m| m.context_window.as_deref());
+        let ctx = parse_context_window(cw);
+        match ctx {
+            0..=16_384       => 10,
+            16_385..=32_768  => 20,
+            32_769..=65_536  => 40,
+            65_537..=262_143 => 60,
+            _                => 80,
         }
     }
 
@@ -730,10 +713,6 @@ Rules:
         let cleaned_history = self.process_proactive_posts(session_id, history_messages, &mut system_context);
 
         let mut history = ConversationHistory::new(cleaned_history);
-        let history_limit = self.get_history_limit("default");
-        // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
-        let overhead_tokens = (system_context.chars().count() * 3) / 2;
-        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
         history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
@@ -997,12 +976,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let cleaned_history = self.process_proactive_posts(session_id, history_messages, &mut system_context);
 
         let mut history = ConversationHistory::new(cleaned_history);
-        let history_limit = self.get_history_limit(purpose);
-        // ISSUE-02: system プロンプト＋ツール定義分のトークンを考慮して実効上限を下げる
-        let overhead_chars = system_context.chars().count()
-            + tool_registry.to_llm_schemas().iter().map(|s| s.to_string().chars().count()).sum::<usize>();
-        let overhead_tokens = (overhead_chars * 3) / 2;
-        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
         history.trim_to_last(self.get_history_message_limit(purpose));
 
         // 送信用メッセージリストの構築 (System + History)
@@ -1151,10 +1124,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let mut history = ConversationHistory::new(history_messages);
-        let history_limit = self.get_history_limit("default");
-        // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
-        let overhead_tokens = (system_context.chars().count() * 3) / 2;
-        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
         history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
@@ -2008,5 +1977,47 @@ Keep it short.\n\
     fn test_parse_context_window_none_or_empty() {
         assert_eq!(parse_context_window(None), 32_768);
         assert_eq!(parse_context_window(Some("")), 32_768);
+    }
+
+    #[test]
+    fn test_get_history_message_limit_uses_context_window() {
+        use rustyclaw_config::{Config, ModelEntry, AgentsConfig, ModelNames};
+
+        fn make_config(context_window: &str) -> Config {
+            Config {
+                model_list: vec![ModelEntry {
+                    model_name: "test-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "test-model-api".to_string(),
+                    api_base: "http://localhost".to_string(),
+                    api_key: "key".to_string(),
+                    max_tokens: Some(2048),
+                    temperature: Some(0.7),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: Some(context_window.to_string()),
+                    cf_aig_gateway_id: None,
+                }],
+                agents: AgentsConfig {
+                    default: ModelNames::Single("test-model".to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }
+
+        let flush_sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+
+        let p16k  = Pipeline::new(make_config("16k"),  flush_sem.clone());
+        let p32k  = Pipeline::new(make_config("32k"),  flush_sem.clone());
+        let p64k  = Pipeline::new(make_config("64k"),  flush_sem.clone());
+        let p131k = Pipeline::new(make_config("131k"), flush_sem.clone());
+        let p256k = Pipeline::new(make_config("256k"), flush_sem.clone());
+
+        assert_eq!(p16k.get_history_message_limit("default"),  10, "16k → 10件");
+        assert_eq!(p32k.get_history_message_limit("default"),  20, "32k → 20件");
+        assert_eq!(p64k.get_history_message_limit("default"),  40, "64k → 40件");
+        assert_eq!(p131k.get_history_message_limit("default"), 60, "131k → 60件");
+        assert_eq!(p256k.get_history_message_limit("default"), 80, "256k → 80件");
     }
 }
