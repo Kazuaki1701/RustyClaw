@@ -1,7 +1,7 @@
 use crate::session::{ChatSession, SUMMARY_INTERVAL};
 use anyhow::{Context, Result};
 use rig_core::{
-    client::{CompletionClient, ProviderClient},
+    client::CompletionClient,
     completion::{AssistantContent, CompletionModel, Message},
     message::UserContent,
     providers::openai::CompletionsClient,
