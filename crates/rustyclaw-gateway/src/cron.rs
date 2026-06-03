@@ -25,6 +25,21 @@ pub(crate) fn find_next_session_needing_summary(sessions_dir: &std::path::Path, 
         let local_modified: chrono::DateTime<chrono::Local> = modified.into();
         let session_date = local_modified.format("%Y-%m-%d").to_string();
         let summary_path = ws_path.join("memory").join("summaries").join(format!("{}-{}.md", session_date, safe_session_id));
+
+        // サマリーファイルが過去 10 分以内に更新されていれば再トリガーしない。
+        // 生成中（プレースホルダー書き込み後）および完了直後の重複発火を防ぐ。
+        if summary_path.exists() {
+            if let Some(summary_age_secs) = summary_path.metadata().ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|sm| now.duration_since(sm).ok())
+                .map(|d| d.as_secs())
+            {
+                if summary_age_secs < 600 {
+                    continue;
+                }
+            }
+        }
+
         let needs_summary = if !summary_path.exists() {
             true
         } else {
@@ -485,6 +500,33 @@ mod tests {
 
         let result = find_next_session_needing_summary(&sessions_dir, ws.path());
         assert!(result.is_none(), "recent sessions (< 5 min idle) must be excluded");
+    }
+
+    #[test]
+    fn test_recently_summarized_session_is_excluded() {
+        let ws = tempfile::tempdir().unwrap();
+        let sessions_dir = ws.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let summaries_dir = ws.path().join("memory").join("summaries");
+        std::fs::create_dir_all(&summaries_dir).unwrap();
+
+        // アイドル10分のセッションを作成
+        let session_path = sessions_dir.join("discord-test-20260603.jsonl");
+        let mut f = std::fs::File::create(&session_path).unwrap();
+        writeln!(f, r#"{{"role":"user","content":"hi"}}"#).unwrap();
+        let old_time = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        let ft = filetime::FileTime::from_system_time(old_time);
+        filetime::set_file_mtime(&session_path, ft).unwrap();
+
+        // サマリーファイルを 2 分前に作成（最近要約済み）
+        let summary_path = summaries_dir.join("2026-06-03-discord-test-20260603.md");
+        std::fs::write(&summary_path, "<!-- turns: 1 -->").unwrap();
+        let recent_time = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+        let ft2 = filetime::FileTime::from_system_time(recent_time);
+        filetime::set_file_mtime(&summary_path, ft2).unwrap();
+
+        let result = find_next_session_needing_summary(&sessions_dir, ws.path());
+        assert!(result.is_none(), "recently summarized session (< 10 min ago) must be excluded");
     }
 }
 
