@@ -985,6 +985,15 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
 
+        // RAG: ユーザーメッセージに関連する記憶を動的注入 (fail-open)
+        {
+            let db_path = workspace_dir.join("memory.db");
+            let rag = retrieve_rag_context(user_message, &self.config, &db_path).await;
+            if !rag.is_empty() {
+                system_context.push_str(&rag);
+            }
+        }
+
         // 過去履歴のロードとトークン圧縮処理の適用
         let history_messages = if session_id.starts_with("cron:") {
             Vec::new()
@@ -1383,6 +1392,62 @@ pub(crate) async fn ingest_memory_md(
         }
     }
     tracing::info!("ingest_memory_md: ingested {} chunks from MEMORY.md", chunks.len());
+}
+
+/// RAG 検索結果をシステムプロンプト注入用の Markdown 文字列に変換する。
+/// 結果が空の場合は空文字列を返す。
+pub(crate) fn format_rag_context(items: &[(String, f32)]) -> String {
+    if items.is_empty() { return String::new(); }
+    let mut out = String::from("\n\n## Relevant Memory\n");
+    out.push_str("The following memories are relevant to the current conversation:\n\n");
+    for (text, _sim) in items {
+        out.push_str(text);
+        out.push('\n');
+    }
+    out
+}
+
+/// ユーザーメッセージをベクトル化して memory.db を検索し、
+/// システムプロンプトに追記するコンテキスト文字列を返す (Fail-open)。
+pub(crate) async fn retrieve_rag_context(
+    query_text: &str,
+    config: &Config,
+    db_path: &Path,
+) -> String {
+    let emb_cfg = match config.embedding.as_ref().filter(|e| e.enabled) {
+        Some(c) => c,
+        None => return String::new(),
+    };
+    if emb_cfg.api_endpoint.is_empty() || emb_cfg.api_key.is_empty() {
+        return String::new();
+    }
+    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
+        &emb_cfg.api_endpoint,
+        &emb_cfg.api_key,
+    );
+    let query_short: String = query_text.chars().take(512).collect();
+    let embeddings = match client.embed(&[query_short.as_str()]).await {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => return String::new(),
+        Err(e) => { tracing::warn!("retrieve_rag_context: embed error: {}", e); return String::new(); }
+    };
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => { tracing::warn!("retrieve_rag_context: db error: {}", e); return String::new(); }
+    };
+    let results = match db.search_similar_memories(
+        &embeddings[0],
+        emb_cfg.top_k,
+        emb_cfg.similarity_threshold,
+    ) {
+        Ok(r) => r,
+        Err(e) => { tracing::warn!("retrieve_rag_context: search error: {}", e); return String::new(); }
+    };
+    if results.is_empty() {
+        return String::new();
+    }
+    tracing::debug!("retrieve_rag_context: {} hits for query snippet", results.len());
+    format_rag_context(&results)
 }
 
 /// `start_tag` と `end_tag` に囲まれたブロックを抽出する。
@@ -2166,5 +2231,23 @@ Keep it short.\n\
         assert_eq!(p64k.get_history_message_limit("default"),  40, "64k → 40件");
         assert_eq!(p131k.get_history_message_limit("default"), 60, "131k → 60件");
         assert_eq!(p256k.get_history_message_limit("default"), 80, "256k → 80件");
+    }
+
+    #[test]
+    fn test_format_rag_context_empty() {
+        let result = format_rag_context(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_format_rag_context_with_items() {
+        let items = vec![
+            ("- Rust is fast".to_string(), 0.92_f32),
+            ("- RPi4 has 8GB RAM".to_string(), 0.85),
+        ];
+        let result = format_rag_context(&items);
+        assert!(result.contains("Rust is fast"));
+        assert!(result.contains("RPi4 has 8GB RAM"));
+        assert!(result.contains("## Relevant Memory"));
     }
 }
