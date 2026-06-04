@@ -74,6 +74,33 @@ fn default_max_tokens() -> Option<u32> { Some(2048) }
 fn default_temperature() -> Option<f32> { Some(0.7) }
 fn bool_true() -> bool { true }
 
+fn default_embedding_dims() -> usize { 1024 }
+fn default_top_k() -> usize { 5 }
+fn default_similarity_threshold() -> f32 { 0.65 }
+
+/// RAG ベクトルメモリの埋め込みモデル設定
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmbeddingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// CF Workers AI embedding エンドポイント (account ID + モデルパス含む完全 URL)
+    /// 例: "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/@cf/baai/bge-m3"
+    #[serde(default)]
+    pub api_endpoint: String,
+    /// CF API トークン ($vault:cf-api-key)
+    #[serde(default)]
+    pub api_key: String,
+    /// ベクトル次元数 (bge-m3 = 1024)
+    #[serde(default = "default_embedding_dims")]
+    pub dimensions: usize,
+    /// 検索時に返す上位 K 件
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+    /// コサイン類似度の最低閾値 (0.0〜1.0)
+    #[serde(default = "default_similarity_threshold")]
+    pub similarity_threshold: f32,
+}
+
 /// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
 /// 配列の場合、先頭が primary モデル、以降がフォールバックモデル。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +304,9 @@ pub struct Config {
     /// MCP stdio プロトコル経由のサーバー設定
     #[serde(default)]
     pub mcp: HashMap<String, McpServerConfig>,
+    /// RAG ベクトルメモリ設定
+    #[serde(default)]
+    pub embedding: Option<EmbeddingConfig>,
 }
 
 fn resolve_value(val: &str) -> String {
@@ -431,6 +461,10 @@ impl Config {
             for val in server.env.values_mut() {
                 *val = resolve_value(val);
             }
+        }
+        if let Some(ref mut e) = self.embedding {
+            e.api_endpoint = resolve_value(&e.api_endpoint);
+            e.api_key = resolve_value(&e.api_key);
         }
     }
 }
@@ -799,5 +833,42 @@ mod tests {
         let chain = config.get_model_chain("discord");
         assert_eq!(model.api_base_url, chain[0].api_base_url);
         assert_eq!(model.model_purpose, "discord");
+    }
+
+    #[test]
+    fn test_embedding_config_defaults() {
+        let json = r#"{ "enabled": true, "api_endpoint": "https://example.com", "api_key": "k" }"#;
+        let cfg: EmbeddingConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.dimensions, 1024);
+        assert_eq!(cfg.top_k, 5);
+        assert!((cfg.similarity_threshold - 0.65).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_embedding_config_in_config() {
+        let json = r#"{
+            "model_list": [],
+            "agents": { "default": "none" },
+            "embedding": {
+                "enabled": true,
+                "api_endpoint": "$env:EMBED_ENDPOINT_TEST",
+                "api_key": "$env:EMBED_KEY_TEST"
+            }
+        }"#;
+        unsafe {
+            std::env::set_var("EMBED_ENDPOINT_TEST", "https://resolved-endpoint.com");
+            std::env::set_var("EMBED_KEY_TEST", "resolved-key");
+        }
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+        let config = load_config(f.path()).unwrap();
+        let emb = config.embedding.unwrap();
+        assert!(emb.enabled);
+        assert_eq!(emb.api_endpoint, "https://resolved-endpoint.com");
+        assert_eq!(emb.api_key, "resolved-key");
+        unsafe {
+            std::env::remove_var("EMBED_ENDPOINT_TEST");
+            std::env::remove_var("EMBED_KEY_TEST");
+        }
     }
 }
