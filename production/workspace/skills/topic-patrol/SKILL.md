@@ -85,7 +85,7 @@ If a topic in `USER.md` has a `sources:` annotation, route as follows:
 
 After investigating the 3 selected topics, add **1 optional query** based on the user's current Work Context (`## Work Context` in `USER.md`):
 
-- Pick a technology or tool mentioned in Work Context that was NOT one of the 2 selected topics.
+- Pick a technology or tool mentioned in Work Context that was NOT one of the 3 selected topics.
 - Search: `{tool} best practices 2026` or `{tool} tips 2026`.
 - Apply the same web_fetch step and filter criteria.
 - If Work Context is empty or matches the selected topics, skip this step.

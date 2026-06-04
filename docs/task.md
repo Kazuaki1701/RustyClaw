@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-04 (Phase 40-3 完了: RAG Memory 実装)  
+> **最終更新日**: 2026-06-05 (CF embedding バグ修正を🔴昇格・Phase 40 状況反映・Phase 28b-4 追加)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/2026-06-04-completed-phases-24-36-38.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -28,6 +28,19 @@
   - `heartbeat.rs::process_heartbeat_response` の配信先を `notifications_channel_id` 優先に切り替え。
   - 背景: LINE を home にした場合、HEARTBEAT_OK の稼働ログが LINE に届き続けるノイズを防ぐための分離。
   - 対象: `crates/rustyclaw-config/src/lib.rs`、`crates/rustyclaw-gateway/src/heartbeat.rs`
+
+### Phase 40-5 バグ修正: CF Embedding `'input' field is required` 🔴
+> 2026-06-05 ログ点検で判明。`retrieve_rag_context` / `ingest_session_summary` が毎回失敗しており RAG が全機能停止中。Phase 40-6・40-7 のブロッカー。
+
+- `[ ]` **1. `CloudflareEmbeddingClient.embed()` のリクエストボディを調査・修正**
+  - CF Workers AI embedding API（`@cf/baai/bge-m3`）に送るフィールド名が不正（`input` フィールド欠落または空）。
+  - 対象: `crates/rustyclaw-providers/src/lib.rs`（`CloudflareEmbeddingClient::embed`）
+  - 修正後、`retrieve_rag_context` / `ingest_session_summary` 両方で成功ログ確認。
+
+- `[ ]` **2. 修正後の動作確認 + deploy**
+  - `ssh rp1 "journalctl -u rustyclaw -n 50 | grep -E 'rag|embed|ingest'"` でエラーが消えることを確認。
+
+---
 
 ### Phase 37: GeminiClaw 高度先進機能の移植と統合 🔴
 > 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。
@@ -69,10 +82,16 @@
   - heartbeat / summary / memory などのエージェント定義を AgentBuilder で再整理。
 - [ ] **5. Unified RAG with rig-core InMemoryVectorStore**
   - `InMemoryVectorStore` の採用、`MEMORY.md` チャンクとセッション要約のインメモリ統合 RAG 化。
+  - **⚠️ 実装済み・動作不全**: Task 1〜8 コミット済みだが CF embedding `HTTP 400 Bad Request — {'input' field is required}` エラーで `retrieve_rag_context` / `ingest_session_summary` が毎回失敗（2026-06-05 ログ確認）。`CloudflareEmbeddingClient.embed()` のリクエストボディ調査・修正が必要。Phase 40-6 および 40-7 はこれがブロッカー。
   - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-unified-rag.md`
 - [ ] **6. rig-core 全面リファクタリング (Unified RAG & rig-core Refactoring)**
   - `#[tool]` アトリビュートマクロ、`rmcp` クライアントへの移行、`rig::agent::Agent` 移行による ReAct/RAG ループの一本化。
+  - 前提: Phase 40-5 の CF embedding バグ修正完了後。
   - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-refactoring.md`
+- [ ] **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）**
+  - 静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入。固定プロンプト最小化・履歴上限緩和も含む。
+  - 前提: Phase 40-5 の CF embedding バグ修正完了後。
+  - 実装計画: `docs/superpowers/plans/2026-06-05-static-docs-rag.md`
 
 ---
 
@@ -110,6 +129,11 @@
   - `queue_update_or_insert()` 呼び出し時に渡す `desc` 引数を `format!("{} ({})", job.name, job.trigger.expression)` 形式で生成するよう修正。
   - Heartbeat（`"Heartbeat Patrol / Activity Scan"`）はそのまま維持。
   - 対象: `crates/rustyclaw-gateway/src/lib.rs`（cron ジョブのキュー登録箇所）、`crates/rustyclaw-gateway/src/cron.rs`
+
+- `[ ]` **4. Heartbeat コンテキストオーバーフロー対策** 🟡
+  - Deep Scan 時（04:00 / 06:00 付近）にツール呼び出し後のコンテキストが肥大化し全モデル失敗 → Discord 通知欠落（2026-06-05 ログ確認: 9,812 tokens > Groq 6,000 上限）。
+  - Heartbeat 専用のヒストリキャップ強化またはツール結果切り詰め処理を検討。
+  - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`、`crates/rustyclaw-agent/src/lib.rs`（`get_history_message_limit`）
 
 ---
 
