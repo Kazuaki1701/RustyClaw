@@ -703,6 +703,7 @@ struct CfEmbedResponse {
 
 /// Cloudflare Workers AI の embedding エンドポイントに POST してベクトルを返すクライアント。
 /// reqwest（既存依存）のみ使用。rig-core 不要。
+#[derive(Clone)]
 pub struct CloudflareEmbeddingClient {
     client: reqwest::Client,
     api_endpoint: String,
@@ -749,6 +750,54 @@ impl CloudflareEmbeddingClient {
         parsed.result
             .map(|r| r.data)
             .ok_or_else(|| anyhow::anyhow!("CF embedding: result field is null"))
+    }
+}
+
+/// rig-core の EmbeddingModel トレイトを実装したラッパー。
+/// CloudflareEmbeddingClient（OpenAI互換 / CF Workers AI）を rig の VectorStore と統合する。
+pub struct CloudflareEmbeddingModel {
+    client: CloudflareEmbeddingClient,
+    dims: usize,
+}
+
+impl CloudflareEmbeddingModel {
+    pub fn new(client: CloudflareEmbeddingClient, dims: usize) -> Self {
+        Self { client, dims }
+    }
+}
+
+impl Clone for CloudflareEmbeddingModel {
+    fn clone(&self) -> Self {
+        Self { client: self.client.clone(), dims: self.dims }
+    }
+}
+
+impl rig_core::embeddings::EmbeddingModel for CloudflareEmbeddingModel {
+    const MAX_DOCUMENTS: usize = 100;
+    type Client = CloudflareEmbeddingClient;
+
+    fn make(client: &Self::Client, _model: impl Into<String>, dims: Option<usize>) -> Self {
+        Self::new(client.clone(), dims.unwrap_or(1024))
+    }
+
+    fn ndims(&self) -> usize {
+        self.dims
+    }
+
+    async fn embed_texts(
+        &self,
+        texts: impl IntoIterator<Item = String> + rig_core::wasm_compat::WasmCompatSend,
+    ) -> Result<Vec<rig_core::embeddings::Embedding>, rig_core::embeddings::EmbeddingError> {
+        let texts: Vec<String> = texts.into_iter().collect();
+        let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let vecs = self.client.embed(&text_refs).await
+            .map_err(|e| rig_core::embeddings::EmbeddingError::ProviderError(e.to_string()))?;
+        Ok(texts.into_iter().zip(vecs).map(|(doc, vec)| {
+            rig_core::embeddings::Embedding {
+                document: doc,
+                vec: vec.iter().map(|&x| x as f64).collect(),
+            }
+        }).collect())
     }
 }
 
@@ -1587,6 +1636,17 @@ mod tests {
         // Cloudflare RPM 429 (lowercase)
         let err_cf_rpm3 = ProviderError::RateLimit("too many requests".to_string());
         assert_eq!(err_cf_rpm3.reset_after(), Some(std::time::Duration::from_secs(60)));
+    }
+
+    #[tokio::test]
+    async fn test_cloudflare_embedding_model_implements_embedding_model() {
+        use rig_core::embeddings::EmbeddingModel;
+        let client = CloudflareEmbeddingClient::new(
+            "http://127.0.0.1:1",
+            "dummy",
+        );
+        let model = CloudflareEmbeddingModel::new(client, 1024);
+        assert_eq!(model.ndims(), 1024);
     }
 }
 
