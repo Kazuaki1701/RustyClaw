@@ -81,7 +81,7 @@ fn default_similarity_threshold() -> f32 { 0.65 }
 /// RAG ベクトルメモリの埋め込みモデル設定
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EmbeddingConfig {
-    #[serde(default)]
+    #[serde(default = "bool_true")]
     pub enabled: bool,
     /// CF Workers AI embedding エンドポイント (account ID + モデルパス含む完全 URL)
     /// 例: "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/@cf/baai/bge-m3"
