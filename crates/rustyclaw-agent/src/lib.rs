@@ -1322,7 +1322,7 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
     chunks
         .into_iter()
         .filter(|s| !s.is_empty())
-        .map(|s| if s.len() > 512 { s[..512].to_string() } else { s })
+        .map(|s| if s.len() > 512 { s.chars().take(512).collect::<String>() } else { s })
         .collect()
 }
 
@@ -1369,6 +1369,12 @@ pub(crate) async fn ingest_memory_md(
     if let Err(e) = db.delete_embeddings_by_source("memory") {
         tracing::warn!("ingest_memory_md: failed to delete old embeddings: {}", e);
         return;
+    }
+    if embeddings.len() != chunks.len() {
+        tracing::warn!(
+            "ingest_memory_md: chunk/embedding count mismatch ({} vs {}), proceeding with zip",
+            chunks.len(), embeddings.len()
+        );
     }
     for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
         let id = format!("memory-{}", i);
@@ -1627,6 +1633,16 @@ mod tests {
         let result = truncate_70_20(&long, 5000);
         assert!(result.len() < 6000);
         assert!(result.contains("bytes omitted"));
+    }
+
+    #[test]
+    fn test_chunk_memory_md_truncates_long_utf8() {
+        // 日本語混在: "- a" + "あ" × 170 = 3 + 3×170 = 513バイト
+        let long = format!("- a{}", "あ".repeat(170));
+        let chunks = chunk_memory_md(&long);
+        assert_eq!(chunks.len(), 1);
+        // chars().take(512) なので512文字以内 → バイト数は大きくなりうるが panic しない
+        assert!(chunks[0].chars().count() <= 512);
     }
 
     #[tokio::test]
