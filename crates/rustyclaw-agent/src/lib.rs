@@ -559,6 +559,9 @@ Rules:
             };
             if let Err(e) = rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()).await {
                 tracing::warn!("memory flush: failed to write MEMORY.md: {}", e);
+            } else {
+                // MEMORY.md 更新成功時のみ RAG ingestion を実行 (fail-open)
+                ingest_memory_md(workspace_dir, &config, &db_path).await;
             }
         }
 
@@ -1290,6 +1293,92 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// MEMORY.md のバレット行を 1件 1チャンクに分割する。
+/// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
+pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            if let Some(prev) = current.take() {
+                chunks.push(prev);
+            }
+            current = Some(trimmed.to_string());
+        } else if !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && current.is_some()
+        {
+            if let Some(ref mut cur) = current {
+                cur.push(' ');
+                cur.push_str(trimmed);
+            }
+        }
+    }
+    if let Some(last) = current {
+        chunks.push(last);
+    }
+    chunks
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| if s.len() > 512 { s[..512].to_string() } else { s })
+        .collect()
+}
+
+/// MEMORY.md を読み込み、バレット行をチャンク化してベクトル化し memory.db に保存する。
+/// Fail-open: エラーは warn ログのみで処理を継続する。
+pub(crate) async fn ingest_memory_md(
+    workspace_dir: &Path,
+    config: &Config,
+    db_path: &Path,
+) {
+    let emb_cfg = match config.embedding.as_ref().filter(|e| e.enabled) {
+        Some(c) => c,
+        None => return,
+    };
+    if emb_cfg.api_endpoint.is_empty() || emb_cfg.api_key.is_empty() {
+        tracing::warn!("ingest_memory_md: api_endpoint or api_key is empty, skipping");
+        return;
+    }
+    let memory_path = workspace_dir.join("MEMORY.md");
+    let content = match std::fs::read_to_string(&memory_path) {
+        Ok(c) => c,
+        Err(e) => { tracing::warn!("ingest_memory_md: failed to read MEMORY.md: {}", e); return; }
+    };
+    let chunks = chunk_memory_md(&content);
+    if chunks.is_empty() {
+        tracing::debug!("ingest_memory_md: no chunks found in MEMORY.md");
+        return;
+    }
+
+    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
+        &emb_cfg.api_endpoint,
+        &emb_cfg.api_key,
+    );
+    let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
+    let embeddings = match client.embed(&text_refs).await {
+        Ok(v) => v,
+        Err(e) => { tracing::warn!("ingest_memory_md: embedding API error: {}", e); return; }
+    };
+
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => { tracing::warn!("ingest_memory_md: db open error: {}", e); return; }
+    };
+    if let Err(e) = db.delete_embeddings_by_source("memory") {
+        tracing::warn!("ingest_memory_md: failed to delete old embeddings: {}", e);
+        return;
+    }
+    for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+        let id = format!("memory-{}", i);
+        if let Err(e) = db.upsert_embedding(&id, "memory", None, chunk, emb) {
+            tracing::warn!("ingest_memory_md: failed to upsert embedding {}: {}", id, e);
+        }
+    }
+    tracing::info!("ingest_memory_md: ingested {} chunks from MEMORY.md", chunks.len());
+}
+
 /// `start_tag` と `end_tag` に囲まれたブロックを抽出する。
 /// `end_tag` が見つからない場合はテキスト末尾までを返す。
 fn extract_delimited_block(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
@@ -1974,6 +2063,31 @@ Keep it short.\n\
         assert!(system_context.contains("Your Previous Posts in This Channel"));
         assert!(system_context.contains("It might rain soon, grab an umbrella!"));
         assert!(system_context.contains("2026-05-31 12:00:00"));
+    }
+
+    #[test]
+    fn test_chunk_memory_md_basic() {
+        let content = "# Memory\n\n- First bullet\n- Second bullet\n  continued\n- Third bullet";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0], "- First bullet");
+        assert!(chunks[1].contains("Second bullet"));
+        assert_eq!(chunks[2], "- Third bullet");
+    }
+
+    #[test]
+    fn test_chunk_memory_md_truncates_long() {
+        let long = format!("- {}", "x".repeat(600));
+        let chunks = chunk_memory_md(&long);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].len() <= 512);
+    }
+
+    #[test]
+    fn test_chunk_memory_md_skips_headers() {
+        let content = "# Title\n\n## Section\n\n- bullet one\n- bullet two";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(chunks.len(), 2);
     }
 
     #[test]
