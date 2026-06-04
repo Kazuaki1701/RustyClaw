@@ -67,6 +67,12 @@
   - 対象: `rustyclaw-config`, `rustyclaw-storage`, `rustyclaw-providers`, `rustyclaw-agent`, `production/config/config.release.json`
 - [ ] **4. 宣言的 AgentBuilder の導入**
   - heartbeat / summary / memory などのエージェント定義を AgentBuilder で再整理。
+- [ ] **5. Unified RAG with rig-core InMemoryVectorStore**
+  - `InMemoryVectorStore` の採用、`MEMORY.md` チャンクとセッション要約のインメモリ統合 RAG 化。
+  - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-unified-rag.md`
+- [ ] **6. rig-core 全面リファクタリング (Unified RAG & rig-core Refactoring)**
+  - `#[tool]` アトリビュートマクロ、`rmcp` クライアントへの移行、`rig::agent::Agent` 移行による ReAct/RAG ループの一本化。
+  - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-refactoring.md`
 
 ---
 
