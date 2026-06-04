@@ -684,6 +684,74 @@ impl LlmProvider for OpenAiCompatProvider {
     }
 }
 
+// ==============================================================================
+// Cloudflare Workers AI Embedding Client
+// ==============================================================================
+
+#[derive(Debug, serde::Deserialize)]
+struct CfEmbedResult {
+    data: Vec<Vec<f32>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CfEmbedResponse {
+    result: Option<CfEmbedResult>,
+    success: bool,
+    #[serde(default)]
+    errors: Vec<serde_json::Value>,
+}
+
+/// Cloudflare Workers AI の embedding エンドポイントに POST してベクトルを返すクライアント。
+/// reqwest（既存依存）のみ使用。rig-core 不要。
+pub struct CloudflareEmbeddingClient {
+    client: reqwest::Client,
+    api_endpoint: String,
+    api_key: String,
+}
+
+impl CloudflareEmbeddingClient {
+    pub fn new(api_endpoint: impl Into<String>, api_key: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            api_endpoint: api_endpoint.into(),
+            api_key: api_key.into(),
+        }
+    }
+
+    /// テキストのスライスをベクトル化して返す。入力と同順・同数の Vec<Vec<f32>>。
+    pub async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+        let body = serde_json::json!({ "text": texts });
+        let resp = self.client
+            .post(&self.api_endpoint)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("CF embedding: HTTP request failed")?;
+
+        let status = resp.status();
+        let text = resp.text().await.context("CF embedding: failed to read response body")?;
+
+        if !status.is_success() {
+            anyhow::bail!("CF embedding: HTTP {} — {}", status, &text[..text.len().min(200)]);
+        }
+
+        let parsed: CfEmbedResponse = serde_json::from_str(&text)
+            .context("CF embedding: failed to parse response JSON")?;
+
+        if !parsed.success {
+            anyhow::bail!("CF embedding: API error — {:?}", parsed.errors);
+        }
+
+        parsed.result
+            .map(|r| r.data)
+            .ok_or_else(|| anyhow::anyhow!("CF embedding: result field is null"))
+    }
+}
+
 static PROVIDER_COOLDOWNS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> = std::sync::OnceLock::new();
 
 fn get_cooldowns_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
@@ -1428,6 +1496,32 @@ mod tests {
             cf_aig_gateway_id: None,
         };
         assert_eq!(resolve_provider_id(&model), "local");
+    }
+
+    #[test]
+    fn test_cf_embedding_parse_response() {
+        let json = r#"{
+            "result": {"data": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]},
+            "success": true,
+            "errors": []
+        }"#;
+        let parsed: CfEmbedResponse = serde_json::from_str(json).unwrap();
+        assert!(parsed.success);
+        assert_eq!(parsed.result.as_ref().unwrap().data.len(), 2);
+        assert!((parsed.result.unwrap().data[0][0] - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cf_embedding_parse_error_response() {
+        let json = r#"{
+            "result": null,
+            "success": false,
+            "errors": [{"code": 1001, "message": "Invalid model"}]
+        }"#;
+        let parsed: CfEmbedResponse = serde_json::from_str(json).unwrap();
+        assert!(!parsed.success);
+        assert!(parsed.result.is_none());
+        assert_eq!(parsed.errors.len(), 1);
     }
 
     #[test]
