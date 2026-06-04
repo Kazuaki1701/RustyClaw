@@ -21,12 +21,14 @@ pub struct Pipeline {
     provider: Box<dyn LlmProvider>,
     /// flush_memory() の同時実行を 1 本に制限するセマフォ
     flush_sem: Arc<Semaphore>,
+    /// RAG エンジン (Task 7 で初期化される。None の場合は RAG スキップ)
+    pub rag: Option<Arc<UnifiedRagEngine>>,
 }
 
 impl Pipeline {
     pub fn new(config: Config, flush_sem: Arc<Semaphore>) -> Self {
         let provider = create_provider(config.get_model("default"));
-        Self { config, provider, flush_sem }
+        Self { config, provider, flush_sem, rag: None }
     }
 
     /// モデルチェーンを走査し、最初に成功したレスポンスを返す。
@@ -133,7 +135,7 @@ impl Pipeline {
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
         // 静的ブロック（SOUL/AGENTS/MEMORY/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
         // 動的な [now:] は末尾に置くことで毎回変わる部分がキャッシュ prefix を破壊しないようにする。
-        let files = ["SOUL.md", "AGENTS.md", "MEMORY.md", "USER.md"];
+        let files = ["SOUL.md", "AGENTS.md", "USER.md"];
         let mut context = String::new();
 
         for filename in &files {
@@ -996,13 +998,10 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
 
-        // RAG: ユーザーメッセージに関連する記憶を動的注入 (fail-open)
-        {
-            let db_path = workspace_dir.join("memory.db");
-            let rag = retrieve_rag_context(user_message, &self.config, &db_path).await;
-            if !rag.is_empty() {
-                system_context.push_str(&rag);
-            }
+        // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
+        if let Some(ref rag) = self.rag {
+            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            if !rag_ctx.is_empty() { system_context.push_str(&rag_ctx); }
         }
 
         // 過去履歴のロードとトークン圧縮処理の適用
@@ -1154,13 +1153,10 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
 
-        // RAG: ユーザーメッセージに関連する記憶を動的注入 (fail-open)
-        {
-            let db_path = workspace_dir.join("memory.db");
-            let rag = retrieve_rag_context(user_message, &self.config, &db_path).await;
-            if !rag.is_empty() {
-                system_context.push_str(&rag);
-            }
+        // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
+        if let Some(ref rag) = self.rag {
+            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            if !rag_ctx.is_empty() { system_context.push_str(&rag_ctx); }
         }
 
         // 1. 過去履歴のロードとトークン圧縮処理の適用
@@ -1560,59 +1556,55 @@ pub(crate) async fn ingest_session_summary(
     tracing::info!("ingest_session_summary: stored embedding for session '{}'", session_id);
 }
 
-/// RAG 検索結果をシステムプロンプト注入用の Markdown 文字列に変換する。
-pub(crate) fn format_rag_context(items: &[(String, f32)]) -> String {
+/// RAG 検索結果をシステムプロンプト注入用の Markdown に変換する。
+/// source="memory" と source="session" を別セクションで表示する。
+pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
     if items.is_empty() { return String::new(); }
-    let mut out = String::from("\n\n## Relevant Memory\n");
-    out.push_str("The following memories are relevant to the current conversation:\n\n");
-    for (text, _sim) in items {
-        out.push_str(text);
-        out.push('\n');
+    let memory_items: Vec<&str> = items.iter()
+        .filter(|(src, _, _)| src == "memory")
+        .map(|(_, txt, _)| txt.as_str())
+        .collect();
+    let session_items: Vec<&str> = items.iter()
+        .filter(|(src, _, _)| src == "session")
+        .map(|(_, txt, _)| txt.as_str())
+        .collect();
+    let mut out = String::new();
+    if !memory_items.is_empty() {
+        out.push_str("\n\n## Relevant Memory\n");
+        out.push_str("The following memories are relevant to the current conversation:\n\n");
+        for text in &memory_items { out.push_str(text); out.push('\n'); }
+    }
+    if !session_items.is_empty() {
+        out.push_str("\n\n## Relevant Past Sessions\n");
+        out.push_str("The following session summaries are relevant:\n\n");
+        for text in &session_items { out.push_str(text); out.push('\n'); }
     }
     out
 }
 
-/// ユーザーメッセージをベクトル化して memory.db を検索し、
-/// システムプロンプトに追記するコンテキスト文字列を返す (Fail-open)。
+/// ユーザーメッセージに関連する記憶・過去セッションを UnifiedRagEngine から検索し、
+/// システムプロンプト注入用の文字列を返す。Fail-open。
 pub(crate) async fn retrieve_rag_context(
     query_text: &str,
     config: &Config,
-    db_path: &Path,
+    rag_engine: &UnifiedRagEngine,
 ) -> String {
-    let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
-        Some(p) => p,
-        None => return String::new(),
-    };
-    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
-        &api_endpoint,
-        &api_key,
-    );
-    let _ = model; // model name is embedded in api_endpoint for Cloudflare Workers AI
-    let query_short: String = query_text.chars().take(512).collect();
-    let embeddings = match client.embed(&[query_short.as_str()]).await {
-        Ok(v) if !v.is_empty() => v,
-        Ok(_) => return String::new(),
-        Err(e) => { tracing::warn!("retrieve_rag_context: embed error: {}", e); return String::new(); }
-    };
-    let db = match rustyclaw_storage::DbManager::new(db_path) {
-        Ok(d) => d,
-        Err(e) => { tracing::warn!("retrieve_rag_context: db error: {}", e); return String::new(); }
-    };
+    if rag_engine.is_empty() {
+        return String::new();
+    }
     let top_k    = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
-    let threshold = config.embedding.as_ref().map(|e| e.similarity_threshold).unwrap_or(0.65);
-    let results = match db.search_similar_memories(
-        &embeddings[0],
-        top_k,
-        threshold,
-    ) {
+    let threshold = config.embedding.as_ref().map(|e| e.similarity_threshold as f64).unwrap_or(0.60);
+    let query_short: String = query_text.chars().take(512).collect();
+    let results = match rag_engine.search(&query_short, top_k).await {
         Ok(r) => r,
         Err(e) => { tracing::warn!("retrieve_rag_context: search error: {}", e); return String::new(); }
     };
-    if results.is_empty() {
-        return String::new();
-    }
-    tracing::debug!("retrieve_rag_context: {} hits for query snippet", results.len());
-    format_rag_context(&results)
+    let filtered: Vec<(String, String, f64)> = results.into_iter()
+        .filter(|(_, _, score)| *score >= threshold)
+        .collect();
+    if filtered.is_empty() { return String::new(); }
+    tracing::debug!("retrieve_rag_context: {} hits above threshold {}", filtered.len(), threshold);
+    format_rag_context(&filtered)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -2409,8 +2401,8 @@ Keep it short.\n\
     #[test]
     fn test_format_rag_context_with_items() {
         let items = vec![
-            ("- Rust is fast".to_string(), 0.92_f32),
-            ("- RPi4 has 8GB RAM".to_string(), 0.85),
+            ("memory".to_string(), "- Rust is fast".to_string(), 0.92_f64),
+            ("memory".to_string(), "- RPi4 has 8GB RAM".to_string(), 0.85_f64),
         ];
         let result = format_rag_context(&items);
         assert!(result.contains("Rust is fast"));
