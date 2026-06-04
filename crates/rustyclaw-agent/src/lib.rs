@@ -1143,6 +1143,15 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
 
+        // RAG: ユーザーメッセージに関連する記憶を動的注入 (fail-open)
+        {
+            let db_path = workspace_dir.join("memory.db");
+            let rag = retrieve_rag_context(user_message, &self.config, &db_path).await;
+            if !rag.is_empty() {
+                system_context.push_str(&rag);
+            }
+        }
+
         // 1. 過去履歴のロードとトークン圧縮処理の適用
         let logger = SessionLogger::new(workspace_dir);
         let history_messages = if session_id.starts_with("cron:") {
@@ -1300,7 +1309,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── RAG Helpers ──────────────────────────────────────────────────────────────
 
 /// MEMORY.md のバレット行を 1件 1チャンクに分割する。
 /// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
@@ -1375,15 +1384,15 @@ pub(crate) async fn ingest_memory_md(
         Ok(d) => d,
         Err(e) => { tracing::warn!("ingest_memory_md: db open error: {}", e); return; }
     };
-    if let Err(e) = db.delete_embeddings_by_source("memory") {
-        tracing::warn!("ingest_memory_md: failed to delete old embeddings: {}", e);
-        return;
-    }
     if embeddings.len() != chunks.len() {
         tracing::warn!(
             "ingest_memory_md: chunk/embedding count mismatch ({} vs {}), proceeding with zip",
             chunks.len(), embeddings.len()
         );
+    }
+    if let Err(e) = db.delete_embeddings_by_source("memory") {
+        tracing::warn!("ingest_memory_md: failed to delete old embeddings: {}", e);
+        return;
     }
     for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
         let id = format!("memory-{}", i);
@@ -1395,7 +1404,6 @@ pub(crate) async fn ingest_memory_md(
 }
 
 /// RAG 検索結果をシステムプロンプト注入用の Markdown 文字列に変換する。
-/// 結果が空の場合は空文字列を返す。
 pub(crate) fn format_rag_context(items: &[(String, f32)]) -> String {
     if items.is_empty() { return String::new(); }
     let mut out = String::from("\n\n## Relevant Memory\n");
@@ -1449,6 +1457,8 @@ pub(crate) async fn retrieve_rag_context(
     tracing::debug!("retrieve_rag_context: {} hits for query snippet", results.len());
     format_rag_context(&results)
 }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// `start_tag` と `end_tag` に囲まれたブロックを抽出する。
 /// `end_tag` が見つからない場合はテキスト末尾までを返す。
