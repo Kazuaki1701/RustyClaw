@@ -258,6 +258,14 @@
   },
   "debug_dump": true,
   "timezone": "Asia/Tokyo",
+  "embedding": {
+    "enabled": true,
+    "api_endpoint": "https://gateway.ai.cloudflare.com/v1/a10120209a7dae1fcc497a5adf4be5d9/rustyclaw-gateway/workers-ai/@cf/baai/bge-m3",
+    "api_key": "$vault:cf-api-key",
+    "dimensions": 1024,
+    "top_k": 5,
+    "similarity_threshold": 0.65
+  },
   "channels": {
     "discord": {
       "enabled": true,
