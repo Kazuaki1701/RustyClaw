@@ -755,6 +755,7 @@ impl CloudflareEmbeddingClient {
 
 /// rig-core の EmbeddingModel トレイトを実装したラッパー。
 /// CloudflareEmbeddingClient（OpenAI互換 / CF Workers AI）を rig の VectorStore と統合する。
+#[derive(Clone)]
 pub struct CloudflareEmbeddingModel {
     client: CloudflareEmbeddingClient,
     dims: usize,
@@ -763,12 +764,6 @@ pub struct CloudflareEmbeddingModel {
 impl CloudflareEmbeddingModel {
     pub fn new(client: CloudflareEmbeddingClient, dims: usize) -> Self {
         Self { client, dims }
-    }
-}
-
-impl Clone for CloudflareEmbeddingModel {
-    fn clone(&self) -> Self {
-        Self { client: self.client.clone(), dims: self.dims }
     }
 }
 
@@ -1647,6 +1642,10 @@ mod tests {
         );
         let model = CloudflareEmbeddingModel::new(client, 1024);
         assert_eq!(model.ndims(), 1024);
+
+        // 空入力は即 Ok(vec![]) を返す（HTTP 呼び出しなし）
+        let result = model.embed_texts(vec![]).await.unwrap();
+        assert!(result.is_empty());
     }
 }
 
