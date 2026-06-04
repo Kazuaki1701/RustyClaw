@@ -186,6 +186,43 @@ impl DbManager {
         Ok(())
     }
 
+    /// コサイン類似度を計算する
+    /// 同じ次元数・ノンゼロのベクトルが必須。不正な場合は 0.0 を返す。
+    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
+        dot / (norm_a * norm_b)
+    }
+
+    /// クエリベクトルに近い記憶を上位 top_k 件返す → Vec<(text_content, similarity)>
+    /// threshold 未満のエントリは除外。外部依存なし。
+    pub fn search_similar_memories(
+        &self,
+        query_vec: &[f32],
+        top_k: usize,
+        threshold: f32,
+    ) -> Result<Vec<(String, f32)>> {
+        let all = self.load_all_embeddings()?;
+        let mut scored: Vec<(String, f32)> = all
+            .into_iter()
+            .map(|(text, emb)| {
+                let sim = Self::cosine_similarity(query_vec, &emb);
+                (text, sim)
+            })
+            .filter(|(_, sim)| *sim >= threshold)
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        Ok(scored)
+    }
+
     // --- Usage (トークン使用量) 操作 ---
     pub fn record_usage(
         &self,
@@ -831,7 +868,7 @@ mod tests {
 
         // 2. 書き込みロックを取得し、その間は読み込みロックがブロックされるか検証
         let w_guard = acquire_write_lock(&file_path).await;
-        
+
         let file_path_clone = file_path.clone();
         let handle = tokio::spawn(async move {
             let _r_guard = acquire_read_lock(&file_path_clone).await;
@@ -849,5 +886,34 @@ mod tests {
         assert_eq!(val, 42);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_cosine_similarity_identical() {
+        let v = vec![1.0_f32, 0.0, 0.0];
+        assert!((DbManager::cosine_similarity(&v, &v) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let a = vec![1.0_f32, 0.0];
+        let b = vec![0.0_f32, 1.0];
+        assert!(DbManager::cosine_similarity(&a, &b).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_search_similar_memories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = DbManager::new(tmp.path().join("test.db")).unwrap();
+        // (1, 0, 0) = "hello" に近いベクトル
+        db.upsert_embedding("a", "memory", None, "hello", &[1.0, 0.0, 0.0]).unwrap();
+        // (0, 1, 0) = "world" は直交
+        db.upsert_embedding("b", "memory", None, "world", &[0.0, 1.0, 0.0]).unwrap();
+
+        // クエリ (1, 0, 0) → threshold 0.9 → "hello" のみヒット
+        let results = db.search_similar_memories(&[1.0, 0.0, 0.0], 5, 0.9).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "hello");
+        assert!((results[0].1 - 1.0).abs() < 1e-6);
     }
 }
