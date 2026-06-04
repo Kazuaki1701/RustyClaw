@@ -1,6 +1,6 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (移植進捗とコードレベルの比較仕様)  
-> **最終更新日**: 2026-05-31  
+> **最終更新日**: 2026-06-04  
 > **対象コード**: `crates/rustyclaw-agent/`, `crates/rustyclaw-gateway/`
 
 # GeminiClaw vs RustyClaw コードレベル比較 & 移植進捗レポート
@@ -113,6 +113,18 @@ You posted these messages (not in your conversation history):
 3. **スキルのリファクタリング**:
    * `vitals-coach` や `karakeep` スキルのローカルスクリプトから Python などの不要なシークレットパースコードを完全削除。
    * スキル定義 `SKILL.md` の `env` パラメータとして `$vault:homeassistant-token` などのバインドを定義し、トークン効率を高めつつ完全なポータビリティ化を達成。
+
+### 【LLM 耐障害性】Per-provider クールダウン (Phase 24)
+
+GeminiClaw には 429 エラー発生時のバックオフ機構が実装されている。RustyClaw では `GLOBAL_COOLDOWN` 変数による全体停止方式から、プロバイダ単位のクールダウン管理へ移行完了。
+
+#### 実装仕様:
+1. **対象コード**: `crates/rustyclaw-providers/src/lib.rs`
+2. **変更内容**:
+   - `PROVIDER_COOLDOWNS: OnceLock<Mutex<HashMap<String, Instant>>>` による per-provider 管理に変更。
+   - `set_provider_cooldown_from_error()` / `set_provider_cooldown()` / `provider_cooldown_remaining()` の3関数を実装。
+   - `GLOBAL_COOLDOWN` static 変数と旧関数群をすべて削除。
+3. **ダッシュボード連携**: `health.rs` の PROVIDER COOLDOWNS パネルで残り時間を `XdXXh` / `XhXXm` / `XXmXXs` / `XXs` の段階フォーマットで表示。
 
 ---
 

@@ -25,15 +25,15 @@ The system provides the following in the user message:
 
 > **Before starting:** Check `配信:` in the user message.
 > - `配信: スキップ` → follow **探索モード** (Steps 1–5 below)
-> - `配信: 許可` → follow **配信モード** (Deliver Mode below), then skip to Step 5
+> - `配信: 許可` → follow **配信モード** (Deliver Mode below), then go to **Step 5-3 only**
 
 ---
 
 ### Deliver Mode（`配信: 許可` のとき）
 
 1. Call `workspace_read` on `patrol/findings.md`.
-2. Find all entries with status `deferred (quiet hours)` that have **not** been delivered yet.
-3. From these, select the **1–2 most interesting** entries using the "Would I tell a friend?" criteria (Step 3 below).
+2. Find all entries with status `deferred (quiet hours)` that have **not** been delivered yet. An entry is considered **already delivered** if `patrol/findings.md` contains a line with `delivered` status that references the same topic or URL — skip such entries.
+3. From these, select the **1–2 most interesting** entries. Pick entries that satisfy all four: **Novel** (not a duplicate of something already shared), **Interesting** (not a generic press release or product announcement), **Relevant** (connects to the user's work or stated interests), and **Worth sharing** (would make someone say "oh cool, I didn't know that"). If nothing clears all four, skip delivery.
 4. If no deferred entries exist, respond with nothing and go to Step 5-3.
 5. For each selected entry, post to Discord:
    - Write a short, natural explanation of WHY it is interesting.
@@ -56,12 +56,12 @@ The system provides the following in the user message:
 > _(探索モードのみ。配信モードは上の Deliver Mode セクションを参照)_
 
 1. Call `workspace_read` on `patrol/findings.md`. If the file is missing, treat it as empty.
-2. From the `## Interests` section of `USER.md` (already in your system context), pick **2 topics** to investigate this run. Select topics that do **not** appear in the most recent `##` section of `patrol/findings.md`. This ensures natural rotation without repeating recent topics.
-3. If all topics appear in the most recent section, pick any 2 freely.
+2. From the `## Interests` section of `USER.md` (already in your system context), pick **3 topics** to investigate this run. Select topics that do **not** appear in the most recent `##` section of `patrol/findings.md`. This ensures natural rotation without repeating recent topics.
+3. If all topics appear in the most recent section, pick any 3 freely.
 
 ### Step 2: Investigate each topic
 
-For **each of the 2 selected topics**, do the following in order:
+For **each of the 3 selected topics**, do the following in order:
 
 1. Call `web_search` with the query `{topic} latest 2026`.
 2. Call `web_fetch` on the **top URL** from the search results.
@@ -83,7 +83,7 @@ If a topic in `USER.md` has a `sources:` annotation, route as follows:
 
 #### Work-adjacent Query（任意 — 探索モードのみ）
 
-After investigating the 2 selected topics, add **1 optional query** based on the user's current Work Context (`## Work Context` in `USER.md`):
+After investigating the 3 selected topics, add **1 optional query** based on the user's current Work Context (`## Work Context` in `USER.md`):
 
 - Pick a technology or tool mentioned in Work Context that was NOT one of the 2 selected topics.
 - Search: `{tool} best practices 2026` or `{tool} tips 2026`.
@@ -104,7 +104,7 @@ If nothing passes all four, do not share anything. Silence is the correct respon
 
 Check the `配信:` value in the user message:
 
-**`配信: スキップ (quiet hours)`** — Do NOT output any findings as response text. Go directly to Step 5 and record as `deferred (quiet hours)`. Reply with nothing.
+**`配信: スキップ`** — Do NOT output any findings as response text. Go directly to Step 5 and record as `deferred (quiet hours)`. Reply with nothing.
 
 **`配信: 許可`** — Write a short, natural response (1–2 topics max). Explain WHY it is interesting. Connect it to the user's current work. End with the source as a Markdown link on its own line:
 
@@ -134,7 +134,7 @@ Write one entry per topic investigated (whether shared, skipped, or deferred):
 
 Do not rewrite or delete existing content. Only append.
 
-**5-2. Register the URL in KaraKeep** (only when `配信: 許可` and a finding was shared):
+**5-2. Register the URL in KaraKeep** (探索モード `配信: スキップ` 時のみ。配信モードは Deliver Mode Step 7 で登録済みのため不要):
 
 For each URL shared in Step 4, call:
 ```
@@ -159,4 +159,4 @@ This registers the URL with the `_ai-patrol` tag. Skip if the URL is "unverified
 - Cramming 3+ topics into a single message
 - Rewriting or pruning `patrol/findings.md` — only append
 - Bookmarking an unverified URL (web_fetch failed) to KaraKeep
-- Picking the same 2 topics as the most recent `##` section in `patrol/findings.md`
+- Picking the same 3 topics as the most recent `##` section in `patrol/findings.md`

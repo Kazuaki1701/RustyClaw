@@ -418,6 +418,9 @@ impl LaneRegistry {
                     else {
                         let desc = if session_id.starts_with("cron:session-summary:") {
                             format!("Auto-Summary for Session '{}'", &session_id["cron:session-summary:".len()..])
+                        } else if session_id.starts_with("cron:") {
+                            // cron sessions pre-register display name in CronService; keep it
+                            String::new()
                         } else {
                             let char_limit = 80;
                             let mut truncated = content.chars().take(char_limit).collect::<String>();
@@ -746,7 +749,10 @@ impl Gateway {
                 loop {
                     match wait_rx.recv().await {
                         Ok(SystemEvent::IncomingMessage { session_id, content, .. }) => {
-                            let desc = {
+                            // cron sessions pre-register their display name in CronService; skip override
+                            let desc = if session_id.starts_with("cron:") {
+                                String::new()
+                            } else {
                                 let t: String = content.chars().take(40).collect();
                                 format!("User Prompt: \"{}\"", t.replace('\n', " "))
                             };

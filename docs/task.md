@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-03 (Phase 39 追加: マルチチャンネル対応)  
+> **最終更新日**: 2026-06-04 (Phase 38 P1-A〜P3-A 完了, Phase 28b-3 完了, Phase 24-3 完了)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -32,6 +32,50 @@
   - 配信モード（Deliver Mode）独立フローを追加。`配信: 許可` 時は deferred findings を読んで Discord 送信 → KaraKeep 登録 → delivered 記録。
   - `配信: スキップ` は探索モード（既存フロー）。
   - 対象: `production/workspace/skills/topic-patrol/SKILL.md`（実装済み）
+
+- `[x]` **P1-A: 探索件数の数値不整合を修正（Step 1 を 3件に変更した際の取りこぼし）**
+  - Step 2 ヘッダー `each of the 2 selected topics` → `3`
+  - Step 2 Work-adjacent `After investigating the 2 selected topics` → `3`
+  - Prohibited Patterns 末尾 `Picking the same 2 topics` → `3`
+  - 関連ファイル:
+    - `production/workspace/skills/topic-patrol/SKILL.md`（修正対象）
+    - `docs/2026-06-04-topic-patrol-deliver-skill-review.md`（調査詳細）
+
+- `[x]` **P1-B: KaraKeep 二重登録リスクの解消**
+  - 現状: Deliver Mode Step 7 と Step 5-2 の両方に `511_karakeep-add-bookmark.sh` の呼び出しが存在し、配信モードで二重登録が起きる恐れがある。
+  - 修正: KaraKeep 登録を Deliver Mode Step 7 に一本化。Step 5-2 の適用条件を探索モード（`配信: スキップ`）限定に限定するか削除する。
+  - 関連ファイル:
+    - `production/workspace/skills/topic-patrol/SKILL.md`（修正対象）
+    - `production/workspace/skills/topic-patrol/scripts/511_karakeep-add-bookmark.sh`（登録スクリプト）
+    - `production/workspace/patrol/findings.md`（delivered 記録先）
+    - `docs/2026-06-04-topic-patrol-deliver-skill-review.md`（調査詳細）
+
+- `[x]` **P2-A: Execution Flow と Deliver Mode Step 8 の参照矛盾を統一**
+  - 「skip to Step 5」と「Skip Steps 1–5」の記述が矛盾。配信モードでは Step 5-3（state.json 更新）のみ実行が正しい。
+  - 関連ファイル:
+    - `production/workspace/skills/topic-patrol/SKILL.md`（修正対象）
+    - `production/workspace/patrol/state.json`（更新対象の state ファイル）
+    - `docs/2026-06-04-topic-patrol-deliver-skill-review.md`（調査詳細）
+
+- `[x]` **P2-B: `配信: スキップ (quiet hours)` の表記を cron.json に合わせる**
+  - Step 4 の表記を `配信: スキップ`（括弧なし）に統一。
+  - 関連ファイル:
+    - `production/workspace/skills/topic-patrol/SKILL.md`（修正対象）
+    - `production/workspace/cron.json`（実際のプロンプト値の参照元）
+    - `docs/2026-06-04-topic-patrol-deliver-skill-review.md`（調査詳細）
+
+- `[x]` **P2-C: 「配信済み」判定基準を Deliver Mode Step 2 に明記**
+  - `patrol/findings.md` 内に `delivered` ステータスで記録済みのエントリは配信済みとみなす旨を明記。
+  - 関連ファイル:
+    - `production/workspace/skills/topic-patrol/SKILL.md`（修正対象）
+    - `production/workspace/patrol/findings.md`（判定対象のデータファイル）
+    - `docs/2026-06-04-topic-patrol-deliver-skill-review.md`（調査詳細）
+
+- `[x]` **P3-A: 配信モードの選択基準を独立記述し Step 3 参照を廃止**（任意）
+  - Deliver Mode Step 3 の「Step 3 below 参照」を廃止し、配信モード内に選択基準を直接記述。
+  - 関連ファイル:
+    - `production/workspace/skills/topic-patrol/SKILL.md`（修正対象）
+    - `docs/2026-06-04-topic-patrol-deliver-skill-review.md`（調査詳細）
 
 - `[ ]` **5. patrol の primary モデルを cf-gemma-4-26b に変更**（オプション）
   - 現在 `["lms-gemma-4-e4b", "groq-llama-8b"]` → `["cf-gemma-4-26b", "lms-gemma-4-e4b"]` に変更。
@@ -143,11 +187,29 @@
 - `[x]` **2. GLOBAL_COOLDOWN を Per-provider クールダウンへリファクタ（GLOBAL_COOLDOWN 削除）**
   - `PROVIDER_COOLDOWNS: OnceLock<Mutex<HashMap<String, Instant>>>` による per-provider 管理に変更。`set_provider_cooldown_from_error()` / `set_provider_cooldown()` / `provider_cooldown_remaining()` を実装。`GLOBAL_COOLDOWN` static 変数・`set_global_cooldown_from_error()`・`global_cooldown_remaining()` およびこれらを呼び出す全7箇所を削除（`crates/rustyclaw-providers/src/lib.rs` 他）。
 
-- `[ ]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[x]` **4. PROVIDER COOLDOWNS パネルの残り時間表示フォーマット改善**
+  - 従来の `XXX.Xs` 形式から、人が読みやすい段階的フォーマットに変更。
+    - `XdXXh` / `XhXXm` / `XXmXXs` / `XXs`
+  - `.prov-secs` 幅を 44px → 52px に拡張（最長 `XXmXXs` = 6文字対応）。
+  - 対象: `crates/rustyclaw-gateway/src/health.rs`（CSS `.prov-secs` + JS `secsLabel` 生成ロジック）
+
+- `[x]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
 ## 🟢 その他の改善案件（独自機能・将来対応）
+
+### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🟢
+> LLM 接続やツール管理を rig-core で統合し、ベクトル検索による長期記憶拡張を実現する。
+
+- [ ] **1. rustyclaw-providers の rig-core Provider への置き換え**
+  - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
+- [ ] **2. ツール定義と呼び出し処理の rig::tool へのリファクタリング**
+  - `#[tool]` マクロによる JSON スキーマ自動生成と、呼び出し時引数の型安全パースを導入。
+- [ ] **3. ベクトル検索（RAG）による長期記憶の拡張** 🔴
+  - 会話履歴や Obsidian 知識の埋め込みベクトル化と、関連した記憶の動的 RAG 注入の実装。
+- [ ] **4. 宣言的 AgentBuilder の導入**
+  - heartbeat / summary / memory などのエージェント定義を AgentBuilder で再整理。
 
 ---
 
@@ -177,6 +239,14 @@
 - `[ ]` **2. Gateway 起動時の設定ロード遅延（約11秒）の短縮検討** 🟢 優先度低
   - `Initializing daemon` から `loaded configuration` まで約11秒を要する（`--no-agent` でも発生）。遅延要素の遅延初期化（lazy）等で起動高速化を検討。
   - 対象: `crates/rustyclaw-gateway/src/lib.rs`（`Gateway::run` 初期化シーケンス）
+
+- `[x]` **3. LANE QUEUE 表示名を `{cron title} ({HH:MM})` 形式に変更**
+  - 現状: キュー内のジョブ説明がハードコードまたはジョブ ID 等の内部名で表示されている。
+  - 変更後: `cron.json` の `name` フィールドと `trigger.expression`（HH:MM）を組み合わせた形式で表示。
+    - 例: `Topic Patrol Explore (02:00)` / `Daily Briefing (05:05)` / `Vital Check Morning (06:00)`
+  - `queue_update_or_insert()` 呼び出し時に渡す `desc` 引数を `format!("{} ({})", job.name, job.trigger.expression)` 形式で生成するよう修正。
+  - Heartbeat（`"Heartbeat Patrol / Activity Scan"`）はそのまま維持。
+  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（cron ジョブのキュー登録箇所）、`crates/rustyclaw-gateway/src/cron.rs`
 
 ---
 

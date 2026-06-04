@@ -659,7 +659,7 @@ header{
 .prov-name{width:80px;color:rgba(180,210,230,0.7)}
 .prov-bar-wrap{flex:1;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden}
 .prov-bar-fill{height:100%;border-radius:2px;transition:width 0.3s}
-.prov-secs{width:44px;text-align:right}
+.prov-secs{width:52px;text-align:right}
 </style>
 </head>
 <body>
@@ -875,7 +875,7 @@ async function updateConcurrency(){
     panel.innerHTML=Object.entries(providers).map(([name,secs])=>{
       const pct=Math.min(100,(secs/60)*100).toFixed(1);
       const color=PROVIDER_COLORS[name]??'#888';
-      const secsLabel=secs>0?secs.toFixed(1)+'s':'<span style="color:var(--muted)">none</span>';
+      const secsLabel=(s=>{if(s<=0)return'<span style="color:var(--muted)">none</span>';const sc=Math.round(s);if(sc>=86400){const d=Math.floor(sc/86400),h=Math.floor((sc%86400)/3600);return d+'d'+String(h).padStart(2,'0')+'h'}if(sc>=3600){const h=Math.floor(sc/3600),m=Math.floor((sc%3600)/60);return h+'h'+String(m).padStart(2,'0')+'m'}if(sc>=60){const m=Math.floor(sc/60),ss=sc%60;return String(m).padStart(2,'0')+'m'+String(ss).padStart(2,'0')+'s'}return String(sc).padStart(2,'0')+'s'})(secs);
       return `<div class="prov-row">
         <span class="prov-name">${escapeHtml(name)}</span>
         <div class="prov-bar-wrap"><div class="prov-bar-fill" style="width:${pct}%;background:${color}"></div></div>

@@ -64,7 +64,7 @@ Check these on **every heartbeat** — they change frequently and the user needs
 
 ### Calendar
 - Activate the `calendar` skill (`[use-skill: calendar]`).
-- Execute the script `skills/calendar/scripts/505_get-calendar.sh` via the `run_workspace_script` tool (no arguments required).
+- Execute the script `skills/calendar/scripts/calendar-ops.sh` via the `run_workspace_script` tool with arguments `["list_family"]`.
 - If an event starts within 30 minutes and not yet notified, include a reminder in your response.
 - For tomorrow's events: mention once in the evening — don't repeat in subsequent runs.
 - Note any scheduling conflicts.
@@ -98,6 +98,12 @@ If it's been **8+ hours** since the last user interaction (check `lastChecks.las
 - If a session had unresolved errors or failed tasks → notify the user with context
 - If work was left incomplete and enough time has passed → send a reminder
 - If you spotted something the user should know about → tell them
+
+**Prohibited in Heartbeat:**
+- Do NOT run the `topic-patrol` skill
+- Do NOT perform web searches to explore or discover topics
+- Do NOT deliver findings from `patrol/findings.md`
+- Topic Patrol (explore and deliver) runs as a separate scheduled job — never from Heartbeat
 
 ### Background tasks (no permission needed)
 - Read and organize memory files
