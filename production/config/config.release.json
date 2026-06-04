@@ -288,7 +288,8 @@
     "model": "text-embedding-bge-m3",
     "dimensions": 1024,
     "top_k": 5,
-    "similarity_threshold": 0.60
+    "similarity_threshold": 0.60,
+    "session_summary_ttl_days": 7
   },
   "channels": {
     "discord": {
