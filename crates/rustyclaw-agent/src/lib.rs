@@ -1351,14 +1351,15 @@ pub(crate) async fn ingest_memory_md(
     config: &Config,
     db_path: &Path,
 ) {
-    let emb_cfg = match config.embedding.as_ref().filter(|e| e.enabled) {
-        Some(c) => c,
-        None => return,
+    let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
+        Some(p) => p,
+        None => {
+            if config.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
+                tracing::warn!("ingest_memory_md: embedding enabled but no valid model config found");
+            }
+            return;
+        }
     };
-    if emb_cfg.api_endpoint.is_empty() || emb_cfg.api_key.is_empty() {
-        tracing::warn!("ingest_memory_md: api_endpoint or api_key is empty, skipping");
-        return;
-    }
     let memory_path = workspace_dir.join("MEMORY.md");
     let content = match std::fs::read_to_string(&memory_path) {
         Ok(c) => c,
@@ -1371,8 +1372,9 @@ pub(crate) async fn ingest_memory_md(
     }
 
     let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
-        &emb_cfg.api_endpoint,
-        &emb_cfg.api_key,
+        &api_endpoint,
+        &api_key,
+        model,
     );
     let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
     let embeddings = match client.embed(&text_refs).await {
@@ -1422,16 +1424,14 @@ pub(crate) async fn retrieve_rag_context(
     config: &Config,
     db_path: &Path,
 ) -> String {
-    let emb_cfg = match config.embedding.as_ref().filter(|e| e.enabled) {
-        Some(c) => c,
+    let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
+        Some(p) => p,
         None => return String::new(),
     };
-    if emb_cfg.api_endpoint.is_empty() || emb_cfg.api_key.is_empty() {
-        return String::new();
-    }
     let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
-        &emb_cfg.api_endpoint,
-        &emb_cfg.api_key,
+        &api_endpoint,
+        &api_key,
+        model,
     );
     let query_short: String = query_text.chars().take(512).collect();
     let embeddings = match client.embed(&[query_short.as_str()]).await {
@@ -1443,10 +1443,12 @@ pub(crate) async fn retrieve_rag_context(
         Ok(d) => d,
         Err(e) => { tracing::warn!("retrieve_rag_context: db error: {}", e); return String::new(); }
     };
+    let top_k    = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
+    let threshold = config.embedding.as_ref().map(|e| e.similarity_threshold).unwrap_or(0.65);
     let results = match db.search_similar_memories(
         &embeddings[0],
-        emb_cfg.top_k,
-        emb_cfg.similarity_threshold,
+        top_k,
+        threshold,
     ) {
         Ok(r) => r,
         Err(e) => { tracing::warn!("retrieve_rag_context: search error: {}", e); return String::new(); }

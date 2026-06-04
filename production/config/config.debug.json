@@ -1,14 +1,33 @@
 {
   "agents": {
-    "global_fallback_model_name": "groq-llama-8b",
-    "default":   "lms-gemma-4-26b",
-    "tools":     "lms-gemma-4-26b",
-    "discord":   ["cf-gemma-4-26b", "lms-gemma-4-26b"],
-    "line":      ["lms-gemma-4-26b", "groq-llama-8b"],
-    "heartbeat": ["lms-gemma-4-26b", "groq-llama-8b"],
-    "patrol":    ["lms-gemma-4-26b", "groq-llama-8b"],
-    "summary":   ["lms-gemma-4-26b", "groq-llama-8b"],
-    "memory":    ["groq-llama-8b"]
+    "global_fallback_model_name": "lms-gemma-4-e4b",
+    "default": "lms-gemma-4-e4b",
+    "tools": "lms-gemma-4-e4b",
+    "discord": [
+      "lms-gemma-4-e4b",
+      "cf-gemma-4-26b"
+    ],
+    "line": [
+      "lms-gemma-4-e4b",
+      "groq-llama-8b"
+    ],
+    "heartbeat": [
+      "lms-gemma-4-e4b",
+      "groq-llama-8b"
+    ],
+    "patrol": [
+      "lms-gemma-4-e4b",
+      "groq-llama-8b"
+    ],
+    "summary": [
+      "lms-gemma-4-e4b",
+      "groq-llama-8b"
+    ],
+    "memory": [
+      "lms-gemma-4-e4b",
+      "groq-llama-8b"
+    ],
+    "embedding": "lms-bge-m3"
   },
   "model_list": [
     {
@@ -234,6 +253,17 @@
       "cf_aig_gateway_id": "rustyclaw-gateway"
     },
     {
+      "model_name": "lms-bge-m3",
+      "provider": "openai",
+      "model": "text-embedding-bge-m3",
+      "api_base": "http://192.168.1.110:1234/v1",
+      "api_key": "lm-studio",
+      "max_tokens": 0,
+      "temperature": 0.0,
+      "enabled": true,
+      "context_window": "512"
+    },
+    {
       "model_name": "lms-gemma-4-e4b",
       "provider": "openai",
       "model": "google/gemma-4-e4b",
@@ -241,7 +271,7 @@
       "api_key": "lm-studio",
       "max_tokens": 2048,
       "temperature": 0.7,
-      "enabled": false,
+      "enabled": true,
       "context_window": "16k"
     },
     {
@@ -252,12 +282,21 @@
       "api_key": "lm-studio",
       "max_tokens": 2048,
       "temperature": 0.7,
-      "enabled": true,
+      "enabled": false,
       "context_window": "16k"
     }
   ],
   "debug_dump": true,
   "timezone": "Asia/Tokyo",
+  "embedding": {
+    "enabled": true,
+    "api_endpoint": "http://192.168.1.110:1234/v1/embeddings",
+    "api_key": "lm-studio",
+    "model": "text-embedding-bge-m3",
+    "dimensions": 1024,
+    "top_k": 5,
+    "similarity_threshold": 0.65
+  },
   "channels": {
     "discord": {
       "enabled": true,

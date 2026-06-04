@@ -90,6 +90,9 @@ pub struct EmbeddingConfig {
     /// CF API トークン ($vault:cf-api-key)
     #[serde(default)]
     pub api_key: String,
+    /// OpenAI互換API用のモデル名 (例: "text-embedding-bge-m3")
+    #[serde(default)]
+    pub model: Option<String>,
     /// ベクトル次元数 (bge-m3 = 1024)
     #[serde(default = "default_embedding_dims")]
     pub dimensions: usize,
@@ -154,6 +157,9 @@ pub struct AgentsConfig {
     pub heartbeat: Option<ModelNames>,
     #[serde(default)]
     pub patrol:    Option<ModelNames>,
+    /// embedding モデルとして使用する model_list エントリの model_name
+    #[serde(default)]
+    pub embedding: Option<String>,
 }
 
 /// get_model() が返す解決済みモデル設定（$vault: 参照解決済み）
@@ -432,6 +438,34 @@ impl Config {
         }
     }
 
+    /// embedding クライアントの構築パラメータ (endpoint, api_key, model_name) を返す。
+    ///
+    /// 解決順序:
+    /// 1. `agents.embedding` が指定されていれば `model_list` から対応エントリを探す。
+    ///    - CF 系 (api_base に "cloudflare.com" を含む): api_base をエンドポイントとして使用
+    ///    - OpenAI 互換: `{api_base}/embeddings` を構築
+    /// 2. 見つからない場合は `embedding.api_endpoint` / `api_key` を直接使用（後方互換）。
+    pub fn get_embedding_client_params(&self) -> Option<(String, String, Option<String>)> {
+        if let Some(ref name) = self.agents.embedding {
+            if let Some(entry) = self.model_list.iter().find(|m| m.model_name == *name && m.enabled) {
+                let is_cf = entry.api_base.contains("cloudflare.com");
+                let endpoint = if is_cf {
+                    entry.api_base.clone()
+                } else {
+                    format!("{}/embeddings", entry.api_base.trim_end_matches('/'))
+                };
+                return Some((endpoint, entry.api_key.clone(), Some(entry.model.clone())));
+            }
+            return None;
+        }
+        if let Some(ref emb) = self.embedding {
+            if emb.enabled && !emb.api_endpoint.is_empty() {
+                return Some((emb.api_endpoint.clone(), emb.api_key.clone(), emb.model.clone()));
+            }
+        }
+        None
+    }
+
     /// $vault: / $env: 参照を解決する
     pub fn resolve_secrets(&mut self) {
         for entry in self.model_list.iter_mut() {
@@ -546,6 +580,7 @@ mod tests {
                 line: None,
                 heartbeat: None,
                 patrol: None,
+                embedding: None,
             },
             ..Default::default()
         }
