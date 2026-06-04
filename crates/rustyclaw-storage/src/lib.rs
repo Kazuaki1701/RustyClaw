@@ -102,6 +102,16 @@ impl DbManager {
                 category TEXT NOT NULL,
                 seen_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                session_id TEXT,
+                text_content TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source
+                ON memory_embeddings(source);
         ")
         .context("Failed to create SQLite tables")?;
 
@@ -117,6 +127,62 @@ impl DbManager {
             let _ = self.conn.execute(stmt, []);
         }
 
+        Ok(())
+    }
+
+    // --- Memory Embeddings (RAG) ---
+
+    pub fn serialize_embedding(v: &[f32]) -> Vec<u8> {
+        v.iter().flat_map(|f| f.to_le_bytes()).collect()
+    }
+
+    pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
+        bytes.chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect()
+    }
+
+    pub fn upsert_embedding(
+        &self,
+        id: &str,
+        source: &str,
+        session_id: Option<&str>,
+        text_content: &str,
+        embedding: &[f32],
+    ) -> Result<()> {
+        let blob = Self::serialize_embedding(embedding);
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO memory_embeddings
+             (id, source, session_id, text_content, embedding, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, source, session_id, text_content, blob, now],
+        ).context("Failed to upsert embedding")?;
+        Ok(())
+    }
+
+    pub fn load_all_embeddings(&self) -> Result<Vec<(String, Vec<f32>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT text_content, embedding FROM memory_embeddings"
+        ).context("Failed to prepare load_all_embeddings")?;
+        let rows = stmt.query_map([], |row| {
+            let text: String = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            Ok((text, blob))
+        }).context("Failed to query embeddings")?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (text, blob) = row.context("Failed to read embedding row")?;
+            out.push((text, Self::deserialize_embedding(&blob)));
+        }
+        Ok(out)
+    }
+
+    pub fn delete_embeddings_by_source(&self, source: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM memory_embeddings WHERE source = ?1",
+            rusqlite::params![source],
+        ).context("Failed to delete embeddings by source")?;
         Ok(())
     }
 
@@ -725,6 +791,31 @@ mod tests {
         // None entries should not appear
         assert!(by_provider.get("").is_none());
         Ok(())
+    }
+
+    #[test]
+    fn test_serialize_deserialize_embedding() {
+        let v: Vec<f32> = vec![1.0, -0.5, 0.0, 2.5];
+        let bytes = DbManager::serialize_embedding(&v);
+        assert_eq!(bytes.len(), 16); // 4 × 4 bytes
+        let back = DbManager::deserialize_embedding(&bytes);
+        for (a, b) in v.iter().zip(back.iter()) {
+            assert!((a - b).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn test_embedding_crud() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = DbManager::new(tmp.path().join("test.db")).unwrap();
+        let emb: Vec<f32> = vec![0.1, 0.2, 0.3];
+        db.upsert_embedding("id1", "memory", None, "hello world", &emb).unwrap();
+        let rows = db.load_all_embeddings().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "hello world");
+        assert_eq!(rows[0].1.len(), 3);
+        db.delete_embeddings_by_source("memory").unwrap();
+        assert!(db.load_all_embeddings().unwrap().is_empty());
     }
 
     #[tokio::test]
