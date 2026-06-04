@@ -566,7 +566,7 @@ Rules:
                 tracing::warn!("memory flush: failed to write MEMORY.md: {}", e);
             } else {
                 // MEMORY.md 更新成功時のみ RAG ingestion を実行 (fail-open)
-                ingest_memory_md(workspace_dir, &config, &db_path).await;
+                ingest_memory_md(workspace_dir, &config, &db_path, None).await;
             }
         }
 
@@ -967,6 +967,12 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         let _ = fs::create_dir_all(&summaries_dir);
         let _ = fs::write(&existing_summary_path, &final_summary);
+
+        // セッション要約を DB に保存（rag_engine は Pipeline.rag 経由で Task 7 で接続）
+        {
+            let db_path = workspace_dir.join("memory.db");
+            ingest_session_summary(target_session_id, &final_summary, &self.config, &db_path, None).await;
+        }
 
         Ok(final_summary)
     }
@@ -1452,6 +1458,7 @@ pub(crate) async fn ingest_memory_md(
     workspace_dir: &Path,
     config: &Config,
     db_path: &Path,
+    rag_engine: Option<&UnifiedRagEngine>,
 ) {
     let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
         Some(p) => p,
@@ -1499,12 +1506,58 @@ pub(crate) async fn ingest_memory_md(
         return;
     }
     for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-        let id = format!("memory-{}", i);
+        let id = format!("memory::{}", i);
         if let Err(e) = db.upsert_embedding(&id, "memory", None, chunk, emb) {
-            tracing::warn!("ingest_memory_md: failed to upsert embedding {}: {}", id, e);
+            tracing::warn!("ingest_memory_md: failed to upsert {}: {}", id, e);
+        }
+        if let Some(rag) = rag_engine {
+            rag.add_one(&id, "memory", None, chunk, emb);
         }
     }
     tracing::info!("ingest_memory_md: ingested {} chunks from MEMORY.md", chunks.len());
+}
+
+/// セッション要約テキストを embedding して SQLite + UnifiedRagEngine に保存する。Fail-open。
+/// rag_engine が Some の場合は InMemoryVectorStore にも追加する。
+pub(crate) async fn ingest_session_summary(
+    session_id: &str,
+    summary_text: &str,
+    config: &Config,
+    db_path: &Path,
+    rag_engine: Option<&UnifiedRagEngine>,
+) {
+    let (api_endpoint, api_key, _model) = match config.get_embedding_client_params() {
+        Some(p) => p,
+        None => return,
+    };
+    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
+        &api_endpoint, &api_key,
+    );
+    let text_short: String = summary_text.chars().take(1024).collect();
+    let embeddings = match client.embed(&[text_short.as_str()]).await {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => { tracing::warn!("ingest_session_summary: empty embedding result"); return; }
+        Err(e) => { tracing::warn!("ingest_session_summary: embed error: {}", e); return; }
+    };
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => { tracing::warn!("ingest_session_summary: db open error: {}", e); return; }
+    };
+    let id = format!("session::{}", session_id.replace(':', "-"));
+    if let Err(e) = db.upsert_embedding(&id, "session", Some(session_id), &text_short, &embeddings[0]) {
+        tracing::warn!("ingest_session_summary: upsert error: {}", e);
+        return;
+    }
+    if let Some(rag) = rag_engine {
+        rag.add_one(&id, "session", Some(session_id), &text_short, &embeddings[0]);
+    }
+    let ttl_days = config.embedding.as_ref()
+        .and_then(|e| e.session_summary_ttl_days)
+        .unwrap_or(7);
+    if let Err(e) = db.delete_old_session_embeddings(ttl_days) {
+        tracing::warn!("ingest_session_summary: TTL cleanup error: {}", e);
+    }
+    tracing::info!("ingest_session_summary: stored embedding for session '{}'", session_id);
 }
 
 /// RAG 検索結果をシステムプロンプト注入用の Markdown 文字列に変換する。
