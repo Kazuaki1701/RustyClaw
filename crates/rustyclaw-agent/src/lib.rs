@@ -10,6 +10,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+use rig_core::vector_store::in_memory_store::InMemoryVectorStore;
+use rig_core::embeddings::Embedding;
+use rig_core::OneOrMany;
+use rig_core::vector_store::request::VectorSearchRequest;
+use rig_core::vector_store::VectorStoreIndex;
 
 pub struct Pipeline {
     config: Config,
@@ -1311,6 +1316,103 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
 // ── RAG Helpers ──────────────────────────────────────────────────────────────
 
+/// rig-core InMemoryVectorStore を使った統合 RAG エンジン。
+/// SQLite（永続化）と InMemoryVectorStore（高速検索）のハイブリッド構成。
+/// source 情報は ID プレフィックス（"memory::N", "session::SESSION_ID"）で管理する。
+pub struct UnifiedRagEngine {
+    store: std::sync::Mutex<InMemoryVectorStore<String>>,
+    model: rustyclaw_providers::CloudflareEmbeddingModel,
+}
+
+impl UnifiedRagEngine {
+    pub fn new(model: rustyclaw_providers::CloudflareEmbeddingModel) -> Self {
+        Self {
+            store: std::sync::Mutex::new(InMemoryVectorStore::default()),
+            model,
+        }
+    }
+
+    /// SQLite の全 embedding データを InMemoryVectorStore に再ロードする。
+    pub fn rebuild_from_db(&self, db: &rustyclaw_storage::DbManager) -> anyhow::Result<()> {
+        let rows = db.load_all_embeddings_with_ids()?;
+        let mut store = self.store.lock().unwrap();
+        *store = InMemoryVectorStore::default();
+        let documents: Vec<(String, String, OneOrMany<Embedding>)> = rows
+            .into_iter()
+            .map(|(id, _source, text, vec_f32)| {
+                let emb = Embedding {
+                    document: text.clone(),
+                    vec: vec_f32.iter().map(|&x| x as f64).collect(),
+                };
+                (id, text, OneOrMany::one(emb))
+            })
+            .collect();
+        store.add_documents_with_ids(documents);
+        Ok(())
+    }
+
+    /// 1件を InMemoryVectorStore に追加する（SQLite への書き込みは呼び出し元が行う）。
+    pub fn add_one(
+        &self,
+        id: &str,
+        _source: &str,
+        _session_id: Option<&str>,
+        text: &str,
+        vec_f32: &[f32],
+    ) {
+        let emb = Embedding {
+            document: text.to_string(),
+            vec: vec_f32.iter().map(|&x| x as f64).collect(),
+        };
+        let mut store = self.store.lock().unwrap();
+        store.add_documents_with_ids([(id.to_string(), text.to_string(), OneOrMany::one(emb))]);
+    }
+
+    /// top_k 件の (source, text, score) を返す。
+    /// source は ID プレフィックスから抽出。
+    pub async fn search(
+        &self,
+        query_text: &str,
+        top_k: usize,
+    ) -> anyhow::Result<Vec<(String, String, f64)>> {
+        let req = VectorSearchRequest::builder()
+            .query(query_text.to_string())
+            .samples(top_k as u64)
+            .build();
+        let (store_clone, model_clone) = {
+            let store = self.store.lock().unwrap();
+            (store.clone(), self.model.clone())
+        };
+        let index = store_clone.index(model_clone);
+        let id_scores = index.top_n_ids(req).await
+            .map_err(|e| anyhow::anyhow!("RAG search failed: {}", e))?;
+
+        // id → text のマッピングを取得
+        let text_map: std::collections::HashMap<String, String> = {
+            let store = self.store.lock().unwrap();
+            store.iter()
+                .map(|(id, (text, _))| (id.clone(), text.clone()))
+                .collect()
+        };
+
+        Ok(id_scores.into_iter().filter_map(|(score, id)| {
+            let source = if id.starts_with("memory::") { "memory".to_string() }
+                else if id.starts_with("session::") { "session".to_string() }
+                else { "unknown".to_string() };
+            let text = text_map.get(&id)?.clone();
+            Some((source, text, score))
+        }).collect())
+    }
+
+    pub fn len(&self) -> usize {
+        self.store.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.store.lock().unwrap().is_empty()
+    }
+}
+
 /// MEMORY.md のバレット行を 1件 1チャンクに分割する。
 /// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
 pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
@@ -1374,8 +1476,8 @@ pub(crate) async fn ingest_memory_md(
     let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
         &api_endpoint,
         &api_key,
-        model,
     );
+    let _ = model; // model name is embedded in api_endpoint for Cloudflare Workers AI
     let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
     let embeddings = match client.embed(&text_refs).await {
         Ok(v) => v,
@@ -1431,8 +1533,8 @@ pub(crate) async fn retrieve_rag_context(
     let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
         &api_endpoint,
         &api_key,
-        model,
     );
+    let _ = model; // model name is embedded in api_endpoint for Cloudflare Workers AI
     let query_short: String = query_text.chars().take(512).collect();
     let embeddings = match client.embed(&[query_short.as_str()]).await {
         Ok(v) if !v.is_empty() => v,
@@ -2261,5 +2363,22 @@ Keep it short.\n\
         assert!(result.contains("Rust is fast"));
         assert!(result.contains("RPi4 has 8GB RAM"));
         assert!(result.contains("## Relevant Memory"));
+    }
+
+    #[test]
+    fn test_unified_rag_engine_rebuild_from_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("memory.db");
+        let db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
+        db.upsert_embedding("memory::0",   "memory",  None,       "大森駅周辺", &vec![1.0f32; 4]).unwrap();
+        db.upsert_embedding("session::s1", "session", Some("s1"), "RAG 検証完了", &vec![0.5f32; 4]).unwrap();
+
+        let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
+            "http://127.0.0.1:1", "dummy",
+        );
+        let model = rustyclaw_providers::CloudflareEmbeddingModel::new(client, 4);
+        let engine = UnifiedRagEngine::new(model);
+        engine.rebuild_from_db(&db).unwrap();
+        assert_eq!(engine.len(), 2);
     }
 }
