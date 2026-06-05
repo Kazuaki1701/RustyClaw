@@ -4,6 +4,7 @@ use futures_util::{Stream, StreamExt};
 use rustyclaw_config::{get_app_dir, Config, LlmModelConfig};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
@@ -1205,6 +1206,251 @@ pub fn create_provider(model: LlmModelConfig) -> Box<dyn LlmProvider> {
     Box::new(OpenAiCompatProvider::new(model))
 }
 
+// =========================================================
+// rig-core CompletionModel integration
+// =========================================================
+
+/// Converts rig-core `CompletionRequest` messages (plus optional preamble) to
+/// the RustyClaw provider `Message` format.
+pub fn rig_messages_to_provider<'a>(
+    preamble: Option<&str>,
+    history: impl IntoIterator<Item = &'a rig_core::completion::Message>,
+) -> Vec<Message> {
+    let mut out: Vec<Message> = Vec::new();
+
+    if let Some(sys) = preamble {
+        out.push(Message {
+            role: "system".to_string(),
+            content: sys.to_string(),
+            ..Default::default()
+        });
+    }
+
+    for msg in history {
+        match msg {
+            rig_core::completion::Message::System { content } => {
+                out.push(Message {
+                    role: "system".to_string(),
+                    content: content.clone(),
+                    ..Default::default()
+                });
+            }
+            rig_core::completion::Message::User { content } => {
+                for item in content.iter() {
+                    match item {
+                        rig_core::completion::message::UserContent::Text(t) => {
+                            out.push(Message {
+                                role: "user".to_string(),
+                                content: t.text.clone(),
+                                ..Default::default()
+                            });
+                        }
+                        rig_core::completion::message::UserContent::ToolResult(tr) => {
+                            let text = tr
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    rig_core::completion::message::ToolResultContent::Text(t) => {
+                                        Some(t.text.as_str())
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            out.push(Message {
+                                role: "tool".to_string(),
+                                content: text,
+                                tool_call_id: Some(tr.id.clone()),
+                                ..Default::default()
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            rig_core::completion::Message::Assistant { content, .. } => {
+                let mut text = String::new();
+                let mut tcs: Vec<ToolCall> = Vec::new();
+                for item in content.iter() {
+                    match item {
+                        rig_core::completion::message::AssistantContent::Text(t) => {
+                            text.clone_from(&t.text);
+                        }
+                        rig_core::completion::message::AssistantContent::ToolCall(tc) => {
+                            tcs.push(ToolCall {
+                                id: tc.id.clone(),
+                                r#type: "function".to_string(),
+                                function: FunctionCall {
+                                    name: tc.function.name.clone(),
+                                    arguments: tc.function.arguments.to_string(),
+                                },
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                out.push(Message {
+                    role: "assistant".to_string(),
+                    content: text,
+                    tool_calls: if tcs.is_empty() { None } else { Some(tcs) },
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    out
+}
+
+/// Converts a `LlmResponse` to rig-core's `CompletionResponse<LlmResponse>`.
+pub fn llm_response_to_rig(
+    resp: LlmResponse,
+) -> rig_core::completion::CompletionResponse<LlmResponse> {
+    use rig_core::completion::{CompletionResponse, Usage};
+    use rig_core::completion::message::{AssistantContent, Text, ToolCall as RigToolCall, ToolFunction};
+    use rig_core::OneOrMany;
+
+    let choice = if resp
+        .tool_calls
+        .as_ref()
+        .map(|tcs| !tcs.is_empty())
+        .unwrap_or(false)
+    {
+        let items: Vec<AssistantContent> = resp
+            .tool_calls
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|tc| {
+                AssistantContent::ToolCall(RigToolCall::new(
+                    tc.id.clone(),
+                    ToolFunction::new(
+                        tc.function.name.clone(),
+                        serde_json::from_str(&tc.function.arguments)
+                            .unwrap_or(serde_json::json!({})),
+                    ),
+                ))
+            })
+            .collect();
+        OneOrMany::many(items).unwrap_or_else(|_| {
+            OneOrMany::one(AssistantContent::Text(Text {
+                text: resp.content.clone(),
+                additional_params: None,
+            }))
+        })
+    } else {
+        OneOrMany::one(AssistantContent::Text(Text {
+            text: resp.content.clone(),
+            additional_params: None,
+        }))
+    };
+
+    CompletionResponse {
+        choice,
+        usage: Usage {
+            input_tokens: resp.prompt_tokens.unwrap_or(0) as u64,
+            output_tokens: resp.completion_tokens.unwrap_or(0) as u64,
+            total_tokens: resp.total_tokens.unwrap_or(0) as u64,
+            ..Default::default()
+        },
+        raw_response: resp,
+        message_id: None,
+    }
+}
+
+/// Client handle for constructing a `RustyclawCompletionModel`.
+#[derive(Clone)]
+pub struct RustyclawProviderClient {
+    pub provider: Arc<dyn LlmProvider>,
+    pub default_model: String,
+}
+
+impl RustyclawProviderClient {
+    pub fn new(provider: Arc<dyn LlmProvider>, default_model: impl Into<String>) -> Self {
+        Self {
+            provider,
+            default_model: default_model.into(),
+        }
+    }
+}
+
+/// A rig-core `CompletionModel` adapter around RustyClaw's failover provider chain.
+/// Enables `rig::agent::Agent<RustyclawCompletionModel>` for tool-using agents.
+#[derive(Clone)]
+pub struct RustyclawCompletionModel {
+    provider: Arc<dyn LlmProvider>,
+    pub model_name: String,
+}
+
+impl RustyclawCompletionModel {
+    pub fn new(provider: Arc<dyn LlmProvider>, model_name: impl Into<String>) -> Self {
+        Self {
+            provider,
+            model_name: model_name.into(),
+        }
+    }
+}
+
+impl rig_core::completion::CompletionModel for RustyclawCompletionModel {
+    type Response = LlmResponse;
+    type StreamingResponse = ();
+    type Client = RustyclawProviderClient;
+
+    fn make(client: &Self::Client, model: impl Into<String>) -> Self {
+        Self::new(client.provider.clone(), model)
+    }
+
+    async fn completion(
+        &self,
+        request: rig_core::completion::CompletionRequest,
+    ) -> Result<
+        rig_core::completion::CompletionResponse<LlmResponse>,
+        rig_core::completion::CompletionError,
+    > {
+        let messages =
+            rig_messages_to_provider(request.preamble.as_deref(), request.chat_history.iter());
+
+        let tools: Vec<ToolDef> = request
+            .tools
+            .iter()
+            .map(|td| ToolDef {
+                name: td.name.clone(),
+                description: td.description.clone(),
+                parameters: td.parameters.clone(),
+            })
+            .collect();
+
+        let opts = CompletionOptions {
+            model: self.model_name.clone(),
+            max_tokens: request.max_tokens.map(|n| n as u32),
+            temperature: request.temperature.map(|t| t as f32),
+            timeout: std::time::Duration::from_secs(300),
+            category: None,
+        };
+
+        let llm_resp = self
+            .provider
+            .complete(&messages, &tools, &opts)
+            .await
+            .map_err(|e| rig_core::completion::CompletionError::ProviderError(e.to_string()))?;
+
+        Ok(llm_response_to_rig(llm_resp))
+    }
+
+    async fn stream(
+        &self,
+        _request: rig_core::completion::CompletionRequest,
+    ) -> Result<
+        rig_core::streaming::StreamingCompletionResponse<()>,
+        rig_core::completion::CompletionError,
+    > {
+        Err(rig_core::completion::CompletionError::ProviderError(
+            "Streaming via rig::agent::Agent not supported; use execute_stream() directly"
+                .to_string(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1710,6 +1956,47 @@ mod tests {
         // 空入力は即 Ok(vec![]) を返す（HTTP 呼び出しなし）
         let result = model.embed_texts(vec![]).await.unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_rig_messages_from_completion_request() {
+        use rig_core::completion::Message as RigMsg;
+        use rig_core::completion::message::{AssistantContent, UserContent, Text, ToolResult, ToolResultContent, ToolCall, ToolFunction};
+        use rig_core::OneOrMany;
+
+        let history = vec![
+            RigMsg::User {
+                content: OneOrMany::one(UserContent::Text(Text { text: "hello".to_string(), additional_params: None })),
+            },
+            RigMsg::Assistant {
+                id: None,
+                content: OneOrMany::one(AssistantContent::Text(Text { text: "hi".to_string(), additional_params: None })),
+            },
+            RigMsg::User {
+                content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                    id: "call-1".to_string(),
+                    call_id: None,
+                    content: OneOrMany::one(ToolResultContent::Text(Text { text: "tool output".to_string(), additional_params: None })),
+                })),
+            },
+        ];
+
+        let msgs = rig_messages_to_provider(None, history.iter());
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "hello");
+        assert_eq!(msgs[1].role, "assistant");
+        assert_eq!(msgs[2].role, "tool");
+        assert_eq!(msgs[2].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(msgs[2].content, "tool output");
+    }
+
+    #[test]
+    fn test_rig_messages_preamble_injected() {
+        let msgs = rig_messages_to_provider(Some("system prompt"), std::iter::empty());
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "system");
+        assert_eq!(msgs[0].content, "system prompt");
     }
 }
 
