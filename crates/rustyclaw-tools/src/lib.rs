@@ -479,6 +479,20 @@ impl Tool for WebSearchTool {
 
 // ─── WebFetchTool ────────────────────────────────────────────────────────────
 
+// ─── 共有エラー型 ────────────────────────────────────────────────────────────
+
+/// rig_core::tool::Tool::Error の共通実装。すべてのツールが使用する。
+#[derive(Debug)]
+pub struct ToolCallError(pub String);
+
+impl std::fmt::Display for ToolCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ToolCallError {}
+
 /// HTML タグ・script・style ブロックを除去してプレーンテキストを返す（新規 crate 依存なし）
 fn strip_html_to_text(html: &str, max_chars: usize) -> String {
     let mut out = String::with_capacity(html.len() / 2);
@@ -521,11 +535,21 @@ fn strip_html_to_text(html: &str, max_chars: usize) -> String {
         .chars().take(max_chars).collect()
 }
 
+#[derive(Clone)]
 pub struct WebFetchTool;
 
 impl WebFetchTool {
     pub fn new() -> Self { Self }
 }
+
+#[derive(serde::Deserialize)]
+pub struct WebFetchArgs {
+    pub url: String,
+    #[serde(default = "web_fetch_default_max_chars")]
+    pub max_chars: usize,
+}
+
+fn web_fetch_default_max_chars() -> usize { 3000 }
 
 #[async_trait]
 impl Tool for WebFetchTool {
@@ -576,6 +600,52 @@ impl Tool for WebFetchTool {
                 is_error: true,
             },
             Err(e) => ToolResult { content: format!("Fetch failed: {}", e), is_error: true },
+        }
+    }
+}
+
+impl rig_core::tool::Tool for WebFetchTool {
+    const NAME: &'static str = "web_fetch";
+    type Error = ToolCallError;
+    type Args = WebFetchArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> rig_core::completion::ToolDefinition {
+        rig_core::completion::ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Fetch a web page and return its plain text content (HTML tags stripped). Use after web_search to read full article content.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "URL to fetch" },
+                    "max_chars": {
+                        "type": "string",
+                        "description": "Max characters to return as a string (default: '3000')"
+                    }
+                },
+                "required": ["url"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: WebFetchArgs) -> Result<String, ToolCallError> {
+        if args.url.is_empty() {
+            return Err(ToolCallError("Missing url".into()));
+        }
+        let max_chars = args.max_chars;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .user_agent("Mozilla/5.0 (compatible; RustyClaw/1.0)")
+            .build()
+            .unwrap_or_default();
+        match client.get(&args.url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.text().await
+                    .map(|html| strip_html_to_text(&html, max_chars))
+                    .map_err(|e| ToolCallError(format!("Read error: {}", e)))
+            }
+            Ok(resp) => Err(ToolCallError(format!("HTTP {}", resp.status()))),
+            Err(e) => Err(ToolCallError(format!("Fetch failed: {}", e))),
         }
     }
 }
@@ -1202,5 +1272,30 @@ mod tests {
         let tools = registry.to_dyn_tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name(), "get_cron_schedule");
+    }
+
+    // ── Task 1: rig_core::tool::Tool 直接実装テスト ──
+    #[tokio::test]
+    async fn test_web_fetch_rig_core_tool_name() {
+        use rig_core::tool::Tool;
+        assert_eq!(WebFetchTool::NAME, "web_fetch");
+    }
+
+    #[tokio::test]
+    async fn test_web_fetch_rig_core_tool_definition() {
+        use rig_core::tool::Tool;
+        let tool = WebFetchTool::new();
+        let def = tool.definition(String::new()).await;
+        assert_eq!(def.name, "web_fetch");
+        assert!(def.parameters.get("properties").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_web_fetch_rig_core_call_missing_url() {
+        use rig_core::tool::ToolDyn;
+        let tool = WebFetchTool::new();
+        // "url" フィールドが必須なので空オブジェクトは JsonError になる
+        let result = tool.call("{}".to_string()).await;
+        assert!(result.is_err());
     }
 }
