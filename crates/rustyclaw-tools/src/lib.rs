@@ -72,7 +72,7 @@ impl ToolRegistry {
                 })
             })
             .collect();
-        
+
         // Sort by name to guarantee deterministic schema ordering in tests and requests.
         schemas.sort_by(|a, b| {
             a["name"]
@@ -80,8 +80,84 @@ impl ToolRegistry {
                 .unwrap_or("")
                 .cmp(b["name"].as_str().unwrap_or(""))
         });
-        
+
         schemas
+    }
+
+    /// Converts all registered tools into a `rig_core::tool::ToolSet` for use with rig agents.
+    pub fn to_toolset(&self) -> rig_core::tool::ToolSet {
+        let mut toolset = rig_core::tool::ToolSet::default();
+        for tool in self.tools.values() {
+            toolset.add_tool_boxed(Box::new(RigToolAdapter::new(tool.clone())));
+        }
+        toolset
+    }
+}
+
+/// Adapts a RustyClaw `Tool` to the `rig_core::tool::ToolDyn` interface.
+/// Allows existing stateful tools to be used with `rig::agent::Agent`.
+pub struct RigToolAdapter {
+    inner: Arc<dyn Tool>,
+}
+
+impl RigToolAdapter {
+    pub fn new(tool: Arc<dyn Tool>) -> Self {
+        Self { inner: tool }
+    }
+}
+
+#[derive(Debug)]
+struct ToolCallFailed(String);
+
+impl std::fmt::Display for ToolCallFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ToolCallFailed {}
+
+impl rig_core::tool::ToolDyn for RigToolAdapter {
+    fn name(&self) -> String {
+        self.inner.name().to_string()
+    }
+
+    fn definition<'a>(
+        &'a self,
+        _prompt: String,
+    ) -> rig_core::wasm_compat::WasmBoxedFuture<'a, rig_core::completion::ToolDefinition> {
+        let name = self.inner.name().to_string();
+        let description = self.inner.description().to_string();
+        let parameters = self.inner.parameters();
+        Box::pin(async move {
+            rig_core::completion::ToolDefinition {
+                name,
+                description,
+                parameters,
+            }
+        })
+    }
+
+    fn call<'a>(
+        &'a self,
+        args: String,
+    ) -> rig_core::wasm_compat::WasmBoxedFuture<
+        'a,
+        Result<String, rig_core::tool::ToolError>,
+    > {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            let parsed: Value = serde_json::from_str(&args)
+                .unwrap_or(Value::Object(serde_json::Map::new()));
+            let result = inner.execute(parsed).await;
+            if result.is_error {
+                Err(rig_core::tool::ToolError::ToolCallError(Box::new(
+                    ToolCallFailed(result.content),
+                )))
+            } else {
+                Ok(result.content)
+            }
+        })
     }
 }
 
@@ -1083,5 +1159,28 @@ mod tests {
         assert!(res.is_error);
         assert!(res.content.contains("Failed to resolve vault reference"));
         assert!(res.content.contains("rustyclaw vault set non-existent-secret-key-xyz"));
+    }
+
+    #[tokio::test]
+    async fn test_rig_tool_adapter_wraps_custom_tool() {
+        use rig_core::tool::ToolDyn as _;
+        use std::sync::Arc;
+
+        let tool = Arc::new(CronScheduleTool::new(|| serde_json::json!([])));
+        let adapter = RigToolAdapter::new(tool);
+
+        assert_eq!(adapter.name(), "get_cron_schedule");
+        let def = adapter.definition("".to_string()).await;
+        assert_eq!(def.name, "get_cron_schedule");
+        assert!(!def.description.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_to_toolset() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(CronScheduleTool::new(|| serde_json::json!([]))));
+
+        let toolset = registry.to_toolset();
+        assert!(toolset.contains("get_cron_schedule"));
     }
 }
