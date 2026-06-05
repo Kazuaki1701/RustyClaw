@@ -237,6 +237,12 @@ impl Tool for CronScheduleTool {
 
 // ─── WorkspaceReadTool ───────────────────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+pub struct WorkspaceReadArgs {
+    pub path: String,
+}
+
+#[derive(Clone)]
 pub struct WorkspaceReadTool {
     workspace_path: std::path::PathBuf,
 }
@@ -283,8 +289,46 @@ impl Tool for WorkspaceReadTool {
     }
 }
 
+impl rig_core::tool::Tool for WorkspaceReadTool {
+    const NAME: &'static str = "workspace_read";
+    type Error = ToolCallError;
+    type Args = WorkspaceReadArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> rig_core::completion::ToolDefinition {
+        rig_core::completion::ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Read a text file from the agent workspace (e.g. patrol/state.json, patrol/findings.md).".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative path within workspace (e.g. patrol/state.json)" }
+                },
+                "required": ["path"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: WorkspaceReadArgs) -> Result<String, ToolCallError> {
+        let rel = &args.path;
+        if rel.contains("..") || rel.starts_with('/') {
+            return Err(ToolCallError("Invalid path".into()));
+        }
+        std::fs::read_to_string(self.workspace_path.join(rel))
+            .map_err(|e| ToolCallError(format!("Cannot read {}: {}", rel, e)))
+    }
+}
+
 // ─── WorkspaceWriteTool ──────────────────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+pub struct WorkspaceWriteArgs {
+    pub path: String,
+    pub content: String,
+    pub mode: Option<String>,
+}
+
+#[derive(Clone)]
 pub struct WorkspaceWriteTool {
     workspace_path: std::path::PathBuf,
 }
@@ -347,6 +391,50 @@ impl Tool for WorkspaceWriteTool {
             Ok(_)  => ToolResult { content: format!("OK: wrote to {}", rel), is_error: false },
             Err(e) => ToolResult { content: format!("Write failed {}: {}", rel, e), is_error: true },
         }
+    }
+}
+
+impl rig_core::tool::Tool for WorkspaceWriteTool {
+    const NAME: &'static str = "workspace_write";
+    type Error = ToolCallError;
+    type Args = WorkspaceWriteArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> rig_core::completion::ToolDefinition {
+        rig_core::completion::ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Write or append to a text file in the agent workspace (patrol/, memory/logs/ etc.).".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path":    { "type": "string", "description": "Relative path within workspace" },
+                    "content": { "type": "string", "description": "Text to write" },
+                    "mode":    { "type": "string", "description": "\"write\" (overwrite, default) or \"append\"" }
+                },
+                "required": ["path", "content"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: WorkspaceWriteArgs) -> Result<String, ToolCallError> {
+        let rel = &args.path;
+        if rel.contains("..") || rel.starts_with('/') {
+            return Err(ToolCallError("Invalid path: traversal not allowed".into()));
+        }
+        let full = self.workspace_path.join(rel);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ToolCallError(format!("mkdir failed: {}", e)))?;
+        }
+        let result = if args.mode.as_deref() == Some("append") {
+            use std::io::Write;
+            std::fs::OpenOptions::new().append(true).create(true).open(&full)
+                .and_then(|mut f| f.write_all(args.content.as_bytes()))
+        } else {
+            std::fs::write(&full, args.content.as_bytes())
+        };
+        result.map(|_| format!("OK: wrote to {}", rel))
+              .map_err(|e| ToolCallError(format!("Write failed {}: {}", rel, e)))
     }
 }
 
@@ -1301,5 +1389,41 @@ mod tests {
         // "url" フィールドが必須なので空オブジェクトは JsonError になる
         let result = tool.call("{}".to_string()).await;
         assert!(result.is_err());
+    }
+
+    // ── Task 2: WorkspaceReadTool / WorkspaceWriteTool rig-core impl ──
+    #[tokio::test]
+    async fn test_workspace_read_rig_core_roundtrip() {
+        use rig_core::tool::ToolDyn;
+        let dir = tempfile::tempdir().unwrap();
+        let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
+        let read_tool  = WorkspaceReadTool::new(dir.path().to_path_buf());
+
+        let write_result = write_tool.call(r#"{"path":"notes.txt","content":"hello"}"#.to_string()).await;
+        assert!(write_result.is_ok(), "write failed: {:?}", write_result);
+
+        let read_result = read_tool.call(r#"{"path":"notes.txt"}"#.to_string()).await;
+        assert!(read_result.is_ok(), "read failed: {:?}", read_result);
+        assert!(read_result.unwrap().contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_read_rig_core_path_traversal() {
+        use rig_core::tool::ToolDyn;
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WorkspaceReadTool::new(dir.path().to_path_buf());
+        let result = tool.call(r#"{"path":"../etc/passwd"}"#.to_string()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_workspace_write_rig_core_append() {
+        use rig_core::tool::ToolDyn;
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
+        tool.call(r#"{"path":"log.txt","content":"line1\n"}"#.to_string()).await.unwrap();
+        tool.call(r#"{"path":"log.txt","content":"line2\n","mode":"append"}"#.to_string()).await.unwrap();
+        let content = std::fs::read_to_string(dir.path().join("log.txt")).unwrap();
+        assert!(content.contains("line1") && content.contains("line2"));
     }
 }
