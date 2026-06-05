@@ -135,6 +135,7 @@ pub struct LaneRegistry {
     workspace_path: PathBuf,
     bus: Arc<MessageBus>,
     tool_registry: Arc<rustyclaw_tools::ToolRegistry>,
+    tool_server_handle: rig_core::tool::server::ToolServerHandle,
     discord_connector: Arc<DiscordConnector>,
 }
 
@@ -144,6 +145,7 @@ impl LaneRegistry {
         workspace_path: PathBuf,
         bus: Arc<MessageBus>,
         tool_registry: Arc<rustyclaw_tools::ToolRegistry>,
+        tool_server_handle: rig_core::tool::server::ToolServerHandle,
         gmn_sem: Arc<Semaphore>,
         discord_connector: Arc<DiscordConnector>,
     ) -> Self {
@@ -154,6 +156,7 @@ impl LaneRegistry {
             workspace_path,
             bus,
             tool_registry,
+            tool_server_handle,
             discord_connector,
         }
     }
@@ -193,6 +196,7 @@ impl LaneRegistry {
         let workspace_path = self.workspace_path.clone();
         let bus = self.bus.clone();
         let tool_registry = self.tool_registry.clone();
+        let tool_server_handle = self.tool_server_handle.clone();
         let discord_connector = self.discord_connector.clone();
 
         tokio::spawn(async move {
@@ -451,8 +455,6 @@ impl LaneRegistry {
                                     if let Some(rag) = init_rag_engine(&active_config, &workspace_path) {
                                         pipeline.rag = Some(rag);
                                     }
-                                    let tool_reg = tool_registry.clone();
-
                                     // ProgressReporter（進捗表示とタイピング）のセットアップ
                                     let is_user_channel = !session_id.starts_with("cron") && channel_id.parse::<u64>().is_ok();
                                     let progress_reporter = if is_user_channel {
@@ -500,7 +502,7 @@ impl LaneRegistry {
                                             })
                                     } else {
                                         let run_purpose = if session_id == "cron:topic-patrol" { "patrol" } else { "discord" };
-                                        pipeline.execute_with_rig_agent(&workspace_path, &session_id, &content, &tool_reg, run_purpose, progress_tx_opt).await
+                                        pipeline.execute_with_rig_agent(&workspace_path, &session_id, &content, tool_server_handle.clone(), run_purpose, progress_tx_opt).await
                                     };
 
                                     // 進捗表示の終了とクリーンアップ
@@ -646,44 +648,100 @@ impl Gateway {
             tracing::info!("Gateway loaded configuration: provider={}, model={}", m.model_provider, m.model_name);
         }
 
-        // 2. MCP Manager 初期化 (enabled な MCP サーバーに接続)
-        let mcp_manager = Arc::new(rustyclaw_mcp::McpManager::new());
-        if !config.mcp.is_empty() {
-            mcp_manager.connect_all(&config.mcp).await.ok();
+        // 2. ToolServer (rig エージェント用) と ToolRegistry (heartbeat 用) の初期化
+        let tool_server_handle = rig_core::tool::server::ToolServer::new().run();
+        let mut mcp_service_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+        // MCP サーバーへの接続 (rig-core rmcp 経由)
+        for (name, conf) in &config.mcp {
+            if conf.enabled {
+                let handler = rig_core::tool::rmcp::McpClientHandler::new(
+                    rmcp::model::ClientInfo::default(),
+                    tool_server_handle.clone(),
+                );
+                let mut cmd = tokio::process::Command::new(&conf.command);
+                cmd.args(&conf.args)
+                   .envs(&conf.env)
+                   .stdin(std::process::Stdio::piped())
+                   .stdout(std::process::Stdio::piped());
+                match cmd.spawn() {
+                    Ok(mut child) => {
+                        if let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) {
+                            match handler.connect((stdout, stdin)).await {
+                                Ok(service) => {
+                                    let n = name.clone();
+                                    mcp_service_tasks.push(tokio::spawn(async move {
+                                        if let Err(e) = service.waiting().await {
+                                            tracing::warn!("MCP service {} ended: {e}", n);
+                                        }
+                                    }));
+                                    tokio::spawn(async move { child.wait().await.ok(); });
+                                    tracing::info!("Connected to MCP server: {}", name);
+                                }
+                                Err(e) => tracing::error!("Failed to connect MCP server {}: {e}", name),
+                            }
+                        }
+                    }
+                    Err(e) => tracing::error!("Failed to spawn MCP process {}: {e}", name),
+                }
+            }
         }
-        // MCP ツールを ToolRegistry に登録
+
         let mut tool_registry = rustyclaw_tools::ToolRegistry::new();
-        for mcp_tool in mcp_manager.get_tools().await {
-            tool_registry.register(mcp_tool);
-        }
 
         // Brave Search ネイティブツール登録
         if let Some(b) = config.tools.brave_search.as_ref().filter(|b| b.enabled) {
             if !b.api_key.is_empty() {
-                tool_registry.register(Arc::new(rustyclaw_tools::WebSearchTool::new(b.api_key.clone())));
+                let t = Arc::new(rustyclaw_tools::WebSearchTool::new(b.api_key.clone()));
+                tool_registry.register(t.clone());
+                tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
                 tracing::info!("Registered WebSearchTool (Brave Search).");
             }
         }
         // WebFetchTool は常時登録（APIキー不要）
-        tool_registry.register(Arc::new(rustyclaw_tools::WebFetchTool::new()));
+        {
+            let t = Arc::new(rustyclaw_tools::WebFetchTool::new());
+            tool_registry.register(t.clone());
+            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+        }
 
         // WorkspaceReadTool / WorkspaceWriteTool 登録
-        tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone())));
-        tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone())));
-        tool_registry.register(Arc::new(rustyclaw_tools::MemorySearchTool::new(self.workspace_path.clone())));
-        tool_registry.register(Arc::new(rustyclaw_tools::WorkspaceExecuteScriptTool::new(self.workspace_path.clone())));
+        {
+            let t = Arc::new(rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone()));
+            tool_registry.register(t.clone());
+            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+        }
+        {
+            let t = Arc::new(rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone()));
+            tool_registry.register(t.clone());
+            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+        }
+        {
+            let t = Arc::new(rustyclaw_tools::MemorySearchTool::new(self.workspace_path.clone()));
+            tool_registry.register(t.clone());
+            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+        }
+        {
+            let t = Arc::new(rustyclaw_tools::WorkspaceExecuteScriptTool::new(self.workspace_path.clone()));
+            tool_registry.register(t.clone());
+            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+        }
         tracing::info!("Registered Workspace I/O, Memory Search, and Script Execution tools.");
 
         let ws_path_clone = self.workspace_path.clone();
         let db_path_for_tool = self.workspace_path.join("memory.db");
-        tool_registry.register(Arc::new(rustyclaw_tools::CronScheduleTool::new(move || {
-            if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path_for_tool) {
-                let sched = crate::cron::compute_schedule(&ws_path_clone, &db);
-                serde_json::Value::Array(sched)
-            } else {
-                serde_json::Value::Array(vec![])
-            }
-        })));
+        {
+            let t = Arc::new(rustyclaw_tools::CronScheduleTool::new(move || {
+                if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path_for_tool) {
+                    let sched = crate::cron::compute_schedule(&ws_path_clone, &db);
+                    serde_json::Value::Array(sched)
+                } else {
+                    serde_json::Value::Array(vec![])
+                }
+            }));
+            tool_registry.register(t.clone());
+            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+        }
         tracing::info!("Registered native CronScheduleTool.");
 
         let tool_registry = Arc::new(tool_registry);
@@ -728,6 +786,7 @@ impl Gateway {
             self.workspace_path.clone(),
             bus.clone(),
             tool_registry.clone(),
+            tool_server_handle.clone(),
             gmn_sem.clone(),
             discord_client.clone(),
         ));
@@ -860,14 +919,14 @@ impl Gateway {
                 // SIGINT: Graceful Shutdown
                 _ = sig_int.recv() => {
                     tracing::info!("Received SIGINT. Initiating graceful shutdown...");
-                    mcp_manager.close_all().await;
+                    for h in &mcp_service_tasks { h.abort(); }
                     discord_client.shutdown().await;
                     break;
                 }
                 // SIGTERM: Graceful Shutdown
                 _ = sig_term.recv() => {
                     tracing::info!("Received SIGTERM. Initiating graceful shutdown...");
-                    mcp_manager.close_all().await;
+                    for h in &mcp_service_tasks { h.abort(); }
                     discord_client.shutdown().await;
                     break;
                 }
@@ -951,9 +1010,10 @@ mod tests {
         let config = Config::default();
 
         let tool_registry = Arc::new(rustyclaw_tools::ToolRegistry::new());
+        let tool_server_handle = rig_core::tool::server::ToolServer::new().run();
         let test_gmn_sem = Arc::new(Semaphore::new(1));
         let mock_discord = Arc::new(DiscordConnector::new("mock"));
-        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry, test_gmn_sem, mock_discord);
+        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry, tool_server_handle, test_gmn_sem, mock_discord);
 
         // メッセージを投入
         registry.dispatch(SystemEvent::IncomingMessage {
