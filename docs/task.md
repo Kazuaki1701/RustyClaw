@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-05 (Phase 40-6 Task 4 完了 — rustyclaw-mcp → rig-core rmcp 移行)  
+> **最終更新日**: 2026-06-05 (Phase 40-6 全タスク完了・rustyclaw-mcp 削除・Phase 26 参照更新)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/2026-06-04-completed-phases-24-36-38.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -70,36 +70,33 @@
 
 ---
 
-### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🔴
-> LLM 接続やツール管理を rig-core で統合し、ベクトル検索による長期記憶拡張を実現する。
+### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🟢
+> LLM 接続やツール管理を rig-core で統合し、ベクトル検索による長期記憶拡張を実現する。  
+> Phase 40-6（rmcp 移行・ReAct ループ一本化）完了。残タスクは独自改善として 🟢 に格下げ。
 
-- [ ] **1. rustyclaw-providers の rig-core Provider への置き換え**
+- `[ ]` **1. rustyclaw-providers の rig-core Provider への置き換え** 🟢
   - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
-- [ ] **2. ツール定義と呼び出し処理の rig::tool へのリファクタリング**
+- `[ ]` **2. ツール定義と呼び出し処理の `#[tool]` マクロへのリファクタリング** 🟢
   - `#[tool]` マクロによる JSON スキーマ自動生成と、呼び出し時引数の型安全パースを導入。
-- `[x]` **3. ベクトル検索（RAG）による長期記憶の拡張**
+  - 現状: `RigToolAdapter` による手動ラップで動作中。機能上の問題なし。
+- `[x]` **3. ベクトル検索（RAG）による長期記憶の拡張** ✅
   - MEMORY.md バレット行を CF AI Gateway `@cf/baai/bge-m3` (1024次元、多言語) でベクトル化し SQLite 保存。
-  - `flush_memory` 後に自動 Ingestion、`execute_with_tools` / `execute_stream` 双方でコサイン類似度 top-K をシステムプロンプトに注入。
-  - rig-core 不依存のスタンドアロン実装。Fail-open 設計。
-  - 実装計画: `docs/plans/2026-06-04-rag-memory-implementation-plan.md`
-  - 対象: `rustyclaw-config`, `rustyclaw-storage`, `rustyclaw-providers`, `rustyclaw-agent`, `production/config/config.release.json`
-- [ ] **4. 宣言的 AgentBuilder の導入**
-  - heartbeat / summary / memory などのエージェント定義を AgentBuilder で再整理。
-- `[x]` **5. Unified RAG with rig-core InMemoryVectorStore**
-  - `InMemoryVectorStore` の採用、`MEMORY.md` チャンクとセッション要約のインメモリ統合 RAG 化。
-  - 実装済み・稼働中（commit `55f773f` で CF embedding バグ修正済み。06:49 デプロイ後エラー皆無）。
-  - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-unified-rag.md`
-- `[x]` **6. rig-core 全面リファクタリング (Phase 40-6)** ✅ 完了
+  - Fail-open 設計。実装計画: `docs/plans/2026-06-04-rag-memory-implementation-plan.md`
+- `[ ]` **4. 宣言的 AgentBuilder の導入** 🟢
+  - heartbeat / summary などのエージェント定義を AgentBuilder で再整理（現状は execute_heartbeat が独自ループ）。
+- `[x]` **5. Unified RAG with rig-core InMemoryVectorStore** ✅
+  - `InMemoryVectorStore` 採用、MEMORY.md チャンクとセッション要約のインメモリ統合 RAG 化。
+  - 実装済み・稼働中。実装計画: `docs/superpowers/plans/2026-06-05-rig-core-unified-rag.md`
+- `[x]` **6. rig-core 全面リファクタリング (Phase 40-6)** ✅ 完了（2026-06-05）
   - `rmcp` クライアントへの移行、`rig::agent::Agent` 移行による ReAct/RAG ループの一本化。
   - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-refactoring.md`
-  - ✅ Task 3: `RigToolAdapter` + `ToolRegistry::to_dyn_tools()` 実装（commit `1837b64`, `e311cb1`）
-  - ✅ Task 6: `Pipeline::execute_with_rig_agent()` 実装（`RustyclawCompletionModel` + `AgentBuilder` + `Chat::chat()`、commit `e311cb1`）
-  - ✅ Task 4: `rustyclaw-mcp` → rig-core `rmcp` feature への移行（commit `112ba30`, `d671dfd`, `2020af1`）
+  - ✅ `RigToolAdapter` + `ToolRegistry::to_dyn_tools()` 実装（commit `1837b64`）
+  - ✅ `Pipeline::execute_with_rig_agent()` 実装（`RustyclawCompletionModel` + `AgentBuilder` + `Chat::chat()`、commit `e311cb1`）
+  - ✅ `rustyclaw-mcp` → rig-core `rmcp` 移行・クレート削除（commit `112ba30`, `d671dfd`, `2020af1`）
     - `execute_with_rig_agent` を `ToolServerHandle` 引数に変更、`AgentBuilder::tool_server_handle()` 使用
-    - Gateway: `McpClientHandler` + `ToolServer` で MCP サーバー接続を管理、`rustyclaw-mcp` クレート削除
-- [ ] **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）**
-  - 静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入。固定プロンプト最小化・履歴上限緩和も含む。
-  - 前提: Phase 40-5 の CF embedding バグ修正完了後。
+    - Gateway: `McpClientHandler` + `ToolServer` で MCP サーバー接続を管理
+- `[ ]` **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）** 🟢
+  - 静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入。
   - 実装計画: `docs/superpowers/plans/2026-06-05-static-docs-rag.md`
 
 ---
@@ -148,15 +145,17 @@
 
 ## Phase 26: 外部 MCP クライアントの堅牢化とトランスポート拡張 🟢
 
+> **注記**: `rustyclaw-mcp` クレートは Phase 40-6 で削除済み。Phase 26 の実装対象は `crates/rustyclaw-gateway/src/lib.rs` 内の `McpClientHandler` / `ToolServerHandle` ブロック（`Gateway::run()` の MCP init 処理）に移行。
+
 - `[ ]` **1. 子プロセスクラッシュ時の自動再接続・復旧 (Auto-Reconnect) の実装**
-  - `crates/rustyclaw-mcp/src/lib.rs` の接続ライフサイクルに異常終了監視と `spawn` 再試行ループを追加。
+  - `crates/rustyclaw-gateway/src/lib.rs` `Gateway::run()` の MCP spawn ブロックに、`mcp_service_tasks` の終了監視と `McpClientHandler::connect()` 再試行ループを追加。
 
 - `[ ]` **2. 外部 MCP サーバーの「メモリ回収（Idle Eviction）」機構の実装**
   - 一定時間 (例: 30分) 呼び出されていない MCP 子プロセスを一度安全にクローズしてメモリを回収、次回ツール呼び出し時にオンデマンドで自動再起動。
 
 - `[ ]` **3. SSE (Server-Sent Events) トランスポートおよび Resources / Prompts 連携の追加**
-  - HTTP/SSE 経由の外部リモート MCP サーバー接続サポートの実装。
-  - Tools（工具）機能だけでなく、Resources や Prompts にもクエリ可能にするための I/O 拡張。
+  - rmcp の HTTP/SSE トランスポートを使った外部リモート MCP サーバー接続サポートの実装。
+  - Tools 機能だけでなく、Resources や Prompts にもクエリ可能にするための I/O 拡張。
 
 - `[ ]` **4. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
