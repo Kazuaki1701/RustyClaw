@@ -558,7 +558,7 @@ impl rig_core::tool::Tool for MemorySearchTool {
                     .join("\n")),
                 Err(e) => Err(ToolCallError(format!("Search failed: {}", e))),
             },
-            Err(e) => Err(ToolCallError(format!("Memory index not available: {}", e))),
+            Err(e) => Err(ToolCallError(format!("Memory index not available (may not have summaries yet): {}", e))),
         }
     }
 }
@@ -599,8 +599,8 @@ impl Tool for WebSearchTool {
             "properties": {
                 "query": { "type": "string", "description": "Search query" },
                 "count": {
-                    "type": "string",
-                    "description": "Number of results as a string (default: '5', max: '10')"
+                    "type": "integer",
+                    "description": "Number of results (default: 5, max: 10)"
                 }
             },
             "required": ["query"]
