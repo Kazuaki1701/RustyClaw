@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-05 (Phase 40-6 全タスク完了・rustyclaw-mcp 削除・Phase 26 参照更新)  
+> **最終更新日**: 2026-06-05 (Phase 40 残タスクを 🔴 最優先に格上げ)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/2026-06-04-completed-phases-24-36-38.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -23,6 +23,12 @@
 - `[x]` **2. 修正後の動作確認 + deploy**
   - `deploy.sh` 実行済み（06:49 サービス再起動確認）。
   - 06:49 以降 embed エラー皆無（journalctl 確認）。07:23 wakeup で最終確認予定。
+
+---
+
+## 🔴 最優先（Phase 40 残タスク）
+
+### Phase 40 残タスク → 上記 §Phase 40 参照
 
 ---
 
@@ -70,19 +76,19 @@
 
 ---
 
-### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🟢
+### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🔴
 > LLM 接続やツール管理を rig-core で統合し、ベクトル検索による長期記憶拡張を実現する。  
-> Phase 40-6（rmcp 移行・ReAct ループ一本化）完了。残タスクは独自改善として 🟢 に格下げ。
+> Phase 40-6（rmcp 移行・ReAct ループ一本化）完了。残タスク（1/2/4/7）を最優先に格上げ。
 
-- `[ ]` **1. rustyclaw-providers の rig-core Provider への置き換え** 🟢
+- `[ ]` **1. rustyclaw-providers の rig-core Provider への置き換え** 🔴
   - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
-- `[ ]` **2. ツール定義と呼び出し処理の `#[tool]` マクロへのリファクタリング** 🟢
+- `[ ]` **2. ツール定義と呼び出し処理の `#[tool]` マクロへのリファクタリング** 🔴
   - `#[tool]` マクロによる JSON スキーマ自動生成と、呼び出し時引数の型安全パースを導入。
   - 現状: `RigToolAdapter` による手動ラップで動作中。機能上の問題なし。
 - `[x]` **3. ベクトル検索（RAG）による長期記憶の拡張** ✅
   - MEMORY.md バレット行を CF AI Gateway `@cf/baai/bge-m3` (1024次元、多言語) でベクトル化し SQLite 保存。
   - Fail-open 設計。実装計画: `docs/plans/2026-06-04-rag-memory-implementation-plan.md`
-- `[ ]` **4. 宣言的 AgentBuilder の導入** 🟢
+- `[ ]` **4. 宣言的 AgentBuilder の導入** 🔴
   - heartbeat / summary などのエージェント定義を AgentBuilder で再整理（現状は execute_heartbeat が独自ループ）。
 - `[x]` **5. Unified RAG with rig-core InMemoryVectorStore** ✅
   - `InMemoryVectorStore` 採用、MEMORY.md チャンクとセッション要約のインメモリ統合 RAG 化。
@@ -95,7 +101,7 @@
   - ✅ `rustyclaw-mcp` → rig-core `rmcp` 移行・クレート削除（commit `112ba30`, `d671dfd`, `2020af1`）
     - `execute_with_rig_agent` を `ToolServerHandle` 引数に変更、`AgentBuilder::tool_server_handle()` 使用
     - Gateway: `McpClientHandler` + `ToolServer` で MCP サーバー接続を管理
-- `[ ]` **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）** 🟢
+- `[ ]` **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）** 🔴
   - 静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入。
   - 実装計画: `docs/superpowers/plans/2026-06-05-static-docs-rag.md`
 
