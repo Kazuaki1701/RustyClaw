@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -43,78 +42,45 @@ pub trait Tool: Send + Sync {
     async fn execute(&self, args: Value) -> ToolResult;
 }
 
-/// A registry that manages active tools and compiles their schemas for LLM ingestion.
+/// A registry that manages active tools as rig-core ToolDyn objects.
+/// Stored as Arc so ToolRegistry is Clone (each Arc clone shares the same tool instance).
 #[derive(Default, Clone)]
 pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn Tool>>,
+    tools: std::collections::HashMap<String, Arc<dyn rig_core::tool::ToolDyn>>,
 }
 
 impl ToolRegistry {
-    /// Creates a new, empty ToolRegistry.
     pub fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-        }
+        Self { tools: std::collections::HashMap::new() }
     }
 
-    /// Registers a tool in the registry. Overwrites if a tool with the same name exists.
-    pub fn register(&mut self, tool: Arc<dyn Tool>) {
-        self.tools.insert(tool.name().to_string(), tool);
+    /// Registers a tool. tool.name() is used as the key.
+    pub fn register(&mut self, tool: Arc<dyn rig_core::tool::ToolDyn>) {
+        self.tools.insert(tool.name(), tool);
     }
 
-    /// Retrieves a tool by its unique name.
-    pub fn get(&self, name: &str) -> Option<&Arc<dyn Tool>> {
+    pub fn get(&self, name: &str) -> Option<&Arc<dyn rig_core::tool::ToolDyn>> {
         self.tools.get(name)
     }
 
-    /// Returns the number of registered tools.
     pub fn tool_count(&self) -> usize {
         self.tools.len()
     }
 
-    /// Compiles all registered tools into LLM-compatible schemas.
-    /// Returns a list of tool definitions compatible with the Anthropic/OpenAI tools parameter structure.
-    pub fn to_llm_schemas(&self) -> Vec<Value> {
-        let mut schemas: Vec<Value> = self
-            .tools
-            .values()
-            .map(|tool| {
-                serde_json::json!({
-                    "name": tool.name(),
-                    "description": tool.description(),
-                    "input_schema": tool.parameters()
-                })
-            })
-            .collect();
-
-        // Sort by name to guarantee deterministic schema ordering in tests and requests.
-        schemas.sort_by(|a, b| {
-            a["name"]
-                .as_str()
-                .unwrap_or("")
-                .cmp(b["name"].as_str().unwrap_or(""))
-        });
-
-        schemas
-    }
-
-    /// Converts all registered tools into a `rig_core::tool::ToolSet` for use with rig agents.
-    pub fn to_toolset(&self) -> rig_core::tool::ToolSet {
-        let mut toolset = rig_core::tool::ToolSet::default();
+    /// Returns tool definitions sorted by name (deterministic order).
+    pub async fn tool_definitions(&self) -> Vec<rig_core::completion::ToolDefinition> {
+        let mut defs = Vec::with_capacity(self.tools.len());
         for tool in self.tools.values() {
-            toolset.add_tool_boxed(Box::new(RigToolAdapter::new(tool.clone())));
+            defs.push(tool.definition(String::new()).await);
         }
-        toolset
+        defs.sort_by(|a, b| a.name.cmp(&b.name));
+        defs
     }
 
-    /// Returns all registered tools as a `Vec<Box<dyn ToolDyn>>` for use with `AgentBuilder::tools()`.
-    pub fn to_dyn_tools(&self) -> Vec<Box<dyn rig_core::tool::ToolDyn>> {
-        self.tools
-            .values()
-            .map(|tool| -> Box<dyn rig_core::tool::ToolDyn> {
-                Box::new(RigToolAdapter::new(tool.clone()))
-            })
-            .collect()
+    /// Deprecated: use tool_definitions().await instead.
+    #[deprecated]
+    pub fn to_llm_schemas(&self) -> Vec<serde_json::Value> {
+        Vec::new()
     }
 }
 
@@ -1274,13 +1240,12 @@ mod tests {
     #[tokio::test]
     async fn test_tool_registration_and_retrieval() {
         let mut registry = ToolRegistry::new();
-        let tool = Arc::new(AddTool);
-        registry.register(tool.clone());
+        let tool = Arc::new(WebFetchTool::new()) as Arc<dyn rig_core::tool::ToolDyn>;
+        registry.register(tool);
 
-        let retrieved = registry.get("add");
+        let retrieved = registry.get("web_fetch");
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().name(), "add");
-        assert_eq!(retrieved.unwrap().description(), "Adds two numbers together.");
+        assert_eq!(retrieved.unwrap().name(), "web_fetch");
 
         let non_existent = registry.get("subtract");
         assert!(non_existent.is_none());
@@ -1307,13 +1272,10 @@ mod tests {
     #[tokio::test]
     async fn test_to_llm_schemas() {
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(AddTool));
-
-        let schemas = registry.to_llm_schemas();
-        assert_eq!(schemas.len(), 1);
-        assert_eq!(schemas[0]["name"], "add");
-        assert_eq!(schemas[0]["description"], "Adds two numbers together.");
-        assert_eq!(schemas[0]["input_schema"]["type"], "object");
+        registry.register(Arc::new(WebFetchTool::new()) as Arc<dyn rig_core::tool::ToolDyn>);
+        let defs = registry.tool_definitions().await;
+        assert!(!defs.is_empty());
+        assert_eq!(defs[0].name, "web_fetch");
     }
 
 
@@ -1611,25 +1573,6 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_tool_registry_to_toolset() {
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(CronScheduleTool::new(|| serde_json::json!([]))));
-
-        let toolset = registry.to_toolset();
-        assert!(toolset.contains("get_cron_schedule"));
-    }
-
-    #[tokio::test]
-    async fn test_tool_registry_to_dyn_tools() {
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(CronScheduleTool::new(|| serde_json::json!([]))));
-
-        let tools = registry.to_dyn_tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name(), "get_cron_schedule");
-    }
-
     // ── Task 1: rig_core::tool::Tool 直接実装テスト ──
     #[tokio::test]
     async fn test_web_fetch_rig_core_tool_name() {
@@ -1724,5 +1667,27 @@ mod tests {
         let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
         let result = tool.call(r#"{"script_name":"../etc/passwd"}"#.to_string()).await;
         assert!(result.is_err());
+    }
+
+    // ── Task 4: ToolRegistry rig-core ToolDyn ──
+    #[tokio::test]
+    async fn test_tool_registry_rig_core_registration_and_lookup() {
+        let mut registry = ToolRegistry::new();
+        let tool = Arc::new(WebFetchTool::new()) as Arc<dyn rig_core::tool::ToolDyn>;
+        registry.register(tool);
+        assert_eq!(registry.tool_count(), 1);
+        assert!(registry.get("web_fetch").is_some());
+        assert!(registry.get("no_such_tool").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_rig_core_tool_definitions() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(WebFetchTool::new()) as Arc<dyn rig_core::tool::ToolDyn>);
+        let defs = registry.tool_definitions().await;
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "web_fetch");
+        assert!(!defs[0].description.is_empty());
+        assert!(defs[0].parameters.get("properties").is_some());
     }
 }

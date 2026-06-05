@@ -685,19 +685,18 @@ Rules:
                 if !calls.is_empty() {
                     for call in calls {
                         tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
-                        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
-                            .unwrap_or_else(|_| serde_json::json!({}));
-                        let tool_result = if let Some(tool) = tool_registry.get(&call.function.name) {
-                            tool.execute(args).await
-                        } else {
-                            rustyclaw_tools::ToolResult {
-                                content: format!("Error: Tool '{}' not found in registry", call.function.name),
-                                is_error: true,
+                        let (tool_content, _tool_is_error) = if let Some(tool) = tool_registry.get(&call.function.name) {
+                            use rig_core::tool::ToolDyn as _;
+                            match tool.call(call.function.arguments.clone()).await {
+                                Ok(content) => (content, false),
+                                Err(e) => (format!("Tool error: {}", e), true),
                             }
+                        } else {
+                            (format!("Error: Tool '{}' not found in registry", call.function.name), true)
                         };
                         let tool_msg = Message {
                             role: "tool".to_string(),
-                            content: tool_result.content,
+                            content: tool_content,
                             tool_call_id: Some(call.id.clone()),
                             name: Some(call.function.name.clone()),
                             ..Default::default()
@@ -1099,23 +1098,20 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                             let _ = tx.send(format!("ツール '{}' を実行しています...", call.function.name)).await;
                         }
 
-                        // 引数を Value にパース
-                        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
-                            .unwrap_or_else(|_| serde_json::json!({}));
-
-                        let tool_result = if let Some(tool) = tool_registry.get(&call.function.name) {
-                            tool.execute(args).await
-                        } else {
-                            rustyclaw_tools::ToolResult {
-                                content: format!("Error: Tool '{}' not found in registry", call.function.name),
-                                is_error: true,
+                        let (tool_content, _tool_is_error) = if let Some(tool) = tool_registry.get(&call.function.name) {
+                            use rig_core::tool::ToolDyn as _;
+                            match tool.call(call.function.arguments.clone()).await {
+                                Ok(content) => (content, false),
+                                Err(e) => (format!("Tool error: {}", e), true),
                             }
+                        } else {
+                            (format!("Error: Tool '{}' not found in registry", call.function.name), true)
                         };
 
                         // ツール実行結果のメッセージ作成
                         let tool_msg = Message {
                             role: "tool".to_string(),
-                            content: tool_result.content,
+                            content: tool_content,
                             tool_call_id: Some(call.id.clone()),
                             name: Some(call.function.name.clone()),
                             ..Default::default()

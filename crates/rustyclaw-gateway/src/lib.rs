@@ -692,55 +692,55 @@ impl Gateway {
         // Brave Search ネイティブツール登録
         if let Some(b) = config.tools.brave_search.as_ref().filter(|b| b.enabled) {
             if !b.api_key.is_empty() {
-                let t = Arc::new(rustyclaw_tools::WebSearchTool::new(b.api_key.clone()));
-                tool_registry.register(t.clone());
-                tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+                let t = rustyclaw_tools::WebSearchTool::new(b.api_key.clone());
+                tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+                tool_server_handle.add_tool(t).await.ok();
                 tracing::info!("Registered WebSearchTool (Brave Search).");
             }
         }
         // WebFetchTool は常時登録（APIキー不要）
         {
-            let t = Arc::new(rustyclaw_tools::WebFetchTool::new());
-            tool_registry.register(t.clone());
-            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+            let t = rustyclaw_tools::WebFetchTool::new();
+            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+            tool_server_handle.add_tool(t).await.ok();
         }
 
         // WorkspaceReadTool / WorkspaceWriteTool 登録
         {
-            let t = Arc::new(rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone()));
-            tool_registry.register(t.clone());
-            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+            let t = rustyclaw_tools::WorkspaceReadTool::new(self.workspace_path.clone());
+            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+            tool_server_handle.add_tool(t).await.ok();
         }
         {
-            let t = Arc::new(rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone()));
-            tool_registry.register(t.clone());
-            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+            let t = rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone());
+            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+            tool_server_handle.add_tool(t).await.ok();
         }
         {
-            let t = Arc::new(rustyclaw_tools::MemorySearchTool::new(self.workspace_path.clone()));
-            tool_registry.register(t.clone());
-            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+            let t = rustyclaw_tools::MemorySearchTool::new(self.workspace_path.clone());
+            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+            tool_server_handle.add_tool(t).await.ok();
         }
         {
-            let t = Arc::new(rustyclaw_tools::WorkspaceExecuteScriptTool::new(self.workspace_path.clone()));
-            tool_registry.register(t.clone());
-            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+            let t = rustyclaw_tools::WorkspaceExecuteScriptTool::new(self.workspace_path.clone());
+            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+            tool_server_handle.add_tool(t).await.ok();
         }
         tracing::info!("Registered Workspace I/O, Memory Search, and Script Execution tools.");
 
         let ws_path_clone = self.workspace_path.clone();
         let db_path_for_tool = self.workspace_path.join("memory.db");
         {
-            let t = Arc::new(rustyclaw_tools::CronScheduleTool::new(move || {
+            let t = rustyclaw_tools::CronScheduleTool::new(move || {
                 if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path_for_tool) {
                     let sched = crate::cron::compute_schedule(&ws_path_clone, &db);
                     serde_json::Value::Array(sched)
                 } else {
                     serde_json::Value::Array(vec![])
                 }
-            }));
-            tool_registry.register(t.clone());
-            tool_server_handle.add_tool(rustyclaw_tools::RigToolAdapter::new(t)).await.ok();
+            });
+            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+            tool_server_handle.add_tool(t).await.ok();
         }
         tracing::info!("Registered native CronScheduleTool.");
 
