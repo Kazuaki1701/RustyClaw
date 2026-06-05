@@ -1201,6 +1201,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         // rig CompletionModel + ToolDyn vec の構築
         let model = RustyclawCompletionModel::new(self.config.clone(), purpose, session_id);
+        let usage_sink = model.usage_sink();
         let rig_tools = tool_registry.to_dyn_tools();
 
         let agent = AgentBuilder::new(model)
@@ -1220,6 +1221,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         let response_text = filter_json_leaks(&response_text);
 
+        // 最終プロバイダー呼び出しの usage 情報を取得
+        let last_usage = usage_sink.lock().unwrap().take();
+
         // 最終アシスタントメッセージを保存
         let assistant_msg = Message {
             role: "assistant".to_string(),
@@ -1238,11 +1242,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             content: response_text,
             role: "assistant".to_string(),
             tool_calls: None,
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: None,
-            model_used: None,
-            provider_id: None,
+            prompt_tokens: last_usage.as_ref().and_then(|u| u.prompt_tokens),
+            completion_tokens: last_usage.as_ref().and_then(|u| u.completion_tokens),
+            total_tokens: last_usage.as_ref().and_then(|u| u.total_tokens),
+            model_used: last_usage.as_ref().and_then(|u| u.model_used.clone()),
+            provider_id: last_usage.as_ref().and_then(|u| u.provider_id.clone()),
         })
     }
 

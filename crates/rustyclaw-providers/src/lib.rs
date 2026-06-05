@@ -4,6 +4,7 @@ use futures_util::{Stream, StreamExt};
 use rustyclaw_config::{get_app_dir, Config, LlmModelConfig};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
@@ -1496,6 +1497,7 @@ pub struct RustyclawCompletionModel {
     purpose: String,
     session_id: String,
     pub model_name: String,
+    usage_sink: Arc<Mutex<Option<LlmResponse>>>,
 }
 
 impl RustyclawCompletionModel {
@@ -1515,7 +1517,15 @@ impl RustyclawCompletionModel {
             purpose,
             session_id: session_id.into(),
             model_name,
+            usage_sink: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Returns a handle to the usage sink shared across all clones of this model.
+    /// After `Chat::chat()` completes, the sink holds the last `LlmResponse` returned
+    /// by the provider chain, which can be used to propagate token usage metadata.
+    pub fn usage_sink(&self) -> Arc<Mutex<Option<LlmResponse>>> {
+        Arc::clone(&self.usage_sink)
     }
 
     /// Implements the failover chain: tries each model in the purpose's chain until one succeeds.
@@ -1623,6 +1633,7 @@ impl rig_core::completion::CompletionModel for RustyclawCompletionModel {
             )
             .await?;
 
+        *self.usage_sink.lock().unwrap() = Some(llm_resp.clone());
         Ok(llm_response_to_rig(llm_resp))
     }
 
@@ -2186,6 +2197,17 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "system");
         assert_eq!(msgs[0].content, "system prompt");
+    }
+
+    #[test]
+    fn test_completion_model_usage_sink_starts_empty() {
+        let model = RustyclawCompletionModel::new(
+            rustyclaw_config::Config::default(),
+            "default",
+            "test-session",
+        );
+        let sink = model.usage_sink();
+        assert!(sink.lock().unwrap().is_none());
     }
 }
 
