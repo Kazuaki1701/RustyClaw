@@ -4,7 +4,6 @@ use futures_util::{Stream, StreamExt};
 use rustyclaw_config::{get_app_dir, Config, LlmModelConfig};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
-use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
@@ -1356,6 +1355,88 @@ pub fn llm_response_to_rig(
         raw_response: resp,
         message_id: None,
     }
+}
+
+/// Converts RustyClaw provider `Message` list to rig-core `Message` format.
+/// Inverse of `rig_messages_to_provider`.
+pub fn provider_messages_to_rig(
+    messages: &[Message],
+) -> Vec<rig_core::completion::Message> {
+    use rig_core::completion::message::{AssistantContent, Text, ToolCall as RigToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent};
+    use rig_core::OneOrMany;
+
+    let mut out = Vec::new();
+    for msg in messages {
+        match msg.role.as_str() {
+            "system" => {
+                out.push(rig_core::completion::Message::System {
+                    content: msg.content.clone(),
+                });
+            }
+            "user" => {
+                out.push(rig_core::completion::Message::User {
+                    content: OneOrMany::one(UserContent::Text(Text {
+                        text: msg.content.clone(),
+                        additional_params: None,
+                    })),
+                });
+            }
+            "tool" => {
+                let tool_call_id = msg
+                    .tool_call_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                out.push(rig_core::completion::Message::User {
+                    content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                        id: tool_call_id,
+                        call_id: None,
+                        content: OneOrMany::one(ToolResultContent::Text(Text {
+                            text: msg.content.clone(),
+                            additional_params: None,
+                        })),
+                    })),
+                });
+            }
+            "assistant" => {
+                let mut items: Vec<AssistantContent> = Vec::new();
+                if let Some(ref tcs) = msg.tool_calls {
+                    for tc in tcs {
+                        items.push(AssistantContent::ToolCall(RigToolCall::new(
+                            tc.id.clone(),
+                            ToolFunction::new(
+                                tc.function.name.clone(),
+                                serde_json::from_str(&tc.function.arguments)
+                                    .unwrap_or(serde_json::json!({})),
+                            ),
+                        )));
+                    }
+                }
+                if !msg.content.is_empty() {
+                    items.push(AssistantContent::Text(Text {
+                        text: msg.content.clone(),
+                        additional_params: None,
+                    }));
+                }
+                if items.is_empty() {
+                    items.push(AssistantContent::Text(Text {
+                        text: String::new(),
+                        additional_params: None,
+                    }));
+                }
+                out.push(rig_core::completion::Message::Assistant {
+                    id: None,
+                    content: OneOrMany::many(items).unwrap_or_else(|_| {
+                        OneOrMany::one(AssistantContent::Text(Text {
+                            text: String::new(),
+                            additional_params: None,
+                        }))
+                    }),
+                });
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Maps a session_id to a routing category for provider selection.

@@ -92,6 +92,16 @@ impl ToolRegistry {
         }
         toolset
     }
+
+    /// Returns all registered tools as a `Vec<Box<dyn ToolDyn>>` for use with `AgentBuilder::tools()`.
+    pub fn to_dyn_tools(&self) -> Vec<Box<dyn rig_core::tool::ToolDyn>> {
+        self.tools
+            .values()
+            .map(|tool| -> Box<dyn rig_core::tool::ToolDyn> {
+                Box::new(RigToolAdapter::new(tool.clone()))
+            })
+            .collect()
+    }
 }
 
 /// Adapts a RustyClaw `Tool` to the `rig_core::tool::ToolDyn` interface.
@@ -1182,5 +1192,15 @@ mod tests {
 
         let toolset = registry.to_toolset();
         assert!(toolset.contains("get_cron_schedule"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_to_dyn_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(CronScheduleTool::new(|| serde_json::json!([]))));
+
+        let tools = registry.to_dyn_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "get_cron_schedule");
     }
 }

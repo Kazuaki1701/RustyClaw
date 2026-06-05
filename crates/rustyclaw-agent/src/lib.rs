@@ -1141,6 +1141,111 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         }
     }
 
+    /// rig::agent::Agent を使ったツール実行。
+    /// RustyclawCompletionModel を通じてフェイルオーバーチェーンを保ちつつ、
+    /// rig の ReAct ループで自動的にツール呼び出しを処理する。
+    /// NOTE: ツール呼び出しの中間ステップはセッションログに保存されない（最終結果のみ）。
+    pub async fn execute_with_rig_agent(
+        &self,
+        workspace_dir: &Path,
+        session_id: &str,
+        user_message: &str,
+        tool_registry: &ToolRegistry,
+        purpose: &str,
+        progress_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    ) -> Result<LlmResponse> {
+        use rig_core::agent::AgentBuilder;
+        use rig_core::completion::Chat;
+        use rustyclaw_providers::RustyclawCompletionModel;
+
+        let logger = SessionLogger::new(workspace_dir);
+
+        // システムプロンプトと RAG コンテキストの構築
+        let mut system_context = self.build_system_context(workspace_dir)?;
+        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id) {
+            system_context.push_str(&continuation);
+        }
+        if let Some(ref rag) = self.rag {
+            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            if !rag_ctx.is_empty() {
+                system_context.push_str(&rag_ctx);
+            }
+        }
+
+        // セッション履歴のロード
+        let history_messages = if session_id.starts_with("cron:") {
+            Vec::new()
+        } else {
+            logger
+                .load_history(session_id)
+                .context("Failed to load session history")?
+        };
+        let cleaned_history =
+            self.process_proactive_posts(session_id, history_messages, &mut system_context);
+        let mut history = ConversationHistory::new(cleaned_history);
+        history.trim_to_last(self.get_history_message_limit(purpose));
+
+        // ユーザーメッセージを保存
+        let user_msg = Message {
+            role: "user".to_string(),
+            content: user_message.to_string(),
+            ..Default::default()
+        };
+        logger
+            .append_message(session_id, &user_msg)
+            .context("Failed to save user message")?;
+
+        if let Some(ref tx) = progress_tx {
+            let _ = tx.send("rig エージェントが処理中...".to_string()).await;
+        }
+
+        // rig CompletionModel + ToolDyn vec の構築
+        let model = RustyclawCompletionModel::new(self.config.clone(), purpose, session_id);
+        let rig_tools = tool_registry.to_dyn_tools();
+
+        let agent = AgentBuilder::new(model)
+            .preamble(&system_context)
+            .tools(rig_tools)
+            .build();
+
+        // プロバイダーメッセージを rig メッセージ形式に変換
+        let mut rig_history =
+            rustyclaw_providers::provider_messages_to_rig(&history.messages);
+
+        // rig ReAct ループ実行（ツール呼び出しは rig が自動管理）
+        let response_text = agent
+            .chat(user_message, &mut rig_history)
+            .await
+            .map_err(|e| anyhow::anyhow!("rig agent error: {}", e))?;
+
+        let response_text = filter_json_leaks(&response_text);
+
+        // 最終アシスタントメッセージを保存
+        let assistant_msg = Message {
+            role: "assistant".to_string(),
+            content: response_text.clone(),
+            ..Default::default()
+        };
+        logger
+            .append_message(session_id, &assistant_msg)
+            .context("Failed to save assistant response")?;
+
+        if !session_id.starts_with("cron") {
+            self.trigger_memory_flush_async(workspace_dir, session_id);
+        }
+
+        Ok(LlmResponse {
+            content: response_text,
+            role: "assistant".to_string(),
+            tool_calls: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            model_used: None,
+            provider_id: None,
+        })
+    }
+
     /// ストリーミングでの対話実行
     pub async fn execute_stream(
         &self,
@@ -2425,5 +2530,18 @@ Keep it short.\n\
         let engine = UnifiedRagEngine::new(model);
         engine.rebuild_from_db(&db).unwrap();
         assert_eq!(engine.len(), 2);
+    }
+
+    #[test]
+    fn test_pipeline_has_rig_agent_builder() {
+        use rustyclaw_providers::RustyclawCompletionModel;
+        use rustyclaw_config::Config;
+
+        let config = Config::default();
+        let model = RustyclawCompletionModel::new(config, "default", "test-session");
+        // If this compiles and can build an agent, the rig integration is wired correctly.
+        let _agent = rig_core::agent::AgentBuilder::new(model)
+            .preamble("test")
+            .build();
     }
 }
