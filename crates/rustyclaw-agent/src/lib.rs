@@ -653,12 +653,12 @@ Rules:
             .context("Failed to save user message in session log (fail-closed)")?;
 
         let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
-            .to_llm_schemas()
-            .iter()
-            .map(|schema| rustyclaw_providers::ToolDef {
-                name: schema["name"].as_str().unwrap_or("").to_string(),
-                description: schema["description"].as_str().unwrap_or("").to_string(),
-                parameters: schema["input_schema"].clone(),
+            .tool_definitions().await
+            .into_iter()
+            .map(|d| rustyclaw_providers::ToolDef {
+                name: d.name,
+                description: d.description,
+                parameters: d.parameters,
             })
             .collect();
 
@@ -1039,14 +1039,14 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         logger.append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
 
-        // ツール定義の変換 (rustyclaw-tools::Tool -> rustyclaw-providers::ToolDef)
+        // ツール定義の変換 (rig_core::tool::ToolDyn -> rustyclaw-providers::ToolDef)
         let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
-            .to_llm_schemas()
-            .iter()
-            .map(|schema| rustyclaw_providers::ToolDef {
-                name: schema["name"].as_str().unwrap_or("").to_string(),
-                description: schema["description"].as_str().unwrap_or("").to_string(),
-                parameters: schema["input_schema"].clone(),
+            .tool_definitions().await
+            .into_iter()
+            .map(|d| rustyclaw_providers::ToolDef {
+                name: d.name,
+                description: d.description,
+                parameters: d.parameters,
             })
             .collect();
 
@@ -2235,38 +2235,34 @@ mod tests {
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
 
-        use async_trait::async_trait;
-
         struct MockAddTool;
-        #[async_trait]
-        impl rustyclaw_tools::Tool for MockAddTool {
-            fn name(&self) -> &str {
-                "add"
+        impl rig_core::tool::Tool for MockAddTool {
+            const NAME: &'static str = "add";
+            type Error = rustyclaw_tools::ToolCallError;
+            type Args = serde_json::Value;
+            type Output = String;
+            async fn definition(&self, _: String) -> rig_core::completion::ToolDefinition {
+                rig_core::completion::ToolDefinition {
+                    name: "add".into(),
+                    description: "Adds two numbers".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "a": { "type": "number" },
+                            "b": { "type": "number" }
+                        }
+                    }),
+                }
             }
-            fn description(&self) -> &str {
-                "Adds two numbers"
-            }
-            fn parameters(&self) -> serde_json::Value {
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "a": { "type": "number" },
-                        "b": { "type": "number" }
-                    }
-                })
-            }
-            async fn execute(&self, args: serde_json::Value) -> rustyclaw_tools::ToolResult {
+            async fn call(&self, args: serde_json::Value) -> Result<String, rustyclaw_tools::ToolCallError> {
                 let a = args["a"].as_f64().unwrap_or(0.0);
                 let b = args["b"].as_f64().unwrap_or(0.0);
-                rustyclaw_tools::ToolResult {
-                    content: format!("{}", a + b),
-                    is_error: false,
-                }
+                Ok(format!("{}", a + b))
             }
         }
 
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(MockAddTool));
+        registry.register(Arc::new(MockAddTool) as Arc<dyn rig_core::tool::ToolDyn>);
 
         unsafe {
             std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
@@ -2543,5 +2539,34 @@ Keep it short.\n\
         let _agent = rig_core::agent::AgentBuilder::new(model)
             .preamble("test")
             .build();
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_tools_rig_core_registry() {
+        use std::sync::Arc;
+        use rustyclaw_tools::{ToolRegistry, ToolCallError};
+
+        struct EchoTool;
+        impl rig_core::tool::Tool for EchoTool {
+            const NAME: &'static str = "echo";
+            type Error = ToolCallError;
+            type Args = serde_json::Value;
+            type Output = String;
+            async fn definition(&self, _: String) -> rig_core::completion::ToolDefinition {
+                rig_core::completion::ToolDefinition {
+                    name: "echo".into(),
+                    description: "echo".into(),
+                    parameters: serde_json::json!({"type":"object","properties":{}}),
+                }
+            }
+            async fn call(&self, _args: serde_json::Value) -> Result<String, ToolCallError> {
+                Ok("echoed".into())
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(EchoTool) as Arc<dyn rig_core::tool::ToolDyn>);
+        let defs = registry.tool_definitions().await;
+        assert_eq!(defs[0].name, "echo");
     }
 }
