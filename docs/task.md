@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-05 (Phase 40 残タスクを 🔴 最優先に格上げ)  
+> **最終更新日**: 2026-06-06 (Phase 40-2 完了: rig-core Tool トレイト直接実装・RigToolAdapter 削除)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/2026-06-04-completed-phases-24-36-38.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -37,7 +37,14 @@
 
 ## 🔴 最優先（Phase 40 残タスク）
 
-### Phase 40 残タスク → 上記 §Phase 40 参照
+### ~~Phase 40-2 rig-core Tool トレイト移行~~ ✅ 完了（2026-06-06）
+> `rig_core::tool::Tool` を全ツールに直接実装。`RigToolAdapter`・カスタム `Tool` トレイト・`async-trait` 依存を削除。  
+> 10コミット、約754行削減。テスト 152 件全通過。
+
+### Phase 40 残タスク（1 / 4 / 7）
+- **1**: `rustyclaw-providers` → rig-core Provider 置き換え
+- **4**: 宣言的 `AgentBuilder` の導入
+- **7**: Static Docs RAG（AGENTS.md / skills/*.md の動的注入）
 
 ---
 
@@ -87,13 +94,14 @@
 
 ### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🔴
 > LLM 接続やツール管理を rig-core で統合し、ベクトル検索による長期記憶拡張を実現する。  
-> Phase 40-6（rmcp 移行・ReAct ループ一本化）完了。残タスク（1/2/4/7）を最優先に格上げ。
+> Phase 40-6（rmcp 移行・ReAct ループ一本化）完了。Phase 40-2（rig-core Tool 直接実装）完了。残タスク（1/4/7）。
 
 - `[ ]` **1. rustyclaw-providers の rig-core Provider への置き換え** 🔴
   - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
-- `[ ]` **2. ツール定義と呼び出し処理の `#[tool]` マクロへのリファクタリング** 🔴
-  - `#[tool]` マクロによる JSON スキーマ自動生成と、呼び出し時引数の型安全パースを導入。
-  - 現状: `RigToolAdapter` による手動ラップで動作中。機能上の問題なし。
+- `[x]` **2. rig-core Tool トレイト直接実装（Phase 40-2）** ✅ 完了（2026-06-06）
+  - 全ツールに `rig_core::tool::Tool` を直接実装し、typed `Args` struct で型安全な引数パースを実現。
+  - `RigToolAdapter`・カスタム `Tool` トレイト・`ToolResult`・`async-trait` 依存を削除。
+  - 実装計画: `docs/superpowers/plans/2026-06-05-phase40-2-rig-tool-trait-migration.md`
 - `[x]` **3. ベクトル検索（RAG）による長期記憶の拡張** ✅
   - MEMORY.md バレット行を CF AI Gateway `@cf/baai/bge-m3` (1024次元、多言語) でベクトル化し SQLite 保存。
   - Fail-open 設計。実装計画: `docs/plans/2026-06-04-rag-memory-implementation-plan.md`
