@@ -77,8 +77,7 @@ impl ToolRegistry {
         defs
     }
 
-    /// Deprecated: use tool_definitions().await instead.
-    #[deprecated]
+    #[deprecated(note = "use tool_definitions().await instead")]
     pub fn to_llm_schemas(&self) -> Vec<serde_json::Value> {
         Vec::new()
     }
