@@ -686,7 +686,6 @@ Rules:
                     for call in calls {
                         tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
                         let (tool_content, _tool_is_error) = if let Some(tool) = tool_registry.get(&call.function.name) {
-                            use rig_core::tool::ToolDyn as _;
                             match tool.call(call.function.arguments.clone()).await {
                                 Ok(content) => (content, false),
                                 Err(e) => (format!("Tool error: {}", e), true),
@@ -1099,7 +1098,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                         }
 
                         let (tool_content, _tool_is_error) = if let Some(tool) = tool_registry.get(&call.function.name) {
-                            use rig_core::tool::ToolDyn as _;
                             match tool.call(call.function.arguments.clone()).await {
                                 Ok(content) => (content, false),
                                 Err(e) => (format!("Tool error: {}", e), true),
