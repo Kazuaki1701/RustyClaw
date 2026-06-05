@@ -485,7 +485,7 @@ impl LaneRegistry {
                                     });
 
                                     // スキルファイル注入（workspace/skills/<name>.md が存在すれば前置）
-                                    let content = crate::skills::inject_skill_content(&workspace_path, &content);
+                                    let injected_content = crate::skills::inject_skill_content(&workspace_path, &content);
                                     let exec_res = if session_id.starts_with("cron:session-summary:") {
                                         let target_session_id = &session_id["cron:session-summary:".len()..];
                                         pipeline.generate_session_summary(&workspace_path, target_session_id)
@@ -502,7 +502,7 @@ impl LaneRegistry {
                                             })
                                     } else {
                                         let run_purpose = if session_id == "cron:topic-patrol" { "patrol" } else { "discord" };
-                                        pipeline.execute_with_rig_agent(&workspace_path, &session_id, &content, tool_server_handle.clone(), run_purpose, progress_tx_opt).await
+                                        pipeline.execute_with_rig_agent(&workspace_path, &session_id, &content, &injected_content, tool_server_handle.clone(), run_purpose, progress_tx_opt).await
                                     };
 
                                     // 進捗表示の終了とクリーンアップ

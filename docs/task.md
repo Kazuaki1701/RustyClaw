@@ -13,16 +13,25 @@
 ### ~~Phase 40-5 バグ修正: CF Embedding `'input' field is required`~~ ✅ 完了
 > 2026-06-05 修正・デプロイ済み。commit `55f773f`。  
 > 根本原因: LM Studio（OpenAI 互換）に `{"text":}` を送っていたが `{"input":}` が正しい。URL末尾 `/embeddings` 検出で分岐、レスポンスパースも OpenAI 形式対応。  
-> 確認: 06:04 ログファイルで修正前エラー（`'input' field is required`）を 04:00〜06:01 に連続確認。06:49 デプロイ後は同エラー皆無。07:23 Heartbeat で `retrieve_rag_context` 成功ログを最終確認予定。
 
 - `[x]` **1. `CloudflareEmbeddingClient.embed()` のリクエストボディを調査・修正**
-  - `build_embed_body()` 追加：`api_endpoint.ends_with("/embeddings")` で `{"input":}` / `{"text":}` を分岐。
-  - `OpenAiEmbedResponse` 構造体を追加しレスポンスパースを両形式対応。
-  - 新規テスト 3本追加済み。対象: `crates/rustyclaw-providers/src/lib.rs`
-
 - `[x]` **2. 修正後の動作確認 + deploy**
-  - `deploy.sh` 実行済み（06:49 サービス再起動確認）。
-  - 06:49 以降 embed エラー皆無（journalctl 確認）。07:23 wakeup で最終確認予定。
+
+### ~~Memory Flush バグ修正: コンテキスト制限超過によるスキップ~~ ✅ 完了
+> 2026-06-05 修正済み。  
+> 根本原因: スキルファイルがインジェクションされた bloated なユーザーメッセージがそのまま履歴ファイル（http-dashboard.jsonl）に user role として保存され、履歴サイズが肥大化。Memory Flush 時のトークン見積もりがコンテキスト制限（13,107 tokens）を超過しスキップされていた。  
+> 対応内容: `execute_with_rig_agent` に `raw_user_message`（ログ・RAG用）と `injected_user_message`（LLM/agent実行用）を分離して渡すように修正。  
+
+- `[x]` **1. `execute_with_rig_agent` のシグネチャ・内部処理変更**
+- `[x]` **2. `rustyclaw-gateway/src/lib.rs` での呼び出し処理アップデート**
+
+### seen_items による既読通知フィルタリング 🔴
+> 2026-06-05 ログ点検で発覚。  
+> 現象: 重複検知を避けるための `seen_items` テーブルが一度も使用されておらず、毎回同一のメールを Important 検知して Proactive Speak (Discord 通知) を 30分おきに送り続けている。  
+> 対処: `is_item_seen` による既読チェックと `mark_item_seen` による既読登録をゲートウェイ / エージェント側へ実装。  
+
+- `[ ]` **1. ゲートウェイのメール / カレンダー取得時に is_item_seen チェックを実装**
+- `[ ]` **2. ユーザー通知配信時に mark_item_seen による既読登録を実装**
 
 ---
 

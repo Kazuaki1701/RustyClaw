@@ -1149,7 +1149,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         &self,
         workspace_dir: &Path,
         session_id: &str,
-        user_message: &str,
+        raw_user_message: &str,
+        injected_user_message: &str,
         tool_handle: rig_core::tool::server::ToolServerHandle,
         purpose: &str,
         progress_tx: Option<tokio::sync::mpsc::Sender<String>>,
@@ -1166,7 +1167,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
         if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            let rag_ctx = retrieve_rag_context(raw_user_message, &self.config, rag).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -1185,10 +1186,10 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let mut history = ConversationHistory::new(cleaned_history);
         history.trim_to_last(self.get_history_message_limit(purpose));
 
-        // ユーザーメッセージを保存
+        // ユーザーメッセージを保存 (injected されていないオリジナルのメッセージのみ保存)
         let user_msg = Message {
             role: "user".to_string(),
-            content: user_message.to_string(),
+            content: raw_user_message.to_string(),
             ..Default::default()
         };
         logger
@@ -1212,9 +1213,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let mut rig_history =
             rustyclaw_providers::provider_messages_to_rig(&history.messages);
 
-        // rig ReAct ループ実行（ツール呼び出しは rig が自動管理）
+        // rig ReAct ループ実行 (LLMにはインジェクション済みのメッセージを渡す)
         let response_text = agent
-            .chat(user_message, &mut rig_history)
+            .chat(injected_user_message, &mut rig_history)
             .await
             .map_err(|e| anyhow::anyhow!("rig agent error: {}", e))?;
 
