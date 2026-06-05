@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-05 (Phase 40-5 バグ修正完了・Phase 39 格下げ🟢・Phase 40 格上げ🔴)  
+> **最終更新日**: 2026-06-05 (Phase 40-6 Task 4 完了 — rustyclaw-mcp → rig-core rmcp 移行)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/2026-06-04-completed-phases-24-36-38.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -26,7 +26,9 @@
 
 ---
 
-### Phase 37: GeminiClaw 高度先進機能の移植と統合 🔴
+## 🟢 その他の改善案件（独自機能・将来対応）
+
+### Phase 37: GeminiClaw 高度先進機能の移植と統合 🟢
 > 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。
 
 - `[ ]` **1. 自律性制御 (Autonomy Level) システムの導入**
@@ -46,8 +48,6 @@
   - 会話圧縮（コンパクション）のトリガーしきい値と動的連動させるリファクタリング。
 
 ---
-
-## 🟢 その他の改善案件（独自機能・将来対応）
 
 ### Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル） 🟢
 > GeminiClaw は Discord / Slack / Telegram のマルチチャンネルに対応しており、notifications チャンネル（home と独立したバックグラウンドジョブ通知先）を持つ。RustyClaw は Discord のみで、LINE 導入予定に伴いこのギャップを回収する。  
@@ -89,13 +89,14 @@
   - `InMemoryVectorStore` の採用、`MEMORY.md` チャンクとセッション要約のインメモリ統合 RAG 化。
   - 実装済み・稼働中（commit `55f773f` で CF embedding バグ修正済み。06:49 デプロイ後エラー皆無）。
   - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-unified-rag.md`
-- `[~]` **6. rig-core 全面リファクタリング (Phase 40-6)**
+- `[x]` **6. rig-core 全面リファクタリング (Phase 40-6)** ✅ 完了
   - `rmcp` クライアントへの移行、`rig::agent::Agent` 移行による ReAct/RAG ループの一本化。
   - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-refactoring.md`
   - ✅ Task 3: `RigToolAdapter` + `ToolRegistry::to_dyn_tools()` 実装（commit `1837b64`, `e311cb1`）
   - ✅ Task 6: `Pipeline::execute_with_rig_agent()` 実装（`RustyclawCompletionModel` + `AgentBuilder` + `Chat::chat()`、commit `e311cb1`）
-  - ⏳ Task 4: `rustyclaw-mcp` → rig-core `rmcp` feature への移行は未実施
-  - 残: `execute_with_tools` を `execute_with_rig_agent` に切り替え（呼び出し側の配線変更）が必要
+  - ✅ Task 4: `rustyclaw-mcp` → rig-core `rmcp` feature への移行（commit `112ba30`, `d671dfd`, `2020af1`）
+    - `execute_with_rig_agent` を `ToolServerHandle` 引数に変更、`AgentBuilder::tool_server_handle()` 使用
+    - Gateway: `McpClientHandler` + `ToolServer` で MCP サーバー接続を管理、`rustyclaw-mcp` クレート削除
 - [ ] **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）**
   - 静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入。固定プロンプト最小化・履歴上限緩和も含む。
   - 前提: Phase 40-5 の CF embedding バグ修正完了後。
