@@ -1358,36 +1358,149 @@ pub fn llm_response_to_rig(
     }
 }
 
+/// Maps a session_id to a routing category for provider selection.
+pub fn session_id_to_category(session_id: &str) -> String {
+    if session_id == "memory" {
+        "memory"
+    } else if session_id == "summary" || session_id.starts_with("cron:session-summary:") {
+        "summary"
+    } else if session_id.contains("daily-summary") {
+        "daily"
+    } else if session_id.contains("heartbeat") {
+        "heartbeat"
+    } else if session_id.contains("briefing") {
+        "briefing"
+    } else if session_id.contains("vitals") {
+        "vitals"
+    } else if session_id.contains("karakeep") {
+        "karakeep"
+    } else if session_id.contains("patrol") {
+        "patrol"
+    } else if session_id.contains("dashboard") {
+        "dashboard"
+    } else {
+        "discord"
+    }
+    .to_string()
+}
+
 /// Client handle for constructing a `RustyclawCompletionModel`.
 #[derive(Clone)]
 pub struct RustyclawProviderClient {
-    pub provider: Arc<dyn LlmProvider>,
-    pub default_model: String,
+    pub config: rustyclaw_config::Config,
+    pub purpose: String,
+    pub session_id: String,
 }
 
 impl RustyclawProviderClient {
-    pub fn new(provider: Arc<dyn LlmProvider>, default_model: impl Into<String>) -> Self {
+    pub fn new(
+        config: rustyclaw_config::Config,
+        purpose: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
         Self {
-            provider,
-            default_model: default_model.into(),
+            config,
+            purpose: purpose.into(),
+            session_id: session_id.into(),
         }
     }
 }
 
-/// A rig-core `CompletionModel` adapter around RustyClaw's failover provider chain.
+/// A rig-core `CompletionModel` adapter that wraps RustyClaw's failover provider chain.
 /// Enables `rig::agent::Agent<RustyclawCompletionModel>` for tool-using agents.
+/// The model drives rig's ReAct loop while RustyClaw's provider failover chain is preserved.
 #[derive(Clone)]
 pub struct RustyclawCompletionModel {
-    provider: Arc<dyn LlmProvider>,
+    config: rustyclaw_config::Config,
+    purpose: String,
+    session_id: String,
     pub model_name: String,
 }
 
 impl RustyclawCompletionModel {
-    pub fn new(provider: Arc<dyn LlmProvider>, model_name: impl Into<String>) -> Self {
+    pub fn new(
+        config: rustyclaw_config::Config,
+        purpose: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        let purpose = purpose.into();
+        let model_name = config
+            .get_model_chain(&purpose)
+            .first()
+            .map(|m| m.model_name.clone())
+            .unwrap_or_else(|| "unknown".to_string());
         Self {
-            provider,
-            model_name: model_name.into(),
+            config,
+            purpose,
+            session_id: session_id.into(),
+            model_name,
         }
+    }
+
+    /// Implements the failover chain: tries each model in the purpose's chain until one succeeds.
+    async fn complete_with_chain(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+    ) -> Result<LlmResponse, rig_core::completion::CompletionError> {
+        let chain = self.config.get_model_chain(&self.purpose);
+        if chain.is_empty() {
+            return Err(rig_core::completion::CompletionError::ProviderError(format!(
+                "no models configured for purpose '{}'",
+                self.purpose
+            )));
+        }
+
+        let category = session_id_to_category(&self.session_id);
+
+        for (idx, model_cfg) in chain.iter().enumerate() {
+            let provider_id = if model_cfg.model_provider == "gmn"
+                || model_cfg.model_provider == "gemini"
+            {
+                "gmn".to_string()
+            } else {
+                resolve_provider_id(model_cfg)
+            };
+            if provider_cooldown_remaining(&provider_id).is_some() {
+                continue;
+            }
+
+            let opts = CompletionOptions {
+                model: model_cfg.model_name.clone(),
+                max_tokens: max_tokens.or(model_cfg.max_tokens),
+                temperature: temperature.or(model_cfg.temperature),
+                timeout: std::time::Duration::from_secs(300),
+                category: Some(category.clone()),
+            };
+            let provider = create_provider(model_cfg.clone());
+            match provider.complete(messages, tools, &opts).await {
+                Ok(resp) => {
+                    if idx > 0 {
+                        tracing::warn!(
+                            purpose = %self.purpose,
+                            used_model = %model_cfg.model_name,
+                            fallback_index = idx,
+                            "fallback model used in rig agent"
+                        );
+                    }
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        model = %model_cfg.model_name,
+                        error = %e,
+                        "model failed in rig agent chain, trying next"
+                    );
+                }
+            }
+        }
+
+        Err(rig_core::completion::CompletionError::ProviderError(format!(
+            "all models failed for purpose '{}'",
+            self.purpose
+        )))
     }
 }
 
@@ -1396,8 +1509,8 @@ impl rig_core::completion::CompletionModel for RustyclawCompletionModel {
     type StreamingResponse = ();
     type Client = RustyclawProviderClient;
 
-    fn make(client: &Self::Client, model: impl Into<String>) -> Self {
-        Self::new(client.provider.clone(), model)
+    fn make(client: &Self::Client, _model: impl Into<String>) -> Self {
+        Self::new(client.config.clone(), client.purpose.clone(), client.session_id.clone())
     }
 
     async fn completion(
@@ -1420,19 +1533,14 @@ impl rig_core::completion::CompletionModel for RustyclawCompletionModel {
             })
             .collect();
 
-        let opts = CompletionOptions {
-            model: self.model_name.clone(),
-            max_tokens: request.max_tokens.map(|n| n as u32),
-            temperature: request.temperature.map(|t| t as f32),
-            timeout: std::time::Duration::from_secs(300),
-            category: None,
-        };
-
         let llm_resp = self
-            .provider
-            .complete(&messages, &tools, &opts)
-            .await
-            .map_err(|e| rig_core::completion::CompletionError::ProviderError(e.to_string()))?;
+            .complete_with_chain(
+                &messages,
+                &tools,
+                request.max_tokens.map(|n| n as u32),
+                request.temperature.map(|t| t as f32),
+            )
+            .await?;
 
         Ok(llm_response_to_rig(llm_resp))
     }
