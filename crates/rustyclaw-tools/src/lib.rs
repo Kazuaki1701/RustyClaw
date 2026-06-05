@@ -3,6 +3,20 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
+// ─── 共有エラー型 ────────────────────────────────────────────────────────────
+
+/// rig_core::tool::Tool::Error の共通実装。すべてのツールが使用する。
+#[derive(Debug)]
+pub struct ToolCallError(pub String);
+
+impl std::fmt::Display for ToolCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ToolCallError {}
+
 /// Represents the output of a tool execution.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ToolResult {
@@ -479,20 +493,6 @@ impl Tool for WebSearchTool {
 
 // ─── WebFetchTool ────────────────────────────────────────────────────────────
 
-// ─── 共有エラー型 ────────────────────────────────────────────────────────────
-
-/// rig_core::tool::Tool::Error の共通実装。すべてのツールが使用する。
-#[derive(Debug)]
-pub struct ToolCallError(pub String);
-
-impl std::fmt::Display for ToolCallError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for ToolCallError {}
-
 /// HTML タグ・script・style ブロックを除去してプレーンテキストを返す（新規 crate 依存なし）
 fn strip_html_to_text(html: &str, max_chars: usize) -> String {
     let mut out = String::with_capacity(html.len() / 2);
@@ -542,6 +542,10 @@ impl WebFetchTool {
     pub fn new() -> Self { Self }
 }
 
+impl Default for WebFetchTool {
+    fn default() -> Self { Self::new() }
+}
+
 #[derive(serde::Deserialize)]
 pub struct WebFetchArgs {
     pub url: String,
@@ -565,8 +569,8 @@ impl Tool for WebFetchTool {
             "properties": {
                 "url": { "type": "string", "description": "URL to fetch" },
                 "max_chars": {
-                    "type": "string",
-                    "description": "Max characters to return as a string (default: '3000')"
+                    "type": "integer",
+                    "description": "Max characters to return (default: 3000)"
                 }
             },
             "required": ["url"]
@@ -619,8 +623,8 @@ impl rig_core::tool::Tool for WebFetchTool {
                 "properties": {
                     "url": { "type": "string", "description": "URL to fetch" },
                     "max_chars": {
-                        "type": "string",
-                        "description": "Max characters to return as a string (default: '3000')"
+                        "type": "integer",
+                        "description": "Max characters to return (default: 3000)"
                     }
                 },
                 "required": ["url"]
