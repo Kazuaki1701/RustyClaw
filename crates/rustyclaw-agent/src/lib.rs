@@ -1150,7 +1150,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         workspace_dir: &Path,
         session_id: &str,
         user_message: &str,
-        tool_registry: &ToolRegistry,
+        tool_handle: rig_core::tool::server::ToolServerHandle,
         purpose: &str,
         progress_tx: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> Result<LlmResponse> {
@@ -1199,14 +1199,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             let _ = tx.send("rig エージェントが処理中...".to_string()).await;
         }
 
-        // rig CompletionModel + ToolDyn vec の構築
+        // rig CompletionModel + ToolServerHandle でエージェント構築
         let model = RustyclawCompletionModel::new(self.config.clone(), purpose, session_id);
         let usage_sink = model.usage_sink();
-        let rig_tools = tool_registry.to_dyn_tools();
 
         let agent = AgentBuilder::new(model)
             .preamble(&system_context)
-            .tools(rig_tools)
+            .tool_server_handle(tool_handle)
             .build();
 
         // プロバイダーメッセージを rig メッセージ形式に変換
