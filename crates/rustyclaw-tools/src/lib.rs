@@ -1,6 +1,4 @@
 use std::sync::Arc;
-use async_trait::async_trait;
-use serde_json::Value;
 
 // ─── 共有エラー型 ────────────────────────────────────────────────────────────
 
@@ -15,32 +13,6 @@ impl std::fmt::Display for ToolCallError {
 }
 
 impl std::error::Error for ToolCallError {}
-
-/// Represents the output of a tool execution.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct ToolResult {
-    /// The text content returned to the LLM.
-    pub content: String,
-    /// Indicates whether the tool execution encountered an error.
-    pub is_error: bool,
-}
-
-/// The trait that all native and MCP-proxied tools must implement.
-#[async_trait]
-pub trait Tool: Send + Sync {
-    /// Unique name of the tool (e.g., "read_file", "calculate").
-    fn name(&self) -> &str;
-
-    /// A clear description of what the tool does and when to use it.
-    fn description(&self) -> &str;
-
-    /// The JSON Schema defining the expected parameters.
-    /// Typically formatted as `{"type": "object", "properties": {...}, "required": [...]}`.
-    fn parameters(&self) -> Value;
-
-    /// Executes the tool asynchronously with the given JSON arguments.
-    async fn execute(&self, args: Value) -> ToolResult;
-}
 
 /// A registry that manages active tools as rig-core ToolDyn objects.
 /// Stored as Arc so ToolRegistry is Clone (each Arc clone shares the same tool instance).
@@ -77,77 +49,6 @@ impl ToolRegistry {
         defs
     }
 
-    #[deprecated(note = "use tool_definitions().await instead")]
-    pub fn to_llm_schemas(&self) -> Vec<serde_json::Value> {
-        Vec::new()
-    }
-}
-
-/// Adapts a RustyClaw `Tool` to the `rig_core::tool::ToolDyn` interface.
-/// Allows existing stateful tools to be used with `rig::agent::Agent`.
-pub struct RigToolAdapter {
-    inner: Arc<dyn Tool>,
-}
-
-impl RigToolAdapter {
-    pub fn new(tool: Arc<dyn Tool>) -> Self {
-        Self { inner: tool }
-    }
-}
-
-#[derive(Debug)]
-struct ToolCallFailed(String);
-
-impl std::fmt::Display for ToolCallFailed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for ToolCallFailed {}
-
-impl rig_core::tool::ToolDyn for RigToolAdapter {
-    fn name(&self) -> String {
-        self.inner.name().to_string()
-    }
-
-    fn definition<'a>(
-        &'a self,
-        _prompt: String,
-    ) -> rig_core::wasm_compat::WasmBoxedFuture<'a, rig_core::completion::ToolDefinition> {
-        let name = self.inner.name().to_string();
-        let description = self.inner.description().to_string();
-        let parameters = self.inner.parameters();
-        Box::pin(async move {
-            rig_core::completion::ToolDefinition {
-                name,
-                description,
-                parameters,
-            }
-        })
-    }
-
-    fn call<'a>(
-        &'a self,
-        args: String,
-    ) -> rig_core::wasm_compat::WasmBoxedFuture<
-        'a,
-        Result<String, rig_core::tool::ToolError>,
-    > {
-        let inner = self.inner.clone();
-        Box::pin(async move {
-            let parsed: Value = serde_json::from_str(&args)
-                .unwrap_or(Value::Object(serde_json::Map::new()));
-            let result = inner.execute(parsed).await;
-            if result.is_error {
-                Err(rig_core::tool::ToolError::ToolCallError(Box::new(
-                    ToolCallFailed(result.content),
-                )))
-            } else {
-                Ok(result.content)
-            }
-        })
-    }
 }
 
 
@@ -168,38 +69,6 @@ impl CronScheduleTool {
     {
         Self {
             schedule_fn: std::sync::Arc::new(schedule_fn),
-        }
-    }
-}
-
-#[async_trait]
-impl Tool for CronScheduleTool {
-    fn name(&self) -> &str {
-        "get_cron_schedule"
-    }
-
-    fn description(&self) -> &str {
-        "Get the upcoming scheduled cron tasks and their calculated next execution times."
-    }
-
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {}
-        })
-    }
-
-    async fn execute(&self, _args: Value) -> ToolResult {
-        let val = (self.schedule_fn)();
-        match serde_json::to_string_pretty(&val) {
-            Ok(json) => ToolResult {
-                content: json,
-                is_error: false,
-            },
-            Err(e) => ToolResult {
-                content: format!("Failed to serialize schedule: {}", e),
-                is_error: true,
-            },
         }
     }
 }
@@ -240,42 +109,6 @@ pub struct WorkspaceReadTool {
 impl WorkspaceReadTool {
     pub fn new(workspace_path: std::path::PathBuf) -> Self {
         Self { workspace_path }
-    }
-}
-
-#[async_trait]
-impl Tool for WorkspaceReadTool {
-    fn name(&self) -> &str { "workspace_read" }
-
-    fn description(&self) -> &str {
-        "Read a text file from the agent workspace (e.g. patrol/state.json, patrol/findings.md)."
-    }
-
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative path within workspace (e.g. patrol/state.json)"
-                }
-            },
-            "required": ["path"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let rel = match args["path"].as_str() {
-            Some(p) => p,
-            None => return ToolResult { content: "Missing path".into(), is_error: true },
-        };
-        if rel.contains("..") || rel.starts_with('/') {
-            return ToolResult { content: "Invalid path".into(), is_error: true };
-        }
-        match std::fs::read_to_string(self.workspace_path.join(rel)) {
-            Ok(c)  => ToolResult { content: c, is_error: false },
-            Err(e) => ToolResult { content: format!("Cannot read {}: {}", rel, e), is_error: true },
-        }
     }
 }
 
@@ -326,61 +159,6 @@ pub struct WorkspaceWriteTool {
 impl WorkspaceWriteTool {
     pub fn new(workspace_path: std::path::PathBuf) -> Self {
         Self { workspace_path }
-    }
-}
-
-#[async_trait]
-impl Tool for WorkspaceWriteTool {
-    fn name(&self) -> &str { "workspace_write" }
-
-    fn description(&self) -> &str {
-        "Write or append to a text file in the agent workspace (patrol/, memory/logs/ etc.)."
-    }
-
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path":    { "type": "string", "description": "Relative path within workspace" },
-                "content": { "type": "string", "description": "Text to write" },
-                "mode":    {
-                    "type": "string",
-                    "description": "\"write\" (overwrite, default) or \"append\""
-                }
-            },
-            "required": ["path", "content"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let rel = match args["path"].as_str() {
-            Some(p) => p,
-            None => return ToolResult { content: "Missing path".into(), is_error: true },
-        };
-        let body = match args["content"].as_str() {
-            Some(c) => c,
-            None => return ToolResult { content: "Missing content".into(), is_error: true },
-        };
-        if rel.contains("..") || rel.starts_with('/') {
-            return ToolResult { content: "Invalid path: traversal not allowed".into(), is_error: true };
-        }
-        let full = self.workspace_path.join(rel);
-        if let Some(parent) = full.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                return ToolResult { content: format!("mkdir failed: {}", e), is_error: true };
-            }
-        }
-        let result = if args["mode"].as_str() == Some("append") {
-            use std::io::Write;
-            std::fs::OpenOptions::new().append(true).create(true).open(&full)
-                .and_then(|mut f| f.write_all(body.as_bytes()))
-        } else {
-            std::fs::write(&full, body.as_bytes())
-        };
-        match result {
-            Ok(_)  => ToolResult { content: format!("OK: wrote to {}", rel), is_error: false },
-            Err(e) => ToolResult { content: format!("Write failed {}: {}", rel, e), is_error: true },
-        }
     }
 }
 
@@ -446,52 +224,6 @@ impl MemorySearchTool {
     }
 }
 
-#[async_trait]
-impl Tool for MemorySearchTool {
-    fn name(&self) -> &str { "memory_search" }
-
-    fn description(&self) -> &str {
-        "Search the agent's long-term memory (session summaries) by keyword. Returns file paths of matching summaries."
-    }
-
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "Search query" }
-            },
-            "required": ["query"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let query = match args["query"].as_str() {
-            Some(q) => q.to_string(),
-            None => return ToolResult { content: "Missing query".into(), is_error: true },
-        };
-        let index_dir = self.workspace_path.join("memory").join("index");
-        match rustyclaw_storage::SearchIndexManager::new(&index_dir) {
-            Ok(mgr) => match mgr.search(&query) {
-                Ok(paths) if paths.is_empty() => {
-                    ToolResult { content: "No results found.".into(), is_error: false }
-                }
-                Ok(paths) => {
-                    let result = paths.iter()
-                        .map(|p| p.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    ToolResult { content: result, is_error: false }
-                }
-                Err(e) => ToolResult { content: format!("Search failed: {}", e), is_error: true },
-            },
-            Err(e) => ToolResult {
-                content: format!("Memory index not available (may not have summaries yet): {}", e),
-                is_error: true,
-            },
-        }
-    }
-}
-
 impl rig_core::tool::Tool for MemorySearchTool {
     const NAME: &'static str = "memory_search";
     type Error = ToolCallError;
@@ -547,77 +279,6 @@ pub struct WebSearchTool {
 impl WebSearchTool {
     pub fn new(api_key: String) -> Self {
         Self { api_key }
-    }
-}
-
-#[async_trait]
-impl Tool for WebSearchTool {
-    fn name(&self) -> &str { "web_search" }
-
-    fn description(&self) -> &str {
-        "Search the web using Brave Search. Returns titles, URLs, and snippets. Use site: prefix for HN/Reddit (e.g. 'site:news.ycombinator.com rust')."
-    }
-
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "Search query" },
-                "count": {
-                    "type": "integer",
-                    "description": "Number of results (default: 5, max: 10)"
-                }
-            },
-            "required": ["query"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let query = match args["query"].as_str() {
-            Some(q) => q.to_string(),
-            None => return ToolResult { content: "Missing query".into(), is_error: true },
-        };
-        let count = match &args["count"] {
-            Value::Number(n) => n.as_u64().unwrap_or(5),
-            Value::String(s) => s.parse::<u64>().unwrap_or(5),
-            _ => 5,
-        }.min(10);
-
-        let client = reqwest::Client::new();
-        match client
-            .get("https://api.search.brave.com/res/v1/web/search")
-            .header("X-Subscription-Token", &self.api_key)
-            .header("Accept", "application/json")
-            .query(&[("q", &query), ("count", &count.to_string())])
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.json::<Value>().await {
-                    Ok(json) => {
-                        let results = json["web"]["results"]
-                            .as_array()
-                            .map(|arr| {
-                                arr.iter().map(|r| {
-                                    let title = r["title"].as_str().unwrap_or("(no title)");
-                                    let url   = r["url"].as_str().unwrap_or("");
-                                    let desc  = r["description"].as_str().unwrap_or("");
-                                    format!("**{}**\n{}\n{}", title, url, desc)
-                                }).collect::<Vec<_>>().join("\n\n")
-                            })
-                            .unwrap_or_else(|| "No results".to_string());
-                        ToolResult { content: results, is_error: false }
-                    }
-                    Err(e) => ToolResult { content: format!("JSON parse error: {}", e), is_error: true },
-                }
-            }
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                ToolResult { content: format!("Brave Search error {}: {}", status, body), is_error: true }
-            }
-            Err(e) => ToolResult { content: format!("Request failed: {}", e), is_error: true },
-        }
     }
 }
 
@@ -742,59 +403,6 @@ pub struct WebFetchArgs {
 
 fn web_fetch_default_max_chars() -> usize { 3000 }
 
-#[async_trait]
-impl Tool for WebFetchTool {
-    fn name(&self) -> &str { "web_fetch" }
-
-    fn description(&self) -> &str {
-        "Fetch a web page and return its plain text content (HTML tags stripped). Use after web_search to read full article content."
-    }
-
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": { "type": "string", "description": "URL to fetch" },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "Max characters to return (default: 3000)"
-                }
-            },
-            "required": ["url"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let url = match args["url"].as_str() {
-            Some(u) => u.to_string(),
-            None => return ToolResult { content: "Missing url".into(), is_error: true },
-        };
-        let max_chars = match &args["max_chars"] {
-            Value::Number(n) => n.as_u64().unwrap_or(3000) as usize,
-            Value::String(s) => s.parse::<usize>().unwrap_or(3000),
-            _ => 3000,
-        };
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .user_agent("Mozilla/5.0 (compatible; RustyClaw/1.0)")
-            .build()
-            .unwrap_or_default();
-        match client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.text().await {
-                    Ok(html) => ToolResult { content: strip_html_to_text(&html, max_chars), is_error: false },
-                    Err(e)   => ToolResult { content: format!("Read error: {}", e), is_error: true },
-                }
-            }
-            Ok(resp) => ToolResult {
-                content: format!("HTTP {}", resp.status()),
-                is_error: true,
-            },
-            Err(e) => ToolResult { content: format!("Fetch failed: {}", e), is_error: true },
-        }
-    }
-}
-
 impl rig_core::tool::Tool for WebFetchTool {
     const NAME: &'static str = "web_fetch";
     type Error = ToolCallError;
@@ -859,209 +467,6 @@ pub struct WorkspaceExecuteScriptTool {
 impl WorkspaceExecuteScriptTool {
     pub fn new(workspace_dir: std::path::PathBuf) -> Self {
         Self { workspace_dir }
-    }
-}
-
-#[async_trait]
-impl Tool for WorkspaceExecuteScriptTool {
-    fn name(&self) -> &str {
-        "run_workspace_script"
-    }
-
-    fn description(&self) -> &str {
-        "Executes a custom script located strictly within the `workspace/scripts/` or a localized skill directory (e.g. `skills/[skill-name]/scripts/`) to run local computations, API interactions, or data operations."
-    }
-
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "script_name": {
-                    "type": "string",
-                    "description": "The script path relative to workspace. Examples: '500_get-vital-data-garmin.sh' (for legacy scripts inside workspace/scripts/) or 'skills/vitals-coach/scripts/500_get-vital-data-garmin.sh' (for localized skill scripts). Path traversal sequences like '..' or absolute paths are strictly forbidden."
-                },
-                "args": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "Optional list of arguments to pass to the script."
-                },
-                "env": {
-                    "type": "object",
-                    "description": "Optional environment variables to inject into the script process. Supports '$vault:key_name' value syntax to dynamically resolve values from vault.enc / vault.json.",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                }
-            },
-            "required": ["script_name"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let script_name = match args["script_name"].as_str() {
-            Some(s) => s,
-            None => return ToolResult {
-                content: "Error: Missing or invalid 'script_name' argument.".to_string(),
-                is_error: true,
-            },
-        };
-
-        // セキュリティチェック：絶対パスおよびパス走査 (..) の防御
-        if script_name.contains("..") || script_name.starts_with('/') || script_name.contains('\\') {
-            return ToolResult {
-                content: "Error: Security violation. Path traversal ('..'), absolute paths, or backward slashes ('\\') are strictly prohibited.".to_string(),
-                is_error: true,
-            };
-        }
-
-        // パス解決：
-        // パターンA (局所化): skills/ で始まる場合は workspace 直下からの相対パス
-        // パターンB (従来フォールバック): それ以外は workspace/scripts/ 配下
-        let (script_path, scripts_dir) = if script_name.starts_with("skills/") {
-            let path = self.workspace_dir.join(script_name);
-            let dir = path.parent().unwrap_or(&self.workspace_dir).to_path_buf();
-            (path, dir)
-        } else {
-            let dir = self.workspace_dir.join("scripts");
-            let path = dir.join(script_name);
-            (path, dir)
-        };
-
-        if !script_path.exists() {
-            return ToolResult {
-                content: format!("Error: Script '{}' does not exist at expected location: {:?}", script_name, script_path),
-                is_error: true,
-            };
-        }
-
-        // 引数のパース
-        let mut cmd_args = Vec::new();
-        if let Some(args_array) = args["args"].as_array() {
-            for val in args_array {
-                if let Some(arg_str) = val.as_str() {
-                    cmd_args.push(arg_str.to_string());
-                }
-            }
-        }
-
-        // 拡張子から実行コマンドを判別
-        let ext = script_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let mut cmd = match ext {
-            "sh" => {
-                let mut c = tokio::process::Command::new("bash");
-                c.arg(&script_path);
-                c
-            }
-            "py" => {
-                let mut c = tokio::process::Command::new("python3");
-                c.arg(&script_path);
-                c
-            }
-            "js" => {
-                let mut c = tokio::process::Command::new("node");
-                c.arg(&script_path);
-                c
-            }
-            "ts" => {
-                let mut c = tokio::process::Command::new("bun"); // bun 優先
-                c.arg("run");
-                c.arg(&script_path);
-                c
-            }
-            _ => {
-                // その他の場合は直接実行（実行可能属性があると仮定）
-                tokio::process::Command::new(&script_path)
-            }
-        };
-
-        // 引数を追加
-        cmd.args(cmd_args);
-
-        // 環境変数の追加と Vault 解決
-        if let Some(env_obj) = args["env"].as_object() {
-            for (key, val) in env_obj {
-                if let Some(val_str) = val.as_str() {
-                    let resolved_value = if let Some(vault_key) = val_str.strip_prefix("$vault:") {
-                        // 1. Vault (vault.enc) からの解決を試みる
-                        let mut val_opt = match rustyclaw_config::vault::load_vault(None) {
-                            Ok(secrets) => secrets.get(vault_key).cloned(),
-                            Err(_) => None,
-                        };
-                        
-                        // 2. なければ平文の vault.json からの解決を試みる (フォールバック)
-                        if val_opt.is_none() {
-                            let json_path = rustyclaw_config::get_config_dir().join("vault.json");
-                            if let Ok(file) = std::fs::File::open(json_path) {
-                                let reader = std::io::BufReader::new(file);
-                                if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(reader) {
-                                    if let Some(v) = json.get(vault_key).and_then(|v| v.as_str()) {
-                                        val_opt = Some(v.to_string());
-                                    }
-                                }
-                            }
-                        }
-
-                        // 3. なければ UNIX環境変数からのインテリジェント・フォールバックを試みる
-                        let env_var_name = vault_key.replace("-", "_").to_uppercase();
-                        if val_opt.is_none() {
-                            if let Ok(env_val) = std::env::var(&env_var_name) {
-                                val_opt = Some(env_val);
-                            }
-                        }
-
-                        // 4. どちらも解決できない場合は、方式A（安全にエラーを返して即時中断）
-                        match val_opt {
-                            Some(val) => val,
-                            None => {
-                                return ToolResult {
-                                    content: format!(
-                                        "Error: Failed to resolve vault reference '$vault:{}'. \n\
-                                         Key '{}' was not found in ~/.rustyclaw/vault.enc (passphrase not configured?), \n\
-                                         nor in fallback vault.json, nor is the environment variable '{}' set. \n\
-                                         To configure this key in the vault, run: `rustyclaw vault set {} <value>`", 
-                                        vault_key, vault_key, env_var_name, vault_key
-                                    ),
-                                    is_error: true,
-                                };
-                            }
-                        }
-                    } else {
-                        // $vault: プレフィックスがない場合は普通の文字列値として採用
-                        val_str.to_string()
-                    };
-
-                    cmd.env(key, resolved_value);
-                }
-            }
-        }
-
-        cmd.current_dir(&scripts_dir);
-
-        // 実行
-        match cmd.output().await {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let is_success = output.status.success();
-
-                let mut content = format!("--- STDOUT ---\n{}", stdout);
-                if !stderr.is_empty() {
-                    content.push_str(&format!("\n--- STDERR ---\n{}", stderr));
-                }
-                content.push_str(&format!("\n--- EXIT STATUS ---\n{}", output.status));
-
-                ToolResult {
-                    content,
-                    is_error: !is_success,
-                }
-            }
-            Err(e) => ToolResult {
-                content: format!("Error: Failed to spawn script process: {:#}", e),
-                is_error: true,
-            },
-        }
     }
 }
 
@@ -1190,52 +595,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // A mock tool that performs basic math addition
-    struct AddTool;
-
-    #[async_trait]
-    impl Tool for AddTool {
-        fn name(&self) -> &str {
-            "add"
-        }
-
-        fn description(&self) -> &str {
-            "Adds two numbers together."
-        }
-
-        fn parameters(&self) -> Value {
-            json!({
-                "type": "object",
-                "properties": {
-                    "a": { "type": "number" },
-                    "b": { "type": "number" }
-                },
-                "required": ["a", "b"]
-            })
-        }
-
-        async fn execute(&self, args: Value) -> ToolResult {
-            let a = match args["a"].as_f64() {
-                Some(val) => val,
-                None => return ToolResult {
-                    content: "Missing or invalid parameter 'a'".to_string(),
-                    is_error: true,
-                },
-            };
-            let b = match args["b"].as_f64() {
-                Some(val) => val,
-                None => return ToolResult {
-                    content: "Missing or invalid parameter 'b'".to_string(),
-                    is_error: true,
-                },
-            };
-            ToolResult {
-                content: format!("{}", a + b),
-                is_error: false,
-            }
-        }
-    }
-
     #[tokio::test]
     async fn test_tool_registration_and_retrieval() {
         let mut registry = ToolRegistry::new();
@@ -1251,25 +610,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_execution_success() {
-        let tool = AddTool;
-        let args = json!({ "a": 10.5, "b": 2.5 });
-        let result = tool.execute(args).await;
-        assert!(!result.is_error);
-        assert_eq!(result.content, "13");
-    }
-
-    #[tokio::test]
-    async fn test_tool_execution_error() {
-        let tool = AddTool;
-        let args = json!({ "a": 10.5 });
-        let result = tool.execute(args).await;
-        assert!(result.is_error);
-        assert!(result.content.contains("parameter 'b'"));
-    }
-
-    #[tokio::test]
-    async fn test_to_llm_schemas() {
+    async fn test_tool_definitions() {
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(WebFetchTool::new()) as Arc<dyn rig_core::tool::ToolDyn>);
         let defs = registry.tool_definitions().await;
@@ -1281,6 +622,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cron_schedule_tool() {
+        use rig_core::tool::ToolDyn;
         let tool = CronScheduleTool::new(|| {
             serde_json::json!([
                 {
@@ -1292,39 +634,36 @@ mod tests {
             ])
         });
         assert_eq!(tool.name(), "get_cron_schedule");
-        let params = tool.parameters();
-        assert_eq!(params["type"], "object");
-        let result = tool.execute(serde_json::json!({})).await;
-        assert!(!result.is_error);
-        assert!(result.content.contains("test-job"));
+        let def = tool.definition("".to_string()).await;
+        assert_eq!(def.parameters["type"], "object");
+        let result = tool.call("{}".to_string()).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("test-job"));
     }
 
     #[tokio::test]
     async fn test_workspace_read_write_roundtrip() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let read_tool  = WorkspaceReadTool::new(dir.path().to_path_buf());
         let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
 
-        let res = write_tool.execute(serde_json::json!({
-            "path": "patrol/state.json",
-            "content": "{\"lastRun\":null,\"rotationIndex\":0}"
-        })).await;
-        assert!(!res.is_error);
+        let res = write_tool.call(r#"{"path":"patrol/state.json","content":"{\"lastRun\":null,\"rotationIndex\":0}"}"#.to_string()).await;
+        assert!(res.is_ok(), "write failed: {:?}", res);
 
-        let res = read_tool.execute(serde_json::json!({
-            "path": "patrol/state.json"
-        })).await;
-        assert!(!res.is_error);
-        assert!(res.content.contains("rotationIndex"));
+        let res = read_tool.call(r#"{"path":"patrol/state.json"}"#.to_string()).await;
+        assert!(res.is_ok(), "read failed: {:?}", res);
+        assert!(res.unwrap().contains("rotationIndex"));
     }
 
     #[tokio::test]
     async fn test_workspace_write_append_mode() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
 
-        tool.execute(serde_json::json!({"path": "patrol/findings.md", "content": "line1\n"})).await;
-        tool.execute(serde_json::json!({"path": "patrol/findings.md", "content": "line2\n", "mode": "append"})).await;
+        tool.call(r#"{"path":"patrol/findings.md","content":"line1\n"}"#.to_string()).await.unwrap();
+        tool.call(r#"{"path":"patrol/findings.md","content":"line2\n","mode":"append"}"#.to_string()).await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("patrol/findings.md")).unwrap();
         assert!(content.contains("line1"));
@@ -1333,27 +672,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_workspace_read_blocks_path_traversal() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = WorkspaceReadTool::new(dir.path().to_path_buf());
-        let res = tool.execute(serde_json::json!({"path": "../etc/passwd"})).await;
-        assert!(res.is_error);
+        let res = tool.call(r#"{"path":"../etc/passwd"}"#.to_string()).await;
+        assert!(res.is_err());
     }
 
     #[tokio::test]
     async fn test_web_search_tool_schema() {
+        use rig_core::tool::ToolDyn;
         let tool = WebSearchTool::new("dummy-key".to_string());
         assert_eq!(tool.name(), "web_search");
-        let params = tool.parameters();
-        assert!(params["properties"]["query"].is_object());
-        assert_eq!(params["required"][0], "query");
+        let def = tool.definition("".to_string()).await;
+        assert!(def.parameters["properties"]["query"].is_object());
+        assert_eq!(def.parameters["required"][0], "query");
     }
 
     #[tokio::test]
     async fn test_web_search_missing_query() {
+        use rig_core::tool::ToolDyn;
         let tool = WebSearchTool::new("dummy-key".to_string());
-        let res = tool.execute(serde_json::json!({})).await;
-        assert!(res.is_error);
-        assert!(res.content.contains("Missing"));
+        let res = tool.call("{}".to_string()).await;
+        assert!(res.is_err());
     }
 
     #[test]
@@ -1383,17 +724,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_web_fetch_tool_schema() {
+        use rig_core::tool::ToolDyn;
         let tool = WebFetchTool::new();
         assert_eq!(tool.name(), "web_fetch");
-        let params = tool.parameters();
-        assert!(params["properties"]["url"].is_object());
+        let def = tool.definition("".to_string()).await;
+        assert!(def.parameters["properties"]["url"].is_object());
     }
 
     #[tokio::test]
     async fn test_web_fetch_missing_url() {
+        use rig_core::tool::ToolDyn;
         let tool = WebFetchTool::new();
-        let res = tool.execute(serde_json::json!({})).await;
-        assert!(res.is_error);
+        let res = tool.call("{}".to_string()).await;
+        assert!(res.is_err());
     }
 
     #[test]
@@ -1407,69 +750,76 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_search_tool_schema() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = MemorySearchTool::new(dir.path().to_path_buf());
         assert_eq!(tool.name(), "memory_search");
-        let params = tool.parameters();
-        assert!(params["properties"]["query"].is_object());
-        assert_eq!(params["required"][0], "query");
+        let def = tool.definition("".to_string()).await;
+        assert!(def.parameters["properties"]["query"].is_object());
+        assert_eq!(def.parameters["required"][0], "query");
     }
 
     #[tokio::test]
     async fn test_memory_search_missing_query() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = MemorySearchTool::new(dir.path().to_path_buf());
-        let res = tool.execute(serde_json::json!({})).await;
-        assert!(res.is_error);
-        assert!(res.content.contains("Missing"));
+        let res = tool.call("{}".to_string()).await;
+        assert!(res.is_err());
     }
 
     #[tokio::test]
     async fn test_memory_search_empty_index() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = MemorySearchTool::new(dir.path().to_path_buf());
         // インデックスが存在しない場合は graceful に処理（クラッシュしないこと）
-        let res = tool.execute(serde_json::json!({"query": "rust"})).await;
-        assert!(!res.content.is_empty());
+        let res = tool.call(r#"{"query":"rust"}"#.to_string()).await;
+        // エラーになっても文字列は返る（空でない）
+        let text = match res {
+            Ok(s) => s,
+            Err(e) => e.to_string(),
+        };
+        assert!(!text.is_empty());
     }
 
     #[tokio::test]
     async fn test_workspace_execute_script_tool_schema() {
+        use rig_core::tool::ToolDyn;
         let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
         assert_eq!(tool.name(), "run_workspace_script");
-        let params = tool.parameters();
-        assert!(params["properties"]["script_name"].is_object());
+        let def = tool.definition("".to_string()).await;
+        assert!(def.parameters["properties"]["script_name"].is_object());
     }
 
     #[tokio::test]
     async fn test_workspace_execute_script_path_traversal() {
+        use rig_core::tool::ToolDyn;
         let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        let res = tool.execute(serde_json::json!({
-            "script_name": "../etc/passwd"
-        })).await;
-        assert!(res.is_error);
-        assert!(res.content.contains("Security violation"));
+        let res = tool.call(r#"{"script_name":"../etc/passwd"}"#.to_string()).await;
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("Security violation"));
     }
 
     #[tokio::test]
     async fn test_workspace_execute_script_absolute_path() {
+        use rig_core::tool::ToolDyn;
         let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        let res = tool.execute(serde_json::json!({
-            "script_name": "/etc/passwd"
-        })).await;
-        assert!(res.is_error);
-        assert!(res.content.contains("Security violation"));
+        let res = tool.call(r#"{"script_name":"/etc/passwd"}"#.to_string()).await;
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("Security violation"));
     }
 
     #[tokio::test]
     async fn test_workspace_execute_script_localized_success() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
-        
+
         // 局所化したダミースクリプトを作成
         let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
         std::fs::create_dir_all(&localized_script_dir).unwrap();
-        
+
         let script_path = localized_script_dir.join("test-run.sh");
         std::fs::write(&script_path, "#!/bin/bash\necho 'hello vitals'").unwrap();
 
@@ -1482,22 +832,21 @@ mod tests {
             std::fs::set_permissions(&script_path, perms).unwrap();
         }
 
-        let res = tool.execute(serde_json::json!({
-            "script_name": "skills/vitals-coach/scripts/test-run.sh"
-        })).await;
+        let res = tool.call(r#"{"script_name":"skills/vitals-coach/scripts/test-run.sh"}"#.to_string()).await;
 
-        assert!(!res.is_error, "Tool reported error: {}", res.content);
-        assert!(res.content.contains("hello vitals"));
+        assert!(res.is_ok(), "Tool reported error: {:?}", res);
+        assert!(res.unwrap().contains("hello vitals"));
     }
 
     #[tokio::test]
     async fn test_workspace_execute_script_vault_injection_success() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
-        
+
         let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
         std::fs::create_dir_all(&localized_script_dir).unwrap();
-        
+
         let script_path = localized_script_dir.join("test-env.sh");
         std::fs::write(&script_path, "#!/bin/bash\necho \"VAL is $TEST_VAL\"").unwrap();
 
@@ -1512,27 +861,23 @@ mod tests {
         // 環境変数フォールバックが働くように親プロセスにセット
         unsafe { std::env::set_var("TEST_KEY", "resolved-secret-from-env"); }
 
-        let res = tool.execute(serde_json::json!({
-            "script_name": "skills/vitals-coach/scripts/test-env.sh",
-            "env": {
-                "TEST_VAL": "$vault:test-key"
-            }
-        })).await;
+        let res = tool.call(r#"{"script_name":"skills/vitals-coach/scripts/test-env.sh","env":{"TEST_VAL":"$vault:test-key"}}"#.to_string()).await;
 
         unsafe { std::env::remove_var("TEST_KEY"); }
 
-        assert!(!res.is_error, "Tool reported error: {}", res.content);
-        assert!(res.content.contains("VAL is resolved-secret-from-env"));
+        assert!(res.is_ok(), "Tool reported error: {:?}", res);
+        assert!(res.unwrap().contains("VAL is resolved-secret-from-env"));
     }
 
     #[tokio::test]
     async fn test_workspace_execute_script_vault_injection_fail_fast() {
+        use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
-        
+
         let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
         std::fs::create_dir_all(&localized_script_dir).unwrap();
-        
+
         let script_path = localized_script_dir.join("test-env.sh");
         std::fs::write(&script_path, "#!/bin/bash\necho \"VAL is $TEST_VAL\"").unwrap();
 
@@ -1545,31 +890,13 @@ mod tests {
         }
 
         // キーが一切解決できない状態
-        let res = tool.execute(serde_json::json!({
-            "script_name": "skills/vitals-coach/scripts/test-env.sh",
-            "env": {
-                "TEST_VAL": "$vault:non-existent-secret-key-xyz"
-            }
-        })).await;
+        let res = tool.call(r#"{"script_name":"skills/vitals-coach/scripts/test-env.sh","env":{"TEST_VAL":"$vault:non-existent-secret-key-xyz"}}"#.to_string()).await;
 
         // 方式A: 即座にフェイルファスト（エラー）になり、スクリプト実行は行われない
-        assert!(res.is_error);
-        assert!(res.content.contains("Failed to resolve vault reference"));
-        assert!(res.content.contains("rustyclaw vault set non-existent-secret-key-xyz"));
-    }
-
-    #[tokio::test]
-    async fn test_rig_tool_adapter_wraps_custom_tool() {
-        use rig_core::tool::ToolDyn as _;
-        use std::sync::Arc;
-
-        let tool = Arc::new(CronScheduleTool::new(|| serde_json::json!([])));
-        let adapter = RigToolAdapter::new(tool);
-
-        assert_eq!(adapter.name(), "get_cron_schedule");
-        let def = adapter.definition("".to_string()).await;
-        assert_eq!(def.name, "get_cron_schedule");
-        assert!(!def.description.is_empty());
+        assert!(res.is_err());
+        let err = res.unwrap_err().to_string();
+        assert!(err.contains("Failed to resolve vault reference"));
+        assert!(err.contains("rustyclaw vault set non-existent-secret-key-xyz"));
     }
 
     // ── Task 1: rig_core::tool::Tool 直接実装テスト ──
