@@ -2,8 +2,8 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-06 (Phase 28b-4 完了: Heartbeat ツール結果キャップ・世代ローテーション)  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md` に保存
+> **最終更新日**: 2026-06-07 (Phase 41-1 登録: Dashboard チャット RAG 活用)  
+> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md`、(Phase 28b-4 / ISSUE-26 / ISSUE-27 / Phase 40-8) は `docs/archive/tasks/2026-06-06-completed-phase28b4-issue26-27-phase40-8.md` に保存
 
 ---
 
@@ -11,22 +11,38 @@
 
 > 実運用ログから発見されたバグ・要改善項目。優先度とは独立して管理し、次スプリントの実施案件を選択する。発見次第追記する。
 
-- `[x]` **Phase 28b-4: Heartbeat コンテキストオーバーフロー対策** ✅ 完了（2026-06-06）
-  - Deep Scan 時（04:00 / 06:00 付近）にツール呼び出し後のコンテキストが肥大化し全モデル失敗 → Discord 通知欠落（2026-06-05 ログ確認: 9,812 tokens > Groq 6,000 上限）。
-  - Heartbeat 専用のヒストリキャップ強化またはツール結果切り詰め処理を検討。
-  - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`、`crates/rustyclaw-agent/src/lib.rs`（`get_history_message_limit`）
+### Context Window 削減 — システムプロンプト見直し（2026-06-07 ログ点検より）
 
-- `[x]` **ISSUE-26: Phase 40-7 残存バグ — `ingest_static_documents` の非再帰スキャンにより skills/*.md が未 ingest** ✅ 完了（2026-06-06）
-  - `ingest_static_documents` は `read_dir`（非再帰）で `workspace/skills/` 直下の `.md` ファイルをスキャンするが、実際のファイルは `skills/<name>/SKILL.md` のサブディレクトリ構成のため全件スキップされている。
-  - 12スキル × 平均 ~4KB = **約48KB 分のスキル定義が RAG 未登録**の状態。
-  - 修正: `read_dir` を再帰スキャン（`walkdir` または手動1階層拡張）に変更し、`skills/*/*.md` を対象に含める。
+> 実測: Heartbeat が Groq 6,000 token 制限を 6,497 tokens で超過（17:23 ログ）。静的システムプロンプト（SOUL+MEMORY+HEARTBEAT = 14.2KB ≈ 3,540 tok）+ digest（≈ 750 tok）+ RAG 注入が主因。  
+> ISSUE-28〜30 の 3 施策を合わせると **▼1,700〜2,130 tokens** の削減見込み。優先度順に実施すること。
+
+- `[ ]` **ISSUE-28: Heartbeat — MEMORY.md を静的注入から RAG 注入へ切り替え**
+  - 現状: `build_heartbeat_context` が MEMORY.md（4,529 B ≈ 1,130 tok）を毎回静的注入。最大の圧迫要因。
+  - 修正: MEMORY.md を `ingest_static_documents` の対象に追加し、関連チャンクを RAG 経由で注入。`build_heartbeat_context` から MEMORY.md ロードを削除。
+  - 期待効果: ▼約 1,130 tokens
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`（`build_heartbeat_context`, `ingest_static_documents`）
+
+- `[ ]` **ISSUE-29: Heartbeat — HEARTBEAT.md の圧縮**
+  - 現状: HEARTBEAT.md（4,384 B ≈ 1,096 tok）を全文静的注入。7 Step の説明文・コメントが含まれ冗長。
+  - 修正: 説明文を削除し、エージェントへの指示部分のみに絞り込む。
+  - 期待効果: ▼約 400〜600 tokens
+  - 対象: `workspace/HEARTBEAT.md`（ファイル内容の圧縮）
+
+- `[ ]` **ISSUE-30: Heartbeat — RAG top_k を 5→2 に引き下げ**
+  - 現状: ISSUE-27 で追加した RAG 注入が config と同じ top_k=5 で動作。Heartbeat の固定 7 Step 実行には過剰。
+  - 修正: `execute_heartbeat` 内の RAG 検索を top_k=2 に制限（定数または config の `heartbeat_top_k` フィールドとして追加）。
+  - 期待効果: ▼約 200〜400 tokens
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`（`execute_heartbeat` の RAG 注入ブロック）
+
+- `[ ]` **ISSUE-31: 通常チャット — MEMORY.md を RAG 登録して動的注入へ切り替え**
+  - 現状: `execute_with_tools` では MEMORY.md が静的注入なし・RAG 未登録のため長期記憶が届かない。Session Continuation（日またぎ時のみ）と session summary に依存。
+  - 修正: MEMORY.md を `ingest_static_documents` の対象に追加（ISSUE-28 と共通実装）。関連チャンクが RAG 経由でシステムプロンプトに注入されるようにする。
   - 対象: `crates/rustyclaw-agent/src/lib.rs`（`ingest_static_documents`）
 
-- `[x]` **ISSUE-27: Phase 40-7 残存バグ — `execute_heartbeat` に RAG 注入がなく Heartbeat コンテキストに doc: チャンクが届かない** ✅ 完了（2026-06-06）
-  - `execute()` パスは `retrieve_rag_context` → `format_rag_context` を呼んで doc: チャンクをシステムプロンプトへ注入するが、`execute_heartbeat` にはその呼び出しが存在しない。
-  - Heartbeat の `build_heartbeat_context` は SOUL.md / MEMORY.md / HEARTBEAT.md の固定3ファイル読み込みのみ（計 ~14.2KB）。スキルや AGENTS.md の知識は heartbeat 実行中に参照できない。
-  - 修正: `execute_heartbeat` 内で `build_heartbeat_context` の後に `retrieve_rag_context(user_message, &self.config, rag)` を呼び、heartbeat_prompt に関連チャンクを追記する。ただし ISSUE-26 の修正後に実施すること（スキルが ingest されていない状態で RAG 注入しても効果が薄い）。
-  - 対象: `crates/rustyclaw-agent/src/lib.rs`（`execute_heartbeat`）
+- `[ ]` **ISSUE-32: config — embedding model 名を実態に合わせて修正**
+  - 現状: `config.json` の `embedding.model` が `"text-embedding-bge-m3"` のまま。Phase 40-8 で `multilingual-e5-small`（384 次元）に変更済みだが config 未更新。LM Studio 側の実ロードモデルとの不整合リスク。
+  - 修正: `model` を `"intfloat/multilingual-e5-small"` に変更。
+  - 対象: `production/config/config.debug.json`、`config.release.json`
 
 ---
 
@@ -34,13 +50,20 @@
 
 > 実装状況により今後の計画に与える影響が大きい案件。
 
-### Phase 40-8 — Local Embedding & Complete RAG Unification
+### Phase 41-1: Dashboard チャット RAG 活用（アプローチ C ハイブリッド）
 
-> Embedding (ベクトル化) 処理を RPi4 ローカルで実行させ、外部 API (Cloudflare) への依存をゼロ化することで、RAG の完全ローカル完結（オフライン閉域動作）を実現する。  
-> 実装計画: `docs/plans/2026-06-06-local-embedding-complete-rag-unification.md`
+> 設計書: `docs/plans/2026-06-07-dashboard-rag-design.md` / 計画書: `docs/plans/2026-06-07-dashboard-rag-implementation.md` / ADR: `docs/adr/001-dashboard-rag-approach-c-hybrid.md`  
+> 概要: cron セッションサマリー RAG 化 + heartbeat-digest.md の Dashboard 動的注入 + session_id 日付ローテーション + dashboard_top_k=8 の 4 施策。
 
-- `[x]` **`multilingual-e5-small` を使用したローカル Embedding の実装**
-- `[x]` **SQLite ベクトル次元数の変更 (1024 -> 384次元) に伴うマイグレーションと動作検証**
+- `[ ]` **Task 1**: `EmbeddingConfig` に `dashboard_top_k: Option<usize>` を追加（`rustyclaw-config`）
+- `[ ]` **Task 2**: `config.debug.json` / `config.release.json` に `dashboard_top_k: 8` を追加
+- `[ ]` **Task 3**: `health.rs` の session_id を `http-dashboard-YYYYMMDD` に変更
+- `[ ]` **Task 4**: `execute_with_tools` に heartbeat-digest.md の Dashboard 専用注入ブロックを追加
+- `[ ]` **Task 5**: `retrieve_rag_context*` に `top_k: usize` 引数追加・Dashboard/Heartbeat の effective_top_k 切り替え
+- `[ ]` **Task 6**: `lib.rs` に `SUMMARIZE_CRON_SESSIONS` ホワイトリストと完了後の summary publish を追加
+- `[ ]` **Task 7**: `cargo build` + `cargo clippy` + `cargo test` で検証
+- `[ ]` **Task 8**: rp1 にデプロイし、Dashboard チャットで KaraKeep / Patrol 結果が参照できることを確認
+- `[ ]` **Task 9**: `docs/specs/06_dashboard_spec.md` を更新
 
 ---
 
