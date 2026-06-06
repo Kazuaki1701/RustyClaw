@@ -2,13 +2,55 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-05-31  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 22, 28, 29, 32, 33, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md` に保存
+> **最終更新日**: 2026-06-03 (Phase 38 items 2,4,6,7,8 完了)  
+> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
 > それ以外の独自機能・改善案件は一旦 🟢 に降格。GeminiClaw ギャップが解消され次第、改めて優先度を見直す。
 
 ## 🔴 GeminiClaw 機能ギャップ（最優先）
+
+### Phase 38: Topic Patrol の品質改善 🔴
+> 2026-06-03 ログ点検で判明した実施状況とルールのギャップ（調査記録: `docs/2026-06-02-log-inspection-report.md`）。
+> 根本方針: 「モデルに計算・判断を任せない。Rust が全ての状態管理・制御を担い、モデルは与えられた情報で動くだけにする」
+
+- `[x]` **1. トピック選択を SKILL.md 内の指示に変更（rotationIndex 廃止）**
+  - Rust 側での算術管理を廃止。モデルが自身で選択するシンプルな方式に変更。
+  - SKILL.md Step 1 に「`patrol/findings.md` の直近 `##` セクションに登場しない2件を選ぶ」指示を追加。自然なローテーションを算術なしで実現。
+  - `patrol/state.json` から `rotationIndex` フィールドを削除（`lastRun` のみ残す）。
+  - 対象: `production/workspace/skills/topic-patrol/SKILL.md`（実装済み）
+
+- `[x]` **2. 探索ジョブ（深夜）と配信ジョブ（日中）に分離**
+  - `topic-patrol`（interval:360）を廃止し `topic-patrol-explore`（cron:02:00）と `topic-patrol-deliver`（cron:09:00）に分離。
+  - `prompt` フィールドに `配信: スキップ / 許可` を直接埋め込む方式。Rust 変更不要。
+  - 対象: `production/workspace/cron.json`（実装済み）
+
+- `[x]` **3. findings.md のプルーニングをスクリプトで実施**
+  - `skills/topic-patrol/scripts/510_prune-findings.sh` として実装済み。SKILL.md の Step 5-0 で呼び出す。
+
+- `[x]` **4. SKILL.md を 2モード対応に更新**
+  - 配信モード（Deliver Mode）独立フローを追加。`配信: 許可` 時は deferred findings を読んで Discord 送信 → KaraKeep 登録 → delivered 記録。
+  - `配信: スキップ` は探索モード（既存フロー）。
+  - 対象: `production/workspace/skills/topic-patrol/SKILL.md`（実装済み）
+
+- `[ ]` **5. patrol の primary モデルを cf-gemma-4-26b に変更**（オプション）
+  - 現在 `["lms-gemma-4-e4b", "groq-llama-8b"]` → `["cf-gemma-4-26b", "lms-gemma-4-e4b"]` に変更。
+  - 今回の改善効果を確認してから判断。
+  - 対象: `production/config/config.release.json`（`agents.patrol`）
+
+- `[x]` **6. GeminiClaw からの Source Routing 拡張移植**
+  - `github:{owner}/{repo}` と `rss:{url}` を SKILL.md Source Routing テーブルに追加。
+  - 対象: `production/workspace/skills/topic-patrol/SKILL.md`（実装済み）
+
+- `[x]` **7. クエリカテゴリの拡張（Work-adjacent）**
+  - Work Context に基づくオプショナルクエリを Step 2 末尾に追加。
+  - 対象: `production/workspace/skills/topic-patrol/SKILL.md`（実装済み）
+
+- `[x]` **8. USER.md Interests への sources: 指定の整備**
+  - 全9トピックに `sources:` を追記（HN / Reddit / github: / URL）。
+  - 対象: `production/workspace/USER.md`（実装済み）
+
+---
 
 ### Phase 37: GeminiClaw 高度先進機能の移植と統合 🔴
 > 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。
@@ -28,114 +70,6 @@
 - `[ ]` **4. プロンプト予算 (Prompt Budget) 設定によるコンテキスト配分管理**
   - `config.json` に `prompt_budget` の上限値を定義。
   - 会話圧縮（コンパクション）のトリガーしきい値と動的連動させるリファクタリング。
-
----
-
-## Phase 29: Skills ファイルロードシステムの実装 ✅ 完了
-
-- `[x]` **1. Skills ロードエンジンの実装**
-  - `crates/rustyclaw-gateway/src/skills.rs` に `inject_skill_content()` 実装済み。gateway L.530 で cron dispatch 前に注入中。
-
-- `[x]` **2. Skill 定義ファイルの作成**
-  - `daily-briefing`・`vitals-coach`・`deep-research`・`todo-tracker`・`coding-plan`・`workspace`・`session-logs`・`topic-patrol` を `production/workspace/skills/` に作成。
-
-- `[x]` **3. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
-  - Skills セクション全行を更新。ロードエンジン・8スキルを ✅ に、session-logs を ⚠️ に変更。
-
----
-
-## Phase 32: 天気チェックツールの実装（Heartbeat Step 4） ✅ 完了
-> `YolpWeatherTool`（Open-Meteo バックエンド）として実装済み。gateway L.744 で LLM 登録済み。
-
-- `[x]` **1. YOLP 雨雲レーダー API ツールの実装** — `yolp_weather` として実装・登録済み
-
-- `[x]` **2. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
-  - Heartbeat Step 4 および §8 天気行を ❌ → ✅ に更新。
-
----
-
-## Phase 34: session-logs Skill 向け分析スクリプトの整備 ✅ 完了
-
-- `[x]` **1. `scripts/session-stats.sh` の作成**
-  - セッション一覧・メッセージ数。`--workspace`・`--date`・`--days` オプション対応。sqlite3 未インストール時もグレースフルに終了。
-
-- `[x]` **2. `scripts/session-search.sh` の作成**
-  - `<keyword>` で `sessions/*.jsonl` の content を grep。`--workspace`・`--date` オプション対応。マッチ行を role 付きで表示。
-
-- `[x]` **3. `docs/specs/09_geminiclaw_feature_comparison.md` の最新コードとの一致確認・更新** (DoD)
-  - session-logs skill を ⚠️ → ✅ に更新。
-
-- `[x]` **テスト**: `test-session-scripts.sh` で 13 テスト全パス（TDD RED→GREEN 確認済み）
-
----
-
-## Phase 35: 標準 Agent Skills 仕様 (agentskills.io) への対応と統合 ✅ 完了
-> 計画書 (`docs/superpowers/plans/2026-05-31-standard-agent-skills-integration-plan.md`) に基づき、標準の `SKILL.md` (YAML Frontmatter付) と段階的開示 (Progressive Disclosure) に完全対応。
-
-- `[x]` **1. Rustデータ構造の定義と Frontmatter YAML パーサーの実装 (Phase A)**
-  - `Cargo.toml` に `gray_matter = "0.2"` を導入。
-  - `crates/rustyclaw-gateway/src/skills.rs` に `SkillManifest` と `Skill` 構造体を実装。
-  - YAMLのパースおよびエラーハンドリング処理の実装。
-
-- `[x]` **2. ハイブリッドスキャンエンジンの実装と後方互換性の確保 (Phase A)**
-  - `workspace/skills/` を巡回し、`[skill-name]/SKILL.md` ディレクトリ構造を優先スキャン。
-  - 従来のフラットな `[skill-name].md` を検知した際、疑似的にメタデータを生成してロードするフォールバック処理を実装。
-
-- `[x]` **3. Discovery (レベル1) システムプロンプト自動生成の実装 (Phase B)**
-  - 全スキルの `name` と `description` のみを集約した「Skills Directory」を起動時にキャッシュ。
-  - セッション開始時のシステムプロンプト末尾に自動で差し込むインジェクターの実装。
-
-- `[x]` **4. Activation (レベル2) 動的インジェクションの実装 (Phase B)**
-  - LLMリクエスト送信時に、プロンプトテキストおよび会話履歴にスキルのトリガー識別子（例: `use-skill: <name>` 等）が含まれているかをスキャンするエンジンを実装。
-  - トリガーされたスキルの `SKILL.md` 本文（Instructions）のみをコンテキストに動的マージする処理の実装。
-
-- `[x]` **5. Execution (レベル3) スキル内スクリプトの解決とトラバーサル防御の実装 (Phase C)**
-  - `run_workspace_script` のパス解決を `skills/[skill-name]/scripts/[script-name]` に拡張。
-  - 親ディレクトリ遡行 (`..` や `/`) などのトラバーサル攻撃を厳格に防御するバリデーター `resolve_secure_script_path` の実装。
-
-- `[x]` **6. 既存8スキルのマイグレーション (Phase C)**
-  - 現行の `vitals-coach.md` や `session-logs.md` などのフラット構成を、`[skill-name]/SKILL.md` 形式に移行し、YAML Frontmatterを追加。
-  - `500_get-vital-data-garmin.sh` などのスクリプトをそれぞれの `scripts/` ディレクトリに移動し、パス定義を更新。
-
-- `[x]` **7. 単体テストの記述と自動検証**
-  - YAMLパース、ハイブリッドスキャン、Discovery提示、動的Activation、およびセキュリティパス解決の単体テストを `crates/rustyclaw-gateway/src/skills.rs` 等に記述。
-  - `cargo test` で全テストがパスすることを確認。
-
-- `[x]` **8. RPi4 実機検証と Discord 連携テスト**
-  - RP1（Raspberry Pi 4）へ `./scripts/deploy.sh` でデプロイし、systemd の正常稼働および Skills 処理にクラッシュ・異常遅延がないことをログ検証。
-
-- `[x]` **9. docs/specs/09_geminiclaw_feature_comparison.md の更新** (DoD)
-  - 標準Skills仕様完全準拠および8スキルのマイグレーション完了を比較表に反映。
-
-- `[x]` **10. TDDによる `vitals-coach` と `get-vital-data-garmin` の高凝集マージ・統合** (writing-skills)
-  - 医療安全免責、JST同期遅延検証、主要指標フィルタリング、および閾値分析コーチングを1つの `vitals-coach` スキルへ一本化（高凝集・コンテキスト節約）。
-  - `skills/vitals-coach/scripts/` に局所スクリプト `500_get-vital-data-garmin.sh` を同封し、重複していた独立スキル `get-vital-data-garmin` を完全に削除。
-  - レガシーテストのコンパイルエラーを修正し、プロジェクト全118テストがオールグリーンであることを検証・コミット。
-
-- `[x]` **11. TDDによる `karakeep` スキルの新規作成と `cron.json` の更新** (writing-skills)
-  - `501_karakeep-cleanup.sh` および `502_karakeep-tag-items.sh` をスキルローカルディレクトリ `skills/karakeep/scripts/` にセキュアに同封（Level 3）。
-  - `USER.md` からの正確な関心事マッチング判定と、`memory/logs/` への標準テーブル形式ログの自動生成ルールを `karakeep/SKILL.md` として TDD 構築・検証。
-  - `cron.json` 内のクローンジョブプロンプトを更新し、新しい `karakeep` スキルの dynamic Activation を明示的にトリガーするよう設定。
-
-- `[x]` **12. スクリプトシークレットの完全疎結合化と `$vault:` 動的環境変数インジェクションの実装**
-  - `WorkspaceExecuteScriptTool` のパラメータに `env` オブジェクトを追加し、`$vault:key_name` プレフィックスによる動的シークレット解決システムを Rust 側で実装。
-  - 多層フォールバック（復号 Vault 優先 ➔ 平文 `vault.json` ➔ 大文字化・アンダースコア化 UNIX環境変数 ➔ 方式Aフェイルファストエラー）を導入。
-  - スキル（`vitals-coach`, `karakeep`）のスクリプトから Python による `vault.json` 読み取り等の不要なシークレット解決ロジックを完全消去し、シンプルな環境変数ガードのみにスリム化。
-  - スキル定義 `SKILL.md` にて `env` を通じた `$vault` 参照指定を導入し、セキュリティと Token-efficiency を極大化。
-
----
-
-## Phase 35b: 標準 SKILL 仕様準拠の強化と不整合の改修 🔴
-
-- `[ ]` **1. `allowed-tools` のパース柔軟化（文字列・配列両対応）**
-  - 標準仕様である「スペース区切りの単一文字列」（例: `allowed-tools: toolA toolB`）と、従来のYAML配列形式（`Vec<String>`）の両方を柔軟にデシリアライズできるカスタムデシリアライザを `skills.rs` に導入。
-
-- `[ ]` **2. `SKILL.md` フロントマター検証（Validation）の実装**
-  - スキル名 (`name`) の文字数（1〜64文字）、使用可能文字（小文字英数字・ハイフンのみ、ハイフン開始終了不可、連続ハイフン不可）、および親ディレクトリ名との一致検証を実装。
-  - `description`（1〜1024文字）および `compatibility`（1〜500文字）の文字数制限チェックを実装し、不整合時に警告またはスキップ処理を追加。
-
-- `[ ]` **3. `SKILL.md` 内相対ファイル・ディレクトリ参照リンクの動的書き換え処理**
-  - レベル2 Activation 時にインジェクトするスキル本文内にある相対参照（`references/` などの Markdown リンク）を、ワークスペース相対パス（`skills/[skill-name]/references/...`）に自動書き換えして LLM に提示する機構を `inject_skill_content` に追加。
 
 ---
 
@@ -185,11 +119,8 @@
 - `[x]` **1. LLM プロバイダ層へのネットワークリトライ**
   - `complete_with_fallback()` の多段モデルチェーンが実質的に同等の役割を担っており、追加実装不要と判断。
 
-- `[ ]` **2. GLOBAL_COOLDOWN を Per-provider クールダウンへリファクタ（GLOBAL_COOLDOWN 削除）**
-  - **現状のバグ**: `GLOBAL_COOLDOWN` が単一の `Mutex<Option<Instant>>` であり、あるプロバイダの 429 が全プロバイダをブロックする。さらに後発のエラーで上書きされる問題がある（例: Cloudflare daily limit の途中に groq の短い 429 が来ると制限時間が短縮される）。
-  - **修正方針**: `HashMap<provider_id, Instant>` による per-provider クールダウン管理に変更。`complete_with_fallback()` がチェーン走査時にクールダウン中モデルをスキップ。全プロバイダがクールダウン中の場合はチェーンを使い果たしてエラーを返すため、Gateway 側のブロックゲートは不要となり `GLOBAL_COOLDOWN` を完全削除する。
-  - 削除対象: `GLOBAL_COOLDOWN` static 変数・`set_global_cooldown_from_error()`・`global_cooldown_remaining()` およびこれらを呼び出す gateway/cron.rs 内の全7箇所
-  - 変更対象: `crates/rustyclaw-providers/src/lib.rs`・`crates/rustyclaw-agent/src/lib.rs`（`complete_with_fallback`）・`crates/rustyclaw-gateway/src/lib.rs`・`crates/rustyclaw-gateway/src/cron.rs`・`crates/rustyclaw-gateway/src/health.rs`
+- `[x]` **2. GLOBAL_COOLDOWN を Per-provider クールダウンへリファクタ（GLOBAL_COOLDOWN 削除）**
+  - `PROVIDER_COOLDOWNS: OnceLock<Mutex<HashMap<String, Instant>>>` による per-provider 管理に変更。`set_provider_cooldown_from_error()` / `set_provider_cooldown()` / `provider_cooldown_remaining()` を実装。`GLOBAL_COOLDOWN` static 変数・`set_global_cooldown_from_error()`・`global_cooldown_remaining()` およびこれらを呼び出す全7箇所を削除（`crates/rustyclaw-providers/src/lib.rs` 他）。
 
 - `[ ]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
