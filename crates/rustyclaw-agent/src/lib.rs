@@ -1795,9 +1795,14 @@ pub(crate) async fn ingest_session_summary(
 }
 
 /// RAG 検索結果をシステムプロンプト注入用の Markdown に変換する。
-/// source="memory" と source="session" を別セクションで表示する。
+/// source="doc:*" を最初に、source="memory"、source="session" の順で別セクション表示する。
 pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
     if items.is_empty() { return String::new(); }
+
+    let doc_items: Vec<&str> = items.iter()
+        .filter(|(src, _, _)| src.starts_with("doc:"))
+        .map(|(_, txt, _)| txt.as_str())
+        .collect();
     let memory_items: Vec<&str> = items.iter()
         .filter(|(src, _, _)| src == "memory")
         .map(|(_, txt, _)| txt.as_str())
@@ -1806,7 +1811,14 @@ pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
         .filter(|(src, _, _)| src == "session")
         .map(|(_, txt, _)| txt.as_str())
         .collect();
+
     let mut out = String::new();
+
+    if !doc_items.is_empty() {
+        out.push_str("\n\n## Relevant Specifications & Rules\n");
+        out.push_str("Use the following guidelines for task execution:\n\n");
+        for text in &doc_items { out.push_str(text); out.push('\n'); }
+    }
     if !memory_items.is_empty() {
         out.push_str("\n\n## Relevant Memory\n");
         out.push_str("The following memories are relevant to the current conversation:\n\n");
@@ -2738,6 +2750,24 @@ Keep it short.\n\
         assert!(result.contains("Rust is fast"));
         assert!(result.contains("RPi4 has 8GB RAM"));
         assert!(result.contains("## Relevant Memory"));
+    }
+
+    #[test]
+    fn test_format_rag_context_with_doc_items() {
+        let items = vec![
+            ("doc:AGENTS.md".to_string(), "## Tool Usage\nUse tools carefully.".to_string(), 0.85_f64),
+            ("memory".to_string(), "User prefers brevity".to_string(), 0.80_f64),
+            ("session".to_string(), "Previously discussed weather".to_string(), 0.75_f64),
+        ];
+        let result = format_rag_context(&items);
+        assert!(result.contains("## Relevant Specifications & Rules"), "doc: セクションが含まれること");
+        assert!(result.contains("Tool Usage"), "doc: チャンク内容が含まれること");
+        assert!(result.contains("## Relevant Memory"), "memory セクションが含まれること");
+        assert!(result.contains("## Relevant Past Sessions"), "session セクションが含まれること");
+        // doc セクションが memory セクションより先に来ること
+        let doc_pos = result.find("## Relevant Specifications").unwrap();
+        let mem_pos = result.find("## Relevant Memory").unwrap();
+        assert!(doc_pos < mem_pos, "doc セクションが memory より先であること");
     }
 
     #[test]
