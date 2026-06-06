@@ -187,5 +187,21 @@ curl -s http://127.0.0.1:8080/api/concurrency
 
 ---
 
+## 6. Git・ブランチ運用ルール (Git & Branching Rules)
+
+AI エージェントは、本リポジトリでの変更管理において以下の Git 運用ルールを厳格に遵守してください。
+
+*   **`master` ブランチへの直接コミット禁止 (No Direct Commits to `master`)**:
+    *   `master` ブランチ上で直接コミットを作成したり、直接履歴変更を行ったりしないでください。
+*   **要件ごとのトピックブランチ化の徹底 (Mandatory Topic Branches)**:
+    *   機能実装 (`feat/`)、バグ修正 (`fix/`)、ドキュメント更新 (`docs/`)、リファクタリング (`refactor/`) など、すべての要件について必ず専用のトピックブランチ（例: `feat/xxx`）を切って変更を行ってください。
+*   **マージコミットによる統合の義務 (Merge Commit Integration)**:
+    *   `master` ブランチへの変更のマージは、トピックの境界と履歴の整合性を視覚的に明確にするため、必ず `--no-ff` (No Fast-Forward) オプションを使用してください。
+    *   マージコマンドの例: `git merge --no-ff <branch_name> -m "Merge branch '<branch_name>' into master"`
+*   **マージ後のブランチクリーンアップ (Cleanup Branch)**:
+    *   `master` へのマージ完了後、不要となったトピックブランチはローカルから直ちに削除してください。
+
+---
+
 > [!TIP]
 > AI エージェントは、本ルールを常に前提として解釈します。仕様変更を伴う提案や実装を行う際は、この `docs/README.md` を読み込み、対象ファイルを正しく分類・アップデートしてください。
