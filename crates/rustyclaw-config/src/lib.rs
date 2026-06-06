@@ -105,6 +105,10 @@ pub struct EmbeddingConfig {
     /// セッション要約 embedding の保持日数（省略時は 7 日）
     #[serde(default)]
     pub session_summary_ttl_days: Option<u32>,
+    /// true のとき fastembed ローカルモデルを使用する（CloudflareAPI の代替）。
+    /// ローカルモデルは intfloat/multilingual-e5-small (384 次元)。
+    #[serde(default)]
+    pub use_local_embedding: bool,
 }
 
 /// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
@@ -889,6 +893,19 @@ mod tests {
 
         let cfg2: EmbeddingConfig = serde_json::from_str(r#"{"session_summary_ttl_days": 14}"#).unwrap();
         assert_eq!(cfg2.session_summary_ttl_days, Some(14));
+    }
+
+    #[test]
+    fn test_embedding_config_use_local_default_false() {
+        let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(!cfg.use_local_embedding, "default should be false");
+    }
+
+    #[test]
+    fn test_embedding_config_use_local_true() {
+        let cfg: EmbeddingConfig =
+            serde_json::from_str(r#"{"use_local_embedding": true}"#).unwrap();
+        assert!(cfg.use_local_embedding);
     }
 
     #[test]
