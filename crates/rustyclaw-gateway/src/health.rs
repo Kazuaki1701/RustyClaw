@@ -117,39 +117,67 @@ impl HealthServer {
                                         .unwrap_or(raw);
                                     ("200 OK".to_string(), pretty, "application/json; charset=utf-8")
 
+                                } else if request.starts_with("GET /api/llm/dates") {
+                                    let cat = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
+                                    let llm_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat);
+                                    let mut dates: Vec<String> = std::fs::read_dir(&llm_dir)
+                                        .map(|rd| rd.flatten()
+                                            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                                            .map(|e| e.file_name().to_string_lossy().to_string())
+                                            .filter(|n| chrono::NaiveDate::parse_from_str(n, "%Y-%m-%d").is_ok())
+                                            .collect())
+                                        .unwrap_or_default();
+                                    dates.sort_unstable_by(|a, b| b.cmp(a));
+                                    ("200 OK".to_string(), serde_json::to_string(&dates).unwrap_or_else(|_| "[]".to_string()), "application/json; charset=utf-8")
+
+                                } else if request.starts_with("GET /api/llm/times") {
+                                    let cat  = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
+                                    let date = extract_query_param(&request, "date").unwrap_or_default();
+                                    let time_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat).join(&date);
+                                    let mut times: Vec<String> = std::fs::read_dir(&time_dir)
+                                        .map(|rd| rd.flatten()
+                                            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                                            .map(|e| e.file_name().to_string_lossy().replace(".json", ""))
+                                            .collect())
+                                        .unwrap_or_default();
+                                    times.sort_unstable_by(|a, b| b.cmp(a));
+                                    ("200 OK".to_string(), serde_json::to_string(&times).unwrap_or_else(|_| "[]".to_string()), "application/json; charset=utf-8")
+
                                 } else if request.starts_with("GET /api/llm/io") {
-                                    let cat_opt = extract_query_str(&request, "cat");
-                                    let debug_llm_dir = workspace_path_clone.join("memory").join("debug").join("llm");
-                                    let categories = [
-                                        "tools", "discord", "dashboard", "briefing",
-                                        "vitals", "karakeep", "patrol", "heartbeat",
-                                        "summary", "daily", "memory"
-                                    ];
-                                    
-                                    if let Some(cat) = cat_opt {
-                                        if categories.contains(&cat.as_str()) {
-                                            let path = debug_llm_dir.join(format!("{}.json", cat));
-                                            let json = std::fs::read_to_string(&path).unwrap_or_else(|_| "null".to_string());
-                                            ("200 OK".to_string(), json, "application/json; charset=utf-8")
-                                        } else {
-                                            ("400 BAD REQUEST".to_string(), "Invalid category".to_string(), "text/plain")
-                                        }
+                                    let cat  = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
+                                    let date = extract_query_param(&request, "date");
+                                    let time = extract_query_param(&request, "time");
+
+                                    let llm_cat_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat);
+
+                                    let file_path = if let (Some(d), Some(t)) = (date, time) {
+                                        Some(llm_cat_dir.join(&d).join(format!("{}.json", t)))
                                     } else {
-                                        let mut map = serde_json::Map::new();
-                                        for c in &categories {
-                                            let path = debug_llm_dir.join(format!("{}.json", c));
-                                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                                                    map.insert(c.to_string(), val);
-                                                } else {
-                                                    map.insert(c.to_string(), serde_json::Value::Null);
-                                                }
-                                            } else {
-                                                map.insert(c.to_string(), serde_json::Value::Null);
-                                            }
-                                        }
-                                        let json = serde_json::Value::Object(map).to_string();
-                                        ("200 OK".to_string(), json, "application/json; charset=utf-8")
+                                        // latest: newest date dir → newest time file
+                                        let latest_date = std::fs::read_dir(&llm_cat_dir).ok()
+                                            .and_then(|rd| {
+                                                let mut dates: Vec<_> = rd.flatten()
+                                                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                                                    .map(|e| e.file_name().to_string_lossy().to_string())
+                                                    .filter(|n| chrono::NaiveDate::parse_from_str(n, "%Y-%m-%d").is_ok())
+                                                    .collect();
+                                                dates.sort_unstable_by(|a, b| b.cmp(a));
+                                                dates.into_iter().next()
+                                            });
+                                        latest_date.and_then(|d| {
+                                            let date_dir = llm_cat_dir.join(&d);
+                                            let mut times: Vec<_> = std::fs::read_dir(&date_dir).ok()?.flatten()
+                                                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                                                .map(|e| e.file_name().to_string_lossy().to_string())
+                                                .collect();
+                                            times.sort_unstable_by(|a, b| b.cmp(a));
+                                            times.into_iter().next().map(|t| date_dir.join(t))
+                                        })
+                                    };
+
+                                    match file_path.and_then(|p| std::fs::read_to_string(&p).ok()) {
+                                        Some(content) => ("200 OK".to_string(), content, "application/json; charset=utf-8"),
+                                        None => ("404 Not Found".to_string(), "{}".to_string(), "application/json; charset=utf-8"),
                                     }
 
                                 } else if request.starts_with("GET /api/queue") {
@@ -181,23 +209,19 @@ impl HealthServer {
                                     ("200 OK".to_string(), json, "application/json; charset=utf-8")
 
                                 } else if request.starts_with("GET /api/concurrency") {
-                                    let available = gmn_sem_clone.available_permits();
-                                    let active = gmn_cap_clone.saturating_sub(available);
-                                    let queue_state = crate::QUEUE_STATE.lock().unwrap();
-                                    let queue_depth = queue_state.items.iter()
-                                        .filter(|i| i.status == "Waiting")
-                                        .count();
-                                    drop(queue_state);
-                                    let cooldown_secs = rustyclaw_providers::global_cooldown_remaining()
-                                        .map(|d| d.as_secs_f64())
-                                        .unwrap_or(0.0);
+                                    let providers_map = {
+                                        let mut m = serde_json::Map::new();
+                                        for p in ["cloudflare", "groq", "openrouter", "gmn"] {
+                                            let secs = rustyclaw_providers::provider_cooldown_remaining(p)
+                                                .map(|d| d.as_secs_f64())
+                                                .unwrap_or(0.0);
+                                            m.insert(p.to_string(), serde_json::json!(secs));
+                                        }
+                                        m
+                                    };
                                     let json = serde_json::json!({
-                                        "active": active,
-                                        "available": available,
                                         "capacity": gmn_cap_clone,
-                                        "queue_depth": queue_depth,
-                                        "cooldown_secs": cooldown_secs,
-                                        "global_cooldown": if cooldown_secs > 0.0 { Some(cooldown_secs) } else { None::<f64> }
+                                        "providers": providers_map,
                                     });
                                     ("200 OK".to_string(), json.to_string(), "application/json; charset=utf-8")
 
@@ -383,15 +407,15 @@ fn extract_query_i64(request: &str, key: &str) -> Option<i64> {
     None
 }
 
-/// GET /path?key=value のクエリから文字列パラメータ値を取り出す。
-fn extract_query_str(request: &str, key: &str) -> Option<String> {
-    let first_line = request.lines().next()?;
-    let query_start = first_line.find('?')?;
-    let query = &first_line[query_start + 1..];
-    let end = query.find(' ').unwrap_or(query.len());
-    for pair in query[..end].split('&') {
-        if let Some(val) = pair.strip_prefix(&format!("{}=", key)) {
-            return Some(val.to_string());
+fn extract_query_param(request: &str, key: &str) -> Option<String> {
+    let query_start = request.find('?')?;
+    let query_end = request[query_start..].find(' ').map(|i| query_start + i).unwrap_or(request.len());
+    let query = &request[query_start + 1..query_end];
+    for pair in query.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k == key {
+                return Some(v.to_string());
+            }
         }
     }
     None
@@ -511,7 +535,7 @@ header{
 .pill-wait{background:rgba(0,212,255,.10);color:var(--blue); border:1px solid rgba(0,212,255,.3);box-shadow:0 0 6px rgba(0,212,255,.15)}
 .pill-cool{background:rgba(255,170,0,.10);color:var(--amber);border:1px solid rgba(255,170,0,.3);box-shadow:0 0 6px rgba(255,170,0,.15)}
 .q-sid {color:var(--text);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
-.q-desc{color:var(--muted);font-size:10px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+.q-desc{color:var(--muted);font-size:10px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .q-time{color:var(--muted);font-size:10px;flex-shrink:0}
 .cool-bar{height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:2px;overflow:hidden}
 .cool-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--amber),#ff6600);box-shadow:0 0 4px var(--amber);transition:width .5s}
@@ -533,6 +557,14 @@ header{
 .lane-desc{max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .q-list-area{flex:1;overflow-y:auto;min-height:0}
 @keyframes pulse-dot{0%{transform:scale(.9);opacity:.6}50%{transform:scale(1.2);opacity:1}100%{transform:scale(.9);opacity:.6}}
+.lanes-split{display:grid;grid-template-columns:136px 1fr;gap:0;height:100%}
+.lanes-left{display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-right:1px solid rgba(255,255,255,0.07)}
+.lanes-right{display:flex;flex-direction:column;gap:2px;padding:6px 8px;overflow-y:auto}
+.lane-badge-row{display:flex;align-items:center;gap:6px;font-size:11px;font-family:'Fira Code',monospace;white-space:nowrap}
+.lane-dot-run{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0;box-shadow:0 0 4px var(--green)}
+.lane-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;font-family:'Fira Code',monospace}
+.lane-badge-idle{color:var(--muted);font-family:'Fira Code',monospace;font-size:10px}
+.lane-elapsed{color:var(--muted);font-size:10px;margin-left:auto}
 .slot-row{display:flex;gap:4px;margin:10px 0 12px}
 .slot{flex:1;height:16px;border-radius:3px;border:1px solid rgba(0,212,255,.15);background:rgba(255,255,255,.03)}
 .slot.active{background:rgba(0,212,255,.25);border-color:var(--blue);box-shadow:0 0 6px rgba(0,212,255,.4)}
@@ -591,7 +623,7 @@ header{
 .chart-legend{display:flex;gap:14px;margin-top:6px}
 .leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);font-family:'Fira Code',monospace}
 .leg-dot{width:8px;height:3px;border-radius:1px}
-.stats-bottom{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stats-bottom{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .breakdown{background:var(--term-bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
 .bd-title{font-size:10px;font-weight:700;letter-spacing:.08em;font-family:'Fira Code',monospace;margin-bottom:8px}
 .bd-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03);font-size:11px}
@@ -623,6 +655,11 @@ header{
   border-color: rgba(0,212,255,0.4);
   box-shadow: 0 0 6px rgba(0,212,255,0.2);
 }
+.prov-row{display:flex;align-items:center;gap:6px;font-size:10px;font-family:'Fira Code',monospace}
+.prov-name{width:80px;color:rgba(180,210,230,0.7)}
+.prov-bar-wrap{flex:1;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden}
+.prov-bar-fill{height:100%;border-radius:2px;transition:width 0.3s}
+.prov-secs{width:44px;text-align:right}
 </style>
 </head>
 <body>
@@ -645,14 +682,8 @@ header{
       <div class="panel-body" id="queuePanel" style="padding:6px 8px; overflow-y:hidden; display:flex; flex-direction:column; gap:2px;"><div style="color:var(--muted);text-align:center;padding:10px;font-family:'Fira Code',monospace;font-size:11px;">稼働タスクなし（待機中・正常）</div></div>
     </div>
     <div class="panel concur">
-      <div class="panel-head"><span class="panel-label">◈ CONCURRENCY</span><span class="rts" id="concur-ts">—</span></div>
-      <div class="panel-body">
-        <div class="slot-row" id="slotRow"></div>
-        <div class="stat-line"><span class="sk">Active</span><span class="sv" id="cActive">—</span></div>
-        <div class="stat-line"><span class="sk">Queue depth</span><span class="sv" id="cDepth">—</span></div>
-        <div class="stat-line"><span class="sk">Cooldown</span><span class="sv" id="cCool">—</span></div>
-        <div class="stat-line"><span class="sk">Global limit</span><span class="sv" id="cGlobal">—</span></div>
-      </div>
+      <div class="panel-head"><span class="panel-label">◈ PROVIDER COOLDOWNS</span><span class="rts" id="concur-ts">—</span></div>
+      <div class="panel-body" id="concurPanel" style="padding:6px 8px;display:flex;flex-direction:column;gap:4px;"></div>
     </div>
     <div class="panel neurons">
       <div class="panel-head"><span class="panel-label">◈ CF NEURONS</span><span class="rts" id="neuron-ts">—</span></div>
@@ -673,6 +704,14 @@ header{
           <span class="rts" id="inspector-ts">—</span>
         </div>
         <div style="display: flex; gap: 4px; overflow-x: auto; padding: 2px 0;" id="llmTabs"></div>
+        <div style="display:flex;gap:6px;padding:2px 0;align-items:center;">
+          <select id="llmDateSelect" style="background:#0a1628;color:#7bafd4;border:1px solid rgba(0,212,255,.25);border-radius:3px;font-family:'Fira Code',monospace;font-size:10px;padding:2px 4px;" onchange="onLlmDateChange()">
+            <option value="">-- date --</option>
+          </select>
+          <select id="llmTimeSelect" style="background:#0a1628;color:#7bafd4;border:1px solid rgba(0,212,255,.25);border-radius:3px;font-family:'Fira Code',monospace;font-size:10px;padding:2px 4px;" onchange="updateInspector()">
+            <option value="">-- time --</option>
+          </select>
+        </div>
       </div>
       <div class="panel-body" id="inspectorBody" style="display: flex; gap: 8px; min-height: 0; overflow-y: hidden;">
         <div style="flex: 1; display: flex; flex-direction: column; gap: 4px; min-height: 0;">
@@ -732,6 +771,7 @@ header{
   <div class="stats-bottom">
     <div class="breakdown" style="border-color:rgba(191,0,255,.2)"><div class="bd-title" style="color:var(--purple)">BY MODEL</div><div id="modelBreakdown"><div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div></div></div>
     <div class="breakdown" style="border-color:rgba(0,229,255,.2)"><div class="bd-title" style="color:var(--cyan)">BY TRIGGER</div><div id="triggerBreakdown"><div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div></div></div>
+    <div class="breakdown" style="border-color:rgba(255,165,0,.2)"><div class="bd-title" style="color:#f48120">BY PROVIDER</div><div id="providerBreakdown"><div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div></div></div>
   </div>
 </div>
 </div>
@@ -746,6 +786,26 @@ function switchTab(id,btn){
 function fmtK(n){if(n>=1e6)return(n/1e6).toFixed(2)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return n.toString()}
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function now(){return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+const SERVICE_BADGES = [
+  { prefix: 'cron:heartbeat',      label: 'HEARTBEAT', color: '#bf00ff' },
+  { prefix: 'cron:topic-patrol',   label: 'PATROL',    color: '#ff8c00' },
+  { prefix: 'cron:daily-briefing', label: 'BRIEFING',  color: '#4488ff' },
+  { prefix: 'cron:vitals',         label: 'VITALS',    color: '#00ff9f' },
+  { prefix: 'cron:karakeep',       label: 'KARAKEEP',  color: '#ffe066' },
+  { prefix: 'cron:daily-summary',  label: 'SUMMARY',   color: '#00e5ff' },
+  { prefix: 'discord-',            label: 'DISCORD',   color: '#7b68ee' },
+  { prefix: 'http-dashboard',      label: 'DASHBOARD', color: '#00d4ff' },
+  { prefix: 'cli-',                label: 'CLI',       color: '#cccccc' },
+];
+function serviceBadge(sessionId) {
+  const s = SERVICE_BADGES.find(b => sessionId.startsWith(b.prefix));
+  return s || { label: 'UNKNOWN', color: '#888888' };
+}
+function badgeHtml(s) {
+  const style = `background:${s.color}22;color:${s.color};border:1px solid ${s.color}55`;
+  return `<span class="lane-badge" style="${style}">${escapeHtml(s.label)}</span>`;
+}
+let cachedCapacity = 4;
 async function updateQueue(){
   try{
     const[rq,rs]=await Promise.all([fetch('/api/queue'),fetch('/api/schedule')]);
@@ -754,93 +814,73 @@ async function updateQueue(){
     const sched=rs.ok?await rs.json():[];
     document.getElementById('queue-ts').textContent='↻ '+now();
     const panel=document.getElementById('queuePanel');
-    
+
     const executing=items.filter(i=>i.status==='Executing');
     const waiting=items.filter(i=>i.status!=='Executing');
-    
-    let html='<div class="lane-sec-lbl">LANES (PARALLEL WORKERS)</div>';
-    html+='<div class="lanes-grid">';
-    for(let i=0;i<4;i++){
+
+    // Left column: LANES (capacity from updateConcurrency cache)
+    let lanesHtml='';
+    for(let i=0;i<cachedCapacity;i++){
       if(i<executing.length){
         const task=executing[i];
         const elapsed=Math.floor((Date.now()-task.enqueued_at_ms)/1000);
-        html+=`
-          <div class="lane-card active" title="${escapeHtml(task.description)}">
-            <div class="lane-hdr">
-              <span class="lane-n">LANE 0${i+1}</span>
-              <span class="lane-st"><span class="lane-dot"></span>RUN</span>
-            </div>
-            <div class="lane-sid">${escapeHtml(task.session_id)}</div>
-            <div class="lane-meta">
-              <span class="lane-desc">${escapeHtml(task.description||'Executing...')}</span>
-              <span class="lane-time">${elapsed}s</span>
-            </div>
-          </div>
-        `;
+        const s=serviceBadge(task.session_id);
+        lanesHtml+=`<div class="lane-badge-row"><span class="lane-dot-run"></span>${badgeHtml(s)}<span class="lane-elapsed">${elapsed}s</span></div>`;
       }else{
-        html+=`
-          <div class="lane-card idle">
-            <div class="lane-hdr">
-              <span class="lane-n">LANE 0${i+1}</span>
-              <span class="lane-st"><span class="lane-dot"></span>IDLE</span>
-            </div>
-            <div class="lane-sid">[ Ready ]</div>
-            <div class="lane-meta">
-              <span>--</span>
-              <span>--</span>
-            </div>
-          </div>
-        `;
+        lanesHtml+=`<div class="lane-badge-row"><span class="lane-badge-idle">[  ────  ]</span><span class="lane-elapsed">--</span></div>`;
       }
     }
-    html+='</div>';
-    html+='<div class="lane-div"></div>';
-    html+='<div class="lane-sec-lbl">PENDING QUEUE & SCHEDULED</div>';
-    html+='<div class="q-list-area">';
-    
+
+    // Right column: PENDING + SCHEDULED
     let qHtml='';
-    waiting.forEach((item)=>{
+    waiting.forEach(item=>{
       const cls=item.status==='Waiting'?'pill-wait':'pill-cool';
       const lbl=item.status==='Waiting'?'WAIT':'COOL';
       const elapsed=Math.floor((Date.now()-item.enqueued_at_ms)/1000);
-      qHtml+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span><span class="q-sid">${escapeHtml(item.session_id)}</span><span class="q-desc">${escapeHtml(item.description||'')}</span><span class="q-time">${elapsed}s</span></div>`;
+      const s=serviceBadge(item.session_id);
+      qHtml+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span>${badgeHtml(s)}<span class="q-desc">${escapeHtml(item.description||'')}</span><span class="q-time">${elapsed}s</span></div>`;
       if(item.status==='Cooldown'&&item.cooldown_left_secs>0){const pct=Math.min(100,(item.cooldown_left_secs/60)*100);qHtml+=`<div class="cool-bar"><div class="cool-fill" style="width:${pct}%"></div></div>`}
     });
-    sched.forEach((s)=>{
+    sched.forEach(s=>{
       const left=Math.max(0,s.next_run_epoch-Math.floor(Date.now()/1000));
       const h=Math.floor(left/3600),m=Math.floor((left%3600)/60);
       const eta=h>0?`${h}h${m}m`:m>0?`${m}m`:`<1m`;
-      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span><span class="q-sid">${escapeHtml(s.name)}</span><span class="q-desc">${escapeHtml(s.trigger_type)}</span><span class="q-time">in ${eta}</span></div>`;
+      const matched=SERVICE_BADGES.find(b=>('cron:'+s.id).startsWith(b.prefix));
+      const svc=matched||{label:'CRON',color:'#aaaaaa'};
+      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span>${badgeHtml(svc)}<span class="q-desc">${escapeHtml(s.name||'')}</span><span class="q-time">in ${eta}</span></div>`;
     });
-    if(!qHtml){qHtml='<div style="color:var(--muted);text-align:center;padding:15px;font-size:10px;">待機タスクなし</div>'}
-    html+=qHtml;
-    html+='</div>';
-    
-    const listArea=panel.querySelector('.q-list-area');
-    const scrollPos=listArea?listArea.scrollTop:0;
-    
-    panel.innerHTML=html;
-    
-    const newListArea=panel.querySelector('.q-list-area');
-    if(newListArea){
-      newListArea.scrollTop=scrollPos;
-    }
+    if(!qHtml)qHtml='<div style="color:var(--muted);text-align:center;padding:10px;font-size:10px;">待機なし</div>';
+
+    const scrollPos=panel.querySelector('.lanes-right')?.scrollTop??0;
+    panel.innerHTML=`<div class="lanes-split"><div class="lanes-left">${lanesHtml}</div><div class="lanes-right">${qHtml}</div></div>`;
+    const newRight=panel.querySelector('.lanes-right');
+    if(newRight)newRight.scrollTop=scrollPos;
   }catch{}
 }
+const PROVIDER_COLORS = {
+  cloudflare: '#f48120',
+  groq:       '#f55036',
+  openrouter: '#6e45e2',
+  gmn:        '#4285f4',
+};
 async function updateConcurrency(){
   try{
     const r=await fetch('/api/concurrency');if(!r.ok)return;
     const d=await r.json();
     document.getElementById('concur-ts').textContent='↻ '+now();
-    const slots=document.getElementById('slotRow');slots.innerHTML='';
-    for(let i=0;i<d.capacity;i++){const s=document.createElement('div');s.className='slot'+(i<d.active?' active':'');slots.appendChild(s)}
-    document.getElementById('cActive').textContent=d.active+' / '+d.capacity;
-    document.getElementById('cActive').className='sv '+(d.active>=d.capacity?'busy':'ok');
-    document.getElementById('cDepth').textContent=d.queue_depth;
-    document.getElementById('cCool').textContent=d.cooldown_secs>0?d.cooldown_secs.toFixed(1)+'s':'none';
-    document.getElementById('cCool').className='sv '+(d.cooldown_secs>0?'warn':'ok');
-    document.getElementById('cGlobal').textContent=d.global_cooldown?d.global_cooldown.toFixed(1)+'s':'none';
-    document.getElementById('cGlobal').className='sv '+(d.global_cooldown?'warn':'ok');
+    cachedCapacity = d.capacity ?? 4;
+    const panel=document.getElementById('concurPanel');
+    const providers=d.providers??{};
+    panel.innerHTML=Object.entries(providers).map(([name,secs])=>{
+      const pct=Math.min(100,(secs/60)*100).toFixed(1);
+      const color=PROVIDER_COLORS[name]??'#888';
+      const secsLabel=secs>0?secs.toFixed(1)+'s':'<span style="color:var(--muted)">none</span>';
+      return `<div class="prov-row">
+        <span class="prov-name">${escapeHtml(name)}</span>
+        <div class="prov-bar-wrap"><div class="prov-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <span class="prov-secs">${secsLabel}</span>
+      </div>`;
+    }).join('');
   }catch{}
 }
 async function updateNeurons(){
@@ -860,21 +900,55 @@ const llmCategories = ['tools', 'discord', 'dashboard', 'briefing', 'vitals', 'k
 function initLlmTabs() {
   const container = document.getElementById('llmTabs');
   if (!container) return;
-  container.innerHTML = llmCategories.map(cat => 
+  container.innerHTML = llmCategories.map(cat =>
     `<button class="llm-tab${cat===activeLlmCategory?' active':''}" onclick="setLlmCategory('${cat}', this)">${cat.toUpperCase()}</button>`
   ).join('');
+  populateLlmDates();
 }
-function setLlmCategory(cat, btn) {
+async function setLlmCategory(cat, btn) {
   activeLlmCategory = cat;
   document.querySelectorAll('.llm-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  await populateLlmDates();
+}
+async function populateLlmDates() {
+  const dateSelect = document.getElementById('llmDateSelect');
+  const timeSelect = document.getElementById('llmTimeSelect');
+  const r = await fetch('/api/llm/dates?cat=' + activeLlmCategory).catch(()=>null);
+  const dates = r?.ok ? await r.json() : [];
+  dateSelect.innerHTML = '<option value="">-- date --</option>' +
+    dates.map(d=>`<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+  if (dates.length > 0) {
+    dateSelect.value = dates[0];
+    await populateLlmTimes();
+  } else {
+    timeSelect.innerHTML = '<option value="">-- time --</option>';
+    updateInspector();
+  }
+}
+async function populateLlmTimes() {
+  const dateSelect = document.getElementById('llmDateSelect');
+  const timeSelect = document.getElementById('llmTimeSelect');
+  const date = dateSelect.value;
+  if (!date) { timeSelect.innerHTML = '<option value="">-- time --</option>'; return; }
+  const r = await fetch(`/api/llm/times?cat=${activeLlmCategory}&date=${date}`).catch(()=>null);
+  const times = r?.ok ? await r.json() : [];
+  timeSelect.innerHTML = '<option value="">-- time --</option>' +
+    times.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t.replace(/-/g,':'))}</option>`).join('');
+  if (times.length > 0) { timeSelect.value = times[0]; }
   updateInspector();
+}
+async function onLlmDateChange() {
+  await populateLlmTimes();
 }
 async function updateInspector(){
   try{
-    const r = await fetch('/api/llm/io?cat=' + activeLlmCategory);
-    const ts = now();
-    document.getElementById('inspector-ts').textContent = '↻ ' + ts;
+    const date = document.getElementById('llmDateSelect')?.value ?? '';
+    const time = document.getElementById('llmTimeSelect')?.value ?? '';
+    let url = '/api/llm/io?cat=' + activeLlmCategory;
+    if (date && time) url += `&date=${date}&time=${time}`;
+    const r = await fetch(url);
+    document.getElementById('inspector-ts').textContent = '↻ ' + now();
     const reqPanel = document.getElementById('reqPanel');
     const resPanel = document.getElementById('resPanel');
     if (!r.ok) {
@@ -883,18 +957,8 @@ async function updateInspector(){
       return;
     }
     const d = await r.json();
-    if (d && d.request) {
-      const reqTxt = JSON.stringify(d.request, null, 2);
-      reqPanel.textContent = reqTxt.length > 4000 ? '...(truncated head)\n' + reqTxt.slice(-4000) : reqTxt;
-    } else {
-      reqPanel.textContent = '(no request logged)';
-    }
-    if (d && d.response) {
-      const resTxt = JSON.stringify(d.response, null, 2);
-      resPanel.textContent = resTxt.length > 4000 ? '...(truncated head)\n' + resTxt.slice(-4000) : resTxt;
-    } else {
-      resPanel.textContent = '(no response logged)';
-    }
+    if (reqPanel) reqPanel.textContent = d?.request ? JSON.stringify(d.request, null, 2) : '(no request logged)';
+    if (resPanel) resPanel.textContent = d?.response ? JSON.stringify(d.response, null, 2) : '(no response logged)';
   } catch(e) {
     console.error("Inspector fetch error:", e);
   }
@@ -905,12 +969,24 @@ async function updateLog(){
     const el=document.getElementById('appLog');
     const atBottom=el.scrollHeight-el.clientHeight<=el.scrollTop+60;
     const lines=txt.trim().split('\n').slice(-100);
+    const LOG_BADGES = [
+      { pattern: /HeartBeatService/,  label: 'HEARTBEAT', color: '#bf00ff' },
+      { pattern: /rustyclaw_gateway/, label: 'GATEWAY',   color: '#00d4ff' },
+      { pattern: /PatrolService/,     label: 'PATROL',    color: '#ff8c00' },
+      { pattern: /BriefingService/,   label: 'BRIEFING',  color: '#4488ff' },
+      { pattern: /VitalsService/,     label: 'VITALS',    color: '#00ff9f' },
+      { pattern: /DiscordService/,    label: 'DISCORD',   color: '#7b68ee' },
+    ];
     el.innerHTML=lines.map(line=>{
       const lvl=line.includes(' INFO ')?'info':line.includes(' WARN ')?'warn':line.includes(' ERROR ')?'error':'info';
       const tsM=line.match(/\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})/);
       const ts=tsM?tsM[1]:'';
-      const msg=line.replace(/^\S+\s+(INFO|WARN|ERROR)\s+\S+:\s*/,'').trim();
-      return`<div class="log-line"><span class="log-ts">${ts}</span><span class="log-lv ${lvl}">${lvl.toUpperCase()}</span><span class="log-msg">${escapeHtml(msg)}</span></div>`;
+      let msg=line.replace(/^\S+\s+(INFO|WARN|ERROR)\s+\S+:\s*/,'').trim();
+      const svcBadge=LOG_BADGES.find(b=>b.pattern.test(line));
+      const badgeSpan=svcBadge
+        ?`<strong style="color:${svcBadge.color};background:${svcBadge.color}22;border:1px solid ${svcBadge.color}55;padding:0 4px;border-radius:3px;font-size:9px;margin-right:4px;">[${svcBadge.label}]</strong>`
+        :'';
+      return`<div class="log-line"><span class="log-ts">${ts}</span><span class="log-lv ${lvl}">${lvl.toUpperCase()}</span>${badgeSpan}<span class="log-msg">${escapeHtml(msg)}</span></div>`;
     }).join('');
     if(atBottom)el.scrollTop=el.scrollHeight;
   }catch{}
@@ -959,6 +1035,26 @@ function renderSummary(d){
     const pct=Math.round((v.tokens/totalTok)*100);
     return`<div class="bd-row"><span class="bd-name" style="color:${colors[i]||'#aaa'}">${escapeHtml(m)}</span><div class="bd-bar-bg"><div class="bd-bar" style="width:${pct}%;background:${colors[i]||'#aaa'}"></div></div><span class="bd-cnt">${fmtK(v.tokens)}</span></div>`;
   }).join('')||'<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
+  // BY PROVIDER
+  const byProvider = d.by_provider ?? {};
+  const providerEntries = Object.entries(byProvider);
+  const maxProvTokens = Math.max(1, ...providerEntries.map(([,v])=>v.tokens));
+  const PROV_COLORS_STATS = { cloudflare:'#f48120', groq:'#f55036', openrouter:'#6e45e2', gmn:'#4285f4' };
+  document.getElementById('providerBreakdown').innerHTML = providerEntries.length
+    ? providerEntries.map(([name, v]) => {
+        const pct = ((v.tokens / maxProvTokens) * 100).toFixed(1);
+        const color = PROV_COLORS_STATS[name] ?? '#888';
+        return `<div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(180,210,230,0.7);margin-bottom:2px">
+            <span>${escapeHtml(name)}</span>
+            <span>${fmtK(v.tokens)} tok / ${v.runs} runs</span>
+          </div>
+          <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:2px">
+            <div style="height:100%;width:${pct}%;background:${color};border-radius:2px"></div>
+          </div>
+        </div>`;
+      }).join('')
+    : '<div style="color:var(--muted);font-size:11px;padding:8px 0">No data yet</div>';
 }
 function renderNeuronsKpi(d){
   const today=d.today_used??0;
