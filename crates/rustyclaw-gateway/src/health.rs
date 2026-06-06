@@ -429,7 +429,8 @@ impl HealthServer {
                                             serde_json::from_str::<serde_json::Value>(json_body)
                                         {
                                             if let Some(msg) = val["message"].as_str() {
-                                                let session_id = "http-dashboard".to_string();
+                                                let today = chrono::Local::now().format("%Y%m%d").to_string();
+                                                let session_id = format!("http-dashboard-{}", today);
                                                 let mut rx = bus_clone.subscribe();
 
                                                 let event = crate::SystemEvent::IncomingMessage {

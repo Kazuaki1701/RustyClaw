@@ -15,6 +15,16 @@ pub mod heartbeat;
 pub(crate) mod skills;
 pub mod watchdog;
 
+const SUMMARIZE_CRON_SESSIONS: &[&str] = &[
+    "cron:karakeep-cleanup",
+    "cron:karakeep-recommendation",
+    "cron:topic-patrol-explore",
+    "cron:topic-patrol-deliver",
+    "cron:vitals-morning",
+    "cron:vitals-night",
+    "cron:daily-briefing",
+];
+
 // ==============================================================================
 // 待ち行列キューの追跡用データ構造
 // ==============================================================================
@@ -705,6 +715,20 @@ impl LaneRegistry {
                                                 content: response.content,
                                             });
 
+                                            // セッションサマリー RAG 化: ホワイトリスト cron ジョブ完了後に summary イベントを発行 (Phase 41-1)
+                                            if SUMMARIZE_CRON_SESSIONS.contains(&session_id.as_str()) {
+                                                let summary_session_id = format!("cron:session-summary:{}", session_id);
+                                                if let Err(e) = bus.publish(SystemEvent::IncomingMessage {
+                                                    session_id: summary_session_id,
+                                                    user_id: "cron".to_string(),
+                                                    channel_id: "cron".to_string(),
+                                                    content: String::new(),
+                                                    priority: Priority::Background,
+                                                }) {
+                                                    tracing::warn!("Failed to publish session-summary event: {:#}", e);
+                                                }
+                                            }
+
                                             // lastUserContact を更新 (SQLite & heartbeat-state.json)
                                             if let Ok(db) =
                                                 rustyclaw_storage::DbManager::new(&db_path)
@@ -1123,6 +1147,7 @@ impl Gateway {
             let db = self.workspace_path.join("memory.db");
             tokio::spawn(async move {
                 rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+                rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
             });
         }
 
@@ -1168,6 +1193,7 @@ impl Gateway {
                                 let db = self.workspace_path.join("memory.db");
                                 tokio::spawn(async move {
                                     rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+                                    rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
                                 });
                             }
                             let m = new_config.get_model("default");
@@ -1191,6 +1217,7 @@ impl Gateway {
                                 let db = self.workspace_path.join("memory.db");
                                 tokio::spawn(async move {
                                     rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+                                    rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
                                 });
                             }
                             let m = new_config.get_model("default");

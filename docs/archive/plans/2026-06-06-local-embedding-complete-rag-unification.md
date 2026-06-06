@@ -1,6 +1,9 @@
 # Local Embedding & Complete RAG Unification Implementation Plan (Phase 40-8)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去の計画書 - 開発完了済み)  
+> **完了日**: 2026-06-06  
+> **備考**: 最新の動作仕様については、`docs/specs/` 配下の最新仕様書を参照してください。
 
 **Goal:** Embedding（ベクトル化）処理を RPi4 ローカルで実行させ、外部 API 依存を排除した完全ローカル完結型 RAG システムを構築する。
 
