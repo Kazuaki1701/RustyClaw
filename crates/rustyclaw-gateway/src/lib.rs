@@ -1123,6 +1123,7 @@ impl Gateway {
             let db = self.workspace_path.join("memory.db");
             tokio::spawn(async move {
                 rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+                rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
             });
         }
 
@@ -1168,6 +1169,7 @@ impl Gateway {
                                 let db = self.workspace_path.join("memory.db");
                                 tokio::spawn(async move {
                                     rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+                                    rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
                                 });
                             }
                             let m = new_config.get_model("default");
@@ -1191,6 +1193,7 @@ impl Gateway {
                                 let db = self.workspace_path.join("memory.db");
                                 tokio::spawn(async move {
                                     rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+                                    rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
                                 });
                             }
                             let m = new_config.get_model("default");

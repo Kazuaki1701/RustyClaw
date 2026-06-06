@@ -1911,11 +1911,8 @@ pub async fn ingest_static_documents(
         tracing::warn!("ingest_static_documents: migration error: {}", e);
     }
 
-    // スキャン対象ファイル: AGENTS.md + MEMORY.md + skills/**/*.md (ISSUE-28/31)
-    let mut files = vec![
-        workspace_dir.join("AGENTS.md"),
-        workspace_dir.join("MEMORY.md"),
-    ];
+    // スキャン対象ファイル: AGENTS.md + skills/**/*.md (1階層サブディレクトリを含む)
+    let mut files = vec![workspace_dir.join("AGENTS.md")];
     let skills_dir = workspace_dir.join("skills");
     if let Ok(entries) = std::fs::read_dir(&skills_dir) {
         let mut skill_files: Vec<_> = Vec::new();
@@ -2033,7 +2030,7 @@ pub async fn ingest_static_documents(
 
 /// MEMORY.md を読み込み、バレット行をチャンク化してベクトル化し memory.db に保存する。
 /// Fail-open: エラーは warn ログのみで処理を継続する。
-pub(crate) async fn ingest_memory_md(
+pub async fn ingest_memory_md(
     workspace_dir: &Path,
     config: &Config,
     db_path: &Path,
@@ -3874,27 +3871,13 @@ Keep it short.\n\
     }
 
     #[test]
-    fn test_ingest_static_documents_includes_memory_md() {
-        use std::fs;
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path();
-
-        fs::write(ws.join("MEMORY.md"), "# Memory\n- fact A").unwrap();
-        fs::write(ws.join("AGENTS.md"), "# Agents").unwrap();
-
-        // ingest_static_documents のファイルリスト構築ロジックを再現
-        let mut files = vec![
-            ws.join("AGENTS.md"),
-            ws.join("MEMORY.md"),
-        ];
-        let skills_dir = ws.join("skills");
-        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-            let _ = entries; // skills なし
-        }
-
+    fn test_ingest_static_documents_excludes_memory_md() {
+        // MEMORY.md は ingest_static_documents のスキャン対象外。
+        // 代わりに ingest_memory_md が startup/flush 時に処理する (ISSUE-28/31)
+        let files: Vec<&str> = vec!["AGENTS.md"]; // MEMORY.md を含まない
         assert!(
-            files.iter().any(|p| p.file_name().map(|n| n == "MEMORY.md").unwrap_or(false)),
-            "MEMORY.md がスキャン対象に含まれるべき"
+            !files.contains(&"MEMORY.md"),
+            "MEMORY.md は ingest_static_documents の対象外であるべき"
         );
     }
 
