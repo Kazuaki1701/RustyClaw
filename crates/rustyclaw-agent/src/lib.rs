@@ -703,23 +703,36 @@ Rules:
         let mut system_context = self.build_heartbeat_context(workspace_dir)?;
 
         // RAG: heartbeat プロンプトに関連チャンクを注入 (ISSUE-27)
-        // execute() と同じパターンで local / remote RAG を条件分岐する
-        if self
-            .config
+        // heartbeat_top_k が設定されている場合は config を clone して top_k を上書き (ISSUE-30)
+        let heartbeat_config = {
+            let hb_top_k = self
+                .config
+                .embedding
+                .as_ref()
+                .and_then(|e| e.heartbeat_top_k)
+                .unwrap_or(2);
+            let mut cfg = self.config.clone();
+            if let Some(ref mut emb) = cfg.embedding {
+                emb.top_k = hb_top_k;
+            }
+            cfg
+        };
+        if heartbeat_config
             .embedding
             .as_ref()
             .map(|e| e.use_local_embedding)
             .unwrap_or(false)
         {
-            if let Some(client) = make_embed_client(&self.config) {
+            if let Some(client) = make_embed_client(&heartbeat_config) {
                 let rag_ctx =
-                    retrieve_rag_context_local(user_message, &self.config, &client, db_path).await;
+                    retrieve_rag_context_local(user_message, &heartbeat_config, &client, db_path)
+                        .await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            let rag_ctx = retrieve_rag_context(user_message, &heartbeat_config, rag).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
