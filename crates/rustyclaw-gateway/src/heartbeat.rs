@@ -8,7 +8,6 @@ use regex::Regex;
 use rustyclaw_config::Config;
 use rustyclaw_providers::Message;
 use rustyclaw_storage::{DbManager, SessionLogger};
-use rustyclaw_tools::Tool;
 use crate::{MessageBus, SystemEvent};
 
 pub struct HeartbeatService {

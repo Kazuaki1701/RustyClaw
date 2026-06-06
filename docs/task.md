@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-05 (Phase 40 残タスクを 🔴 最優先に格上げ)  
+> **最終更新日**: 2026-06-06 (Phase 40-2 完了: rig-core Tool トレイト直接実装・RigToolAdapter 削除)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/2026-06-04-completed-phases-24-36-38.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -13,22 +13,38 @@
 ### ~~Phase 40-5 バグ修正: CF Embedding `'input' field is required`~~ ✅ 完了
 > 2026-06-05 修正・デプロイ済み。commit `55f773f`。  
 > 根本原因: LM Studio（OpenAI 互換）に `{"text":}` を送っていたが `{"input":}` が正しい。URL末尾 `/embeddings` 検出で分岐、レスポンスパースも OpenAI 形式対応。  
-> 確認: 06:04 ログファイルで修正前エラー（`'input' field is required`）を 04:00〜06:01 に連続確認。06:49 デプロイ後は同エラー皆無。07:23 Heartbeat で `retrieve_rag_context` 成功ログを最終確認予定。
 
 - `[x]` **1. `CloudflareEmbeddingClient.embed()` のリクエストボディを調査・修正**
-  - `build_embed_body()` 追加：`api_endpoint.ends_with("/embeddings")` で `{"input":}` / `{"text":}` を分岐。
-  - `OpenAiEmbedResponse` 構造体を追加しレスポンスパースを両形式対応。
-  - 新規テスト 3本追加済み。対象: `crates/rustyclaw-providers/src/lib.rs`
-
 - `[x]` **2. 修正後の動作確認 + deploy**
-  - `deploy.sh` 実行済み（06:49 サービス再起動確認）。
-  - 06:49 以降 embed エラー皆無（journalctl 確認）。07:23 wakeup で最終確認予定。
+
+### ~~Memory Flush バグ修正: コンテキスト制限超過によるスキップ~~ ✅ 完了
+> 2026-06-05 修正済み。  
+> 根本原因: スキルファイルがインジェクションされた bloated なユーザーメッセージがそのまま履歴ファイル（http-dashboard.jsonl）に user role として保存され、履歴サイズが肥大化。Memory Flush 時のトークン見積もりがコンテキスト制限（13,107 tokens）を超過しスキップされていた。  
+> 対応内容: `execute_with_rig_agent` に `raw_user_message`（ログ・RAG用）と `injected_user_message`（LLM/agent実行用）を分離して渡すように修正。  
+
+- `[x]` **1. `execute_with_rig_agent` のシグネチャ・内部処理変更**
+- `[x]` **2. `rustyclaw-gateway/src/lib.rs` での呼び出し処理アップデート**
+
+### seen_items による既読通知フィルタリング 🔴
+> 2026-06-05 ログ点検で発覚。  
+> 現象: 重複検知を避けるための `seen_items` テーブルが一度も使用されておらず、毎回同一のメールを Important 検知して Proactive Speak (Discord 通知) を 30分おきに送り続けている。  
+> 対処: `is_item_seen` による既読チェックと `mark_item_seen` による既読登録をゲートウェイ / エージェント側へ実装。  
+
+- `[ ]` **1. ゲートウェイのメール / カレンダー取得時に is_item_seen チェックを実装**
+- `[ ]` **2. ユーザー通知配信時に mark_item_seen による既読登録を実装**
 
 ---
 
 ## 🔴 最優先（Phase 40 残タスク）
 
-### Phase 40 残タスク → 上記 §Phase 40 参照
+### ~~Phase 40-2 rig-core Tool トレイト移行~~ ✅ 完了（2026-06-06）
+> `rig_core::tool::Tool` を全ツールに直接実装。`RigToolAdapter`・カスタム `Tool` トレイト・`async-trait` 依存を削除。  
+> 10コミット、約754行削減。テスト 152 件全通過。
+
+### Phase 40 残タスク（1 / 4 / 7）
+- **1**: `rustyclaw-providers` → rig-core Provider 置き換え
+- **4**: 宣言的 `AgentBuilder` の導入
+- **7**: Static Docs RAG（AGENTS.md / skills/*.md の動的注入）
 
 ---
 
@@ -78,13 +94,14 @@
 
 ### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🔴
 > LLM 接続やツール管理を rig-core で統合し、ベクトル検索による長期記憶拡張を実現する。  
-> Phase 40-6（rmcp 移行・ReAct ループ一本化）完了。残タスク（1/2/4/7）を最優先に格上げ。
+> Phase 40-6（rmcp 移行・ReAct ループ一本化）完了。Phase 40-2（rig-core Tool 直接実装）完了。残タスク（1/4/7）。
 
 - `[ ]` **1. rustyclaw-providers の rig-core Provider への置き換え** 🔴
   - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
-- `[ ]` **2. ツール定義と呼び出し処理の `#[tool]` マクロへのリファクタリング** 🔴
-  - `#[tool]` マクロによる JSON スキーマ自動生成と、呼び出し時引数の型安全パースを導入。
-  - 現状: `RigToolAdapter` による手動ラップで動作中。機能上の問題なし。
+- `[x]` **2. rig-core Tool トレイト直接実装（Phase 40-2）** ✅ 完了（2026-06-06）
+  - 全ツールに `rig_core::tool::Tool` を直接実装し、typed `Args` struct で型安全な引数パースを実現。
+  - `RigToolAdapter`・カスタム `Tool` トレイト・`ToolResult`・`async-trait` 依存を削除。
+  - 実装計画: `docs/superpowers/plans/2026-06-05-phase40-2-rig-tool-trait-migration.md`
 - `[x]` **3. ベクトル検索（RAG）による長期記憶の拡張** ✅
   - MEMORY.md バレット行を CF AI Gateway `@cf/baai/bge-m3` (1024次元、多言語) でベクトル化し SQLite 保存。
   - Fail-open 設計。実装計画: `docs/plans/2026-06-04-rag-memory-implementation-plan.md`
