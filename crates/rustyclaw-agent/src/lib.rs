@@ -634,7 +634,7 @@ Rules:
         session_id: &str,
         user_message: &str,
         tool_registry: &ToolRegistry,
-        _db_path: &Path,
+        db_path: &Path,
     ) -> Result<LlmResponse> {
         let system_context = self.build_heartbeat_context(workspace_dir)?;
 
@@ -652,6 +652,9 @@ Rules:
 
         logger.append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
+
+        // seen_items filter DB (fail-open: skip filtering if DB unavailable)
+        let db_opt = rustyclaw_storage::DbManager::new(db_path).ok();
 
         let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
             .tool_definitions().await
@@ -686,7 +689,7 @@ Rules:
                 if !calls.is_empty() {
                     for call in calls {
                         tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
-                        let (tool_content, _tool_is_error) = if let Some(tool) = tool_registry.get(&call.function.name) {
+                        let (mut tool_content, tool_is_error) = if let Some(tool) = tool_registry.get(&call.function.name) {
                             match tool.call(call.function.arguments.clone()).await {
                                 Ok(content) => (content, false),
                                 Err(e) => (format!("Tool error: {}", e), true),
@@ -694,6 +697,19 @@ Rules:
                         } else {
                             (format!("Error: Tool '{}' not found in registry", call.function.name), true)
                         };
+
+                        // Filter already-seen Gmail/Calendar items (fail-open)
+                        if !tool_is_error {
+                            if let Some(ref db) = db_opt {
+                                tool_content = filter_seen_tool_result(
+                                    &call.function.name,
+                                    &call.function.arguments,
+                                    &tool_content,
+                                    db,
+                                );
+                            }
+                        }
+
                         let tool_msg = Message {
                             role: "tool".to_string(),
                             content: tool_content,
@@ -2748,5 +2764,20 @@ Keep it short.\n\
         assert!(!result.contains("\"msg1\""), "msg1 should be filtered (already seen)");
         assert!(result.contains("msg2"), "msg2 should pass through (new)");
         assert!(db.is_item_seen("gmail:msg2").unwrap());
+    }
+
+    // ── Task 3: execute_heartbeat seen_items 統合テスト ──
+    #[test]
+    fn test_filter_seen_tool_result_already_seen_produces_no_new_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        db.mark_item_seen("gmail:msg99", "gmail").unwrap();
+
+        let tool_result = "--- STDOUT ---\n[{\"id\":\"msg99\",\"sender\":\"test@example.com\",\"subject\":\"Hello\",\"date\":\"Mon\",\"snippet\":\"Hi\"}]\n--- EXIT STATUS ---\n0";
+        let call_args = r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh"}"#;
+
+        let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
+        assert!(result.contains("No new gmail items"), "Should indicate no new items: {}", result);
+        assert!(result.contains("already seen"), "Should mention already-seen count: {}", result);
     }
 }
