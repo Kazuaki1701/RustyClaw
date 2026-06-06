@@ -1,5 +1,10 @@
 # Static Docs RAG Implementation Plan
 
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去の計画書 - 開発完了済み)  
+> **完了日**: 2026-06-06  
+> **備考**: 最新の動作仕様については、`docs/specs/` 配下の最新仕様書を参照してください。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `AGENTS.md` / `skills/*.md` などの静的ドキュメントを差分インジェストで `memory.db` に永続化し、ユーザー入力との類似度で動的にシステムプロンプトへ注入することで、不要なコンテキスト送信を削減する。

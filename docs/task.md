@@ -2,8 +2,8 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-06 (タスク分類再編: バグ修正独立管理・優先/一般/保留の3階層化)  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md` に保存
+> **最終更新日**: 2026-06-06 (Phase 40-7 完了・優先課題からアーカイブ移動)  
+> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md` に保存
 
 ---
 
@@ -11,7 +11,7 @@
 
 > 実運用ログから発見されたバグ・要改善項目。優先度とは独立して管理し、次スプリントの実施案件を選択する。発見次第追記する。
 
-- `[ ]` **Phase 28b-4: Heartbeat コンテキストオーバーフロー対策** ⏰ 次スプリント（Phase 40-7 完了後）
+- `[ ]` **Phase 28b-4: Heartbeat コンテキストオーバーフロー対策** ⏰ 着手可能
   - Deep Scan 時（04:00 / 06:00 付近）にツール呼び出し後のコンテキストが肥大化し全モデル失敗 → Discord 通知欠落（2026-06-05 ログ確認: 9,812 tokens > Groq 6,000 上限）。
   - Heartbeat 専用のヒストリキャップ強化またはツール結果切り詰め処理を検討。
   - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`、`crates/rustyclaw-agent/src/lib.rs`（`get_history_message_limit`）
@@ -22,12 +22,7 @@
 
 > 実装状況により今後の計画に与える影響が大きい案件。
 
-### Phase 40-7 — Static Docs RAG
-
-> 静的ドキュメント（AGENTS.md / skills/*.md）をチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入する。  
-> 実装計画: `docs/plans/2026-06-05-static-docs-rag.md`
-
-- `[ ]` **静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入**
+_(現時点では空)_
 
 ---
 
@@ -35,7 +30,7 @@
 
 ### リファクタリング
 
-> Phase 40 完了済み: 40-2（rig-core Tool 直接実装）・40-3（RAG 長期記憶）・40-5（Unified RAG）・40-6（rmcp 移行・ReAct ループ一本化）。
+> Phase 40 完了済み: 40-2（rig-core Tool 直接実装）・40-3（RAG 長期記憶）・40-5（Unified RAG）・40-6（rmcp 移行・ReAct ループ一本化）・40-7（Static Docs RAG）。
 
 - `[ ]` **40-1: `rustyclaw-providers` の rig-core Provider への置き換え**
   - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
