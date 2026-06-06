@@ -704,13 +704,13 @@ Rules:
 
         // RAG: heartbeat プロンプトに関連チャンクを注入 (ISSUE-27)
         // heartbeat_top_k が設定されている場合は config を clone して top_k を上書き (ISSUE-30)
+        let hb_top_k = self
+            .config
+            .embedding
+            .as_ref()
+            .and_then(|e| e.heartbeat_top_k)
+            .unwrap_or(2);
         let heartbeat_config = {
-            let hb_top_k = self
-                .config
-                .embedding
-                .as_ref()
-                .and_then(|e| e.heartbeat_top_k)
-                .unwrap_or(2);
             let mut cfg = self.config.clone();
             if let Some(ref mut emb) = cfg.embedding {
                 emb.top_k = hb_top_k;
@@ -725,14 +725,14 @@ Rules:
         {
             if let Some(client) = make_embed_client(&heartbeat_config) {
                 let rag_ctx =
-                    retrieve_rag_context_local(user_message, &heartbeat_config, &client, db_path)
+                    retrieve_rag_context_local(user_message, &heartbeat_config, &client, db_path, hb_top_k)
                         .await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &heartbeat_config, rag).await;
+            let rag_ctx = retrieve_rag_context(user_message, &heartbeat_config, rag, hb_top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -1172,7 +1172,29 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
 
-        // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
+        // Dashboard 専用: heartbeat-digest.md を動的注入（fail-open） (Phase 41-1)
+        if session_id.contains("http-dashboard") {
+            let digest_path = workspace_dir.join("memory").join("heartbeat-digest.md");
+            if let Ok(digest) = std::fs::read_to_string(&digest_path) {
+                if !digest.trim().is_empty() {
+                    system_context.push_str("\n\n## Latest Heartbeat Digest\n");
+                    system_context.push_str(&digest);
+                }
+            }
+        }
+
+        // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ） (Phase 41-1)
+        let effective_top_k = if session_id.contains("http-dashboard") {
+            self.config
+                .embedding
+                .as_ref()
+                .and_then(|e| e.dashboard_top_k)
+                .unwrap_or_else(|| {
+                    self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5)
+                })
+        } else {
+            self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5)
+        };
         if self
             .config
             .embedding
@@ -1183,13 +1205,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             if let Some(client) = make_embed_client(&self.config) {
                 let db_path = workspace_dir.join("memory.db");
                 let rag_ctx =
-                    retrieve_rag_context_local(user_message, &self.config, &client, &db_path).await;
+                    retrieve_rag_context_local(user_message, &self.config, &client, &db_path, effective_top_k).await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag, effective_top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -1380,6 +1402,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         {
             system_context.push_str(&continuation);
         }
+        let top_k = self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
         if self
             .config
             .embedding
@@ -1390,14 +1413,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             if let Some(client) = make_embed_client(&self.config) {
                 let db_path = workspace_dir.join("memory.db");
                 let rag_ctx =
-                    retrieve_rag_context_local(raw_user_message, &self.config, &client, &db_path)
-                        .await;
+                    retrieve_rag_context_local(raw_user_message, &self.config, &client, &db_path, top_k).await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(raw_user_message, &self.config, rag).await;
+            let rag_ctx = retrieve_rag_context(raw_user_message, &self.config, rag, top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -1495,6 +1517,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         }
 
         // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
+        let top_k = self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
         if self
             .config
             .embedding
@@ -1505,13 +1528,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             if let Some(client) = make_embed_client(&self.config) {
                 let db_path = workspace_dir.join("memory.db");
                 let rag_ctx =
-                    retrieve_rag_context_local(user_message, &self.config, &client, &db_path).await;
+                    retrieve_rag_context_local(user_message, &self.config, &client, &db_path, top_k).await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag, top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -2247,11 +2270,11 @@ pub(crate) async fn retrieve_rag_context(
     query_text: &str,
     config: &Config,
     rag_engine: &UnifiedRagEngine,
+    top_k: usize,
 ) -> String {
     if rag_engine.is_empty() {
         return String::new();
     }
-    let top_k = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
     let threshold = config
         .embedding
         .as_ref()
@@ -2287,6 +2310,7 @@ pub(crate) async fn retrieve_rag_context_local(
     config: &Config,
     embed_client: &EmbedClientKind,
     db_path: &Path,
+    top_k: usize,
 ) -> String {
     let query_short: String = query_text.chars().take(512).collect();
     let embeddings = match embed_client.embed(&[query_short.as_str()]).await {
@@ -2304,7 +2328,6 @@ pub(crate) async fn retrieve_rag_context_local(
             return String::new();
         }
     };
-    let top_k = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
     let threshold = config
         .embedding
         .as_ref()
