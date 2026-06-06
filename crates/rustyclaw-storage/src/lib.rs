@@ -254,6 +254,77 @@ impl DbManager {
         }))
     }
 
+    /// memory_embeddings テーブルに保存されているベクトルの次元数を検出する。
+    /// テーブルが空の場合は None を返す（BLOB サイズ / 4 = f32 の個数）。
+    pub fn detect_stored_embedding_dims(&self) -> Option<usize> {
+        self.conn
+            .query_row(
+                "SELECT LENGTH(embedding) FROM memory_embeddings LIMIT 1",
+                [],
+                |row| row.get::<_, usize>(0),
+            )
+            .ok()
+            .map(|bytes| bytes / 4)
+    }
+
+    /// 保存済みベクトルの次元数が expected_dims と異なる場合、
+    /// memory_embeddings と document_states を全削除する。
+    /// 削除が発生した場合 true、不要だった場合 false を返す。
+    pub fn migrate_embedding_dims_if_needed(&self, expected_dims: usize) -> Result<bool> {
+        match self.detect_stored_embedding_dims() {
+            Some(stored_dims) if stored_dims != expected_dims => {
+                self.conn
+                    .execute("DELETE FROM memory_embeddings", [])
+                    .context("migrate: failed to clear memory_embeddings")?;
+                self.conn
+                    .execute("DELETE FROM document_states", [])
+                    .context("migrate: failed to clear document_states")?;
+                tracing::info!(
+                    "migrate_embedding_dims: cleared DB ({}→{} dims)",
+                    stored_dims,
+                    expected_dims
+                );
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// クエリベクトルに近い記憶を (source, text_content, score) 形式で返す。
+    /// 既存の search_similar_memories と異なり source 列も含む。
+    pub fn search_similar_with_source(
+        &self,
+        query_vec: &[f32],
+        top_k: usize,
+        threshold: f32,
+    ) -> Result<Vec<(String, String, f64)>> {
+        let mut stmt = self.conn
+            .prepare("SELECT source, text_content, embedding FROM memory_embeddings")
+            .context("search_similar_with_source: prepare failed")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let source: String = row.get(0)?;
+                let text: String = row.get(1)?;
+                let blob: Vec<u8> = row.get(2)?;
+                Ok((source, text, blob))
+            })
+            .context("search_similar_with_source: query failed")?;
+
+        let mut scored: Vec<(String, String, f64)> = rows
+            .filter_map(|r| r.ok())
+            .map(|(source, text, blob)| {
+                let emb = Self::deserialize_embedding(&blob);
+                let score = Self::cosine_similarity(query_vec, &emb) as f64;
+                (source, text, score)
+            })
+            .filter(|(_, _, score)| *score >= threshold as f64)
+            .collect();
+
+        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        Ok(scored)
+    }
+
     /// コサイン類似度を計算する
     /// 同じ次元数・ノンゼロのベクトルが必須。不正な場合は 0.0 を返す。
     pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -1039,5 +1110,101 @@ mod tests {
         assert!(db.check_and_update_doc_state("AGENTS.md", "hash_v2").unwrap());
         // 別ファイル → 変更あり (true)
         assert!(db.check_and_update_doc_state("skills/test.md", "hash_v1").unwrap());
+    }
+
+    #[test]
+    fn test_detect_stored_embedding_dims_empty_returns_none() {
+        let db = DbManager::new(":memory:").unwrap();
+        assert_eq!(db.detect_stored_embedding_dims(), None);
+    }
+
+    #[test]
+    fn test_detect_stored_embedding_dims_1024() {
+        let db = DbManager::new(":memory:").unwrap();
+        let fake = vec![0.0f32; 1024];
+        db.upsert_embedding("id1", "test", None, "hello", &fake).unwrap();
+        assert_eq!(db.detect_stored_embedding_dims(), Some(1024));
+    }
+
+    #[test]
+    fn test_detect_stored_embedding_dims_384() {
+        let db = DbManager::new(":memory:").unwrap();
+        let fake = vec![0.0f32; 384];
+        db.upsert_embedding("id1", "test", None, "hello", &fake).unwrap();
+        assert_eq!(db.detect_stored_embedding_dims(), Some(384));
+    }
+
+    #[test]
+    fn test_migrate_embedding_dims_not_needed() {
+        let db = DbManager::new(":memory:").unwrap();
+        let fake = vec![0.0f32; 384];
+        db.upsert_embedding("id1", "test", None, "text", &fake).unwrap();
+        // 既に 384 次元 → マイグレーション不要
+        let migrated = db.migrate_embedding_dims_if_needed(384).unwrap();
+        assert!(!migrated);
+        assert_eq!(db.detect_stored_embedding_dims(), Some(384));
+    }
+
+    #[test]
+    fn test_migrate_embedding_dims_clears_on_mismatch() {
+        let db = DbManager::new(":memory:").unwrap();
+        // 1024 次元のダミーデータを投入
+        let fake_1024 = vec![0.0f32; 1024];
+        db.upsert_embedding("id1", "test", None, "text", &fake_1024).unwrap();
+        db.check_and_update_doc_state("AGENTS.md", "abc123").unwrap();
+
+        // 384 次元へのマイグレーション実行
+        let migrated = db.migrate_embedding_dims_if_needed(384).unwrap();
+        assert!(migrated, "should return true when dims changed");
+        assert_eq!(db.detect_stored_embedding_dims(), None, "embeddings should be cleared");
+
+        // document_states もクリアされているか確認
+        let is_changed = db.check_and_update_doc_state("AGENTS.md", "abc123").unwrap();
+        assert!(is_changed, "doc state should be cleared (forcing re-ingest)");
+    }
+
+    #[test]
+    fn test_migrate_embedding_dims_empty_db_no_op() {
+        let db = DbManager::new(":memory:").unwrap();
+        // 空 DB では次元数が None → マイグレーション不要
+        let migrated = db.migrate_embedding_dims_if_needed(384).unwrap();
+        assert!(!migrated);
+    }
+
+    #[test]
+    fn test_search_similar_with_source_returns_source() {
+        let db = DbManager::new(":memory:").unwrap();
+        // 単位ベクトルを 3 件投入
+        let v1 = vec![1.0f32, 0.0, 0.0]; // source="doc:AGENTS.md"
+        let v2 = vec![0.0f32, 1.0, 0.0]; // source="memory"
+        let v3 = vec![0.9f32, 0.1, 0.0]; // source="doc:SKILL.md" (v1 に近い)
+        db.upsert_embedding("id1", "doc:AGENTS.md", None, "agents text", &v1).unwrap();
+        db.upsert_embedding("id2", "memory", None, "memory text", &v2).unwrap();
+        db.upsert_embedding("id3", "doc:SKILL.md", None, "skill text", &v3).unwrap();
+
+        // クエリ = v1 方向 → v1, v3 が近い
+        let query = vec![1.0f32, 0.0, 0.0];
+        let results = db.search_similar_with_source(&query, 2, 0.5).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(results[0].2 >= results[1].2, "sorted by score desc");
+        // 上位 2 件の source に "doc:AGENTS.md" が含まれる
+        let sources: Vec<&str> = results.iter().map(|(s, _, _)| s.as_str()).collect();
+        assert!(sources.contains(&"doc:AGENTS.md"));
+    }
+
+    #[test]
+    fn test_search_similar_with_source_threshold_filter() {
+        let db = DbManager::new(":memory:").unwrap();
+        let v1 = vec![1.0f32, 0.0];
+        let v2 = vec![0.0f32, 1.0]; // 直交 → score = 0.0
+        db.upsert_embedding("id1", "doc:A", None, "text A", &v1).unwrap();
+        db.upsert_embedding("id2", "doc:B", None, "text B", &v2).unwrap();
+
+        let query = vec![1.0f32, 0.0];
+        let results = db.search_similar_with_source(&query, 5, 0.5).unwrap();
+        // v2 は直交 (score=0) なので threshold 0.5 未満 → 除外
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "doc:A");
     }
 }
