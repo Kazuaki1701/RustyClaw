@@ -252,7 +252,7 @@ grep "gmn_sem\|timed out\|permit" ~/.rustyclaw/rustyclaw.log | tail -20
 症状: チャットに ```json ... ``` ブロックが送信される
   └─ 原因: --no-agent モードで MCP ツール呼び出し JSON が漏出
      └─ 対処: AGENTS.md から GeminiClaw 固有ツール指示を削除（応急）
-              または MCP クライアント実装（長期・07_mcp_plan.md 参照）
+              または MCP クライアント実装（実装完了、詳細は [07_mcp_plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/plans/07_mcp_plan.md) 参照）
 
 症状: Heartbeat が 20 分以上止まっている
   ├─ heartbeat-state.json の activityReview が古い

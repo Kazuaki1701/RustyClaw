@@ -18,18 +18,26 @@ docs/
 │   ├── 03_workspace_spec.md   # ワークスペースファイル・ストレージ仕様
 │   ├── 04_heartbeat_spec.md   # Heartbeat 自発行動システム仕様
 │   ├── 05_gateway_spec.md     # Gateway・並列制御 Lane Queue 仕様
-│   ├── 06_roadmap_decisions.md # ロードマップ・重要設計決定事項
-│   ├── 07_mcp_plan.md         # [PLAN] rustyclaw-mcp 実装計画（Phase 7）
+│   ├── 06_dashboard_spec.md   # Web Dashboard・管理用 API 仕様
 │   ├── 08_operation_inspection.md  # 稼働点検ガイド（コマンド集・既知パターン）
-│   ├── 09_geminiclaw_comparison.md # GeminiClaw とのコードレベル比較・移植進捗仕様
 │   ├── 10_weather_yolp_spec.md # YOLP気象情報APIリファレンス雨雲レーダー仕様
-│   └── 11_skills_spec.md      # Skills システム仕様・GeminiClaw 比較・移植記録
+│   ├── 11_skills_spec.md      # Skills システム仕様・GeminiClaw 比較・移植記録
+│   ├── 81_llm_provider_model_selection.md # プロバイダー・モデル選定指針仕様
+│   ├── 91_geminiclaw_comparison.md # GeminiClaw との機能・コード比較移植仕様
+│   └── 92_picoclaw_comparison.md  # PicoClaw とのアーキテクチャ・機能比較仕様
 │
-├── archive/                   # 【参照のみ・編集不可】すでに完了した「過去の計画書・報告書」
-│   ├── implementation_plan.md # 過去の実装計画（Phase 2 & 4）
-│   ├── walkthrough.md         # 過去の実装検証・ウォークスルー（Phase 2 & 4）
-│   ├── llmprover_gmn_plan.md  # 過去のデバッグプロバイダ追加計画（Phase 1）
-│   └── 2026-05-27-discord-integration.md # 過去の Discord 連携計画（Phase 3）
+├── plans/                     # 【開発中】実装前または現在進行中の「個別実装計画書」
+│   ├── 2026-06-04-rag-memory-implementation-plan.md # メモリRAG実装計画
+│   └── 2026-06-05-static-docs-rag.md                # 静的ドメイン知識RAG計画
+│
+├── review/                    # 【点検・レビュー】コードレビュー、ログ点検、実行検証記録
+│   ├── phase31_steps1_3_code_review.md              # 各種コードレビュー記録
+│   └── 2026-06-05-log-inspection-report.md          # 稼働・ログ点検レポート
+│
+├── archive/                   # 【参照のみ・編集不可】すでに完了した「過去の計画書・報告書・タスクリスト」
+│   ├── plans/                 # 過去の実装計画書（Historical Plans）
+│   ├── review/                # 過去のログ検証・レビューレポート（Historical Reviews）
+│   └── tasks/                 # 過去の完了済みタスクリスト（Historical Tasks）
 │
 ├── 00_rustyclaw.md            # 全体引継ぎ資料 ＆ ドキュメントインデックス
 ├── task.md                    # 直近の開発タスク管理リスト（完了マーク付き）
@@ -162,6 +170,20 @@ ssh rp1 'journalctl --user -u rustyclaw -f'   # ログ追尾（または ~/.rust
 rustyclaw --config /tmp/verify/config.json --workspace /tmp/verify/workspace --no-agent gateway
 curl -s http://127.0.0.1:8080/api/concurrency
 ```
+
+---
+
+## 5. コーディング規約 (Rust)
+
+実装時に遵守すべき共通規約です。
+
+*   **エラーハンドリング**:
+    *   `unwrap()` や `expect()` による強制パニックは原則避け、エラー（`Result`）は `?` を使って適切に呼び出し元へ伝播させてください。
+    *   アプリケーションのエントリポイントやテストコードでは `anyhow::Result` を使用し、ライブラリクレート（`crates/` 配下）ではドメイン固有エラーの定義に `thiserror` の使用を検討してください。
+*   **ログ出力**:
+    *   標準出力 (`println!`, `eprintln!`) は原則として使用せず、`tracing` クレート (`tracing::info!`, `tracing::warn!`, `tracing::error!`) を用いた構造化ログを出力してください。
+*   **依存関係の制約 (OpenSSL 排除)**:
+    *   Raspberry Pi 4 への安全なクロスコンパイル環境を維持するため、新しく HTTP クライアントなどの外部依存を追加する際は、必ず OpenSSL 依存を排除し、`reqwest` に `rustls-tls` フィーチャーを適用（かつ `default-features = false`）してください。
 
 ---
 

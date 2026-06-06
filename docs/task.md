@@ -2,8 +2,8 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-06 (Phase 40-2 完了: rig-core Tool トレイト直接実装・RigToolAdapter 削除)  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/2026-06-04-completed-phases-24-36-38.md` に保存
+> **最終更新日**: 2026-06-06 (seen_items フィルタリング完了: Gmail/Calendar 既読通知フィルタ実装)  
+> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
 > それ以外の独自機能・改善案件は一旦 🟢 に降格。GeminiClaw ギャップが解消され次第、改めて優先度を見直す。
@@ -25,13 +25,14 @@
 - `[x]` **1. `execute_with_rig_agent` のシグネチャ・内部処理変更**
 - `[x]` **2. `rustyclaw-gateway/src/lib.rs` での呼び出し処理アップデート**
 
-### seen_items による既読通知フィルタリング 🔴
+### ~~seen_items による既読通知フィルタリング~~ ✅ 完了（2026-06-06）
 > 2026-06-05 ログ点検で発覚。  
 > 現象: 重複検知を避けるための `seen_items` テーブルが一度も使用されておらず、毎回同一のメールを Important 検知して Proactive Speak (Discord 通知) を 30分おきに送り続けている。  
-> 対処: `is_item_seen` による既読チェックと `mark_item_seen` による既読登録をゲートウェイ / エージェント側へ実装。  
+> 対処: `execute_heartbeat` のツール呼び出しループで `run_workspace_script` 結果（Gmail/Calendar）を `is_item_seen` でフィルタし、新規アイテムのみ LLM へ渡す。`mark_item_seen` で既読登録。fail-open 設計。  
+> 5コミット（`9eb5a51`〜`98c3544`）、6テスト追加、全159テスト通過。
 
-- `[ ]` **1. ゲートウェイのメール / カレンダー取得時に is_item_seen チェックを実装**
-- `[ ]` **2. ユーザー通知配信時に mark_item_seen による既読登録を実装**
+- `[x]` **1. `execute_heartbeat` に `db_path` パラメータ追加・Gateway 呼び出し元更新**
+- `[x]` **2. `filter_seen_tool_result` ヘルパー実装（Gmail/Calendar 既読フィルタ）+ ツールループへの組み込み**
 
 ---
 
@@ -73,7 +74,7 @@
 
 ### Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル） 🟢
 > GeminiClaw は Discord / Slack / Telegram のマルチチャンネルに対応しており、notifications チャンネル（home と独立したバックグラウンドジョブ通知先）を持つ。RustyClaw は Discord のみで、LINE 導入予定に伴いこのギャップを回収する。  
-> 調査資料: [`docs/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/2026-06-03-geminiclaw-notifications-channel-analysis.md`](2026-06-03-geminiclaw-notifications-channel-analysis.md)
+> 調査資料: [`docs/review/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](review/2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/review/2026-06-03-geminiclaw-notifications-channel-analysis.md`](review/2026-06-03-geminiclaw-notifications-channel-analysis.md)
 
 - `[ ]` **1. LINE チャンネルコネクタの実装**
   - `rustyclaw-channels` に `LineConnector` を追加（`Channel` トレイト実装）。
@@ -101,7 +102,7 @@
 - `[x]` **2. rig-core Tool トレイト直接実装（Phase 40-2）** ✅ 完了（2026-06-06）
   - 全ツールに `rig_core::tool::Tool` を直接実装し、typed `Args` struct で型安全な引数パースを実現。
   - `RigToolAdapter`・カスタム `Tool` トレイト・`ToolResult`・`async-trait` 依存を削除。
-  - 実装計画: `docs/superpowers/plans/2026-06-05-phase40-2-rig-tool-trait-migration.md`
+  - 実装計画: `docs/plans/2026-06-05-phase40-2-rig-tool-trait-migration.md`
 - `[x]` **3. ベクトル検索（RAG）による長期記憶の拡張** ✅
   - MEMORY.md バレット行を CF AI Gateway `@cf/baai/bge-m3` (1024次元、多言語) でベクトル化し SQLite 保存。
   - Fail-open 設計。実装計画: `docs/plans/2026-06-04-rag-memory-implementation-plan.md`
@@ -109,10 +110,10 @@
   - heartbeat / summary などのエージェント定義を AgentBuilder で再整理（現状は execute_heartbeat が独自ループ）。
 - `[x]` **5. Unified RAG with rig-core InMemoryVectorStore** ✅
   - `InMemoryVectorStore` 採用、MEMORY.md チャンクとセッション要約のインメモリ統合 RAG 化。
-  - 実装済み・稼働中。実装計画: `docs/superpowers/plans/2026-06-05-rig-core-unified-rag.md`
+  - 実装済み・稼働中。実装計画: `docs/plans/2026-06-05-rig-core-unified-rag.md`
 - `[x]` **6. rig-core 全面リファクタリング (Phase 40-6)** ✅ 完了（2026-06-05）
   - `rmcp` クライアントへの移行、`rig::agent::Agent` 移行による ReAct/RAG ループの一本化。
-  - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-refactoring.md`
+  - 実装計画: `docs/plans/2026-06-05-rig-core-refactoring.md`
   - ✅ `RigToolAdapter` + `ToolRegistry::to_dyn_tools()` 実装（commit `1837b64`）
   - ✅ `Pipeline::execute_with_rig_agent()` 実装（`RustyclawCompletionModel` + `AgentBuilder` + `Chat::chat()`、commit `e311cb1`）
   - ✅ `rustyclaw-mcp` → rig-core `rmcp` 移行・クレート削除（commit `112ba30`, `d671dfd`, `2020af1`）
@@ -120,7 +121,7 @@
     - Gateway: `McpClientHandler` + `ToolServer` で MCP サーバー接続を管理
 - `[ ]` **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）** 🔴
   - 静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入。
-  - 実装計画: `docs/superpowers/plans/2026-06-05-static-docs-rag.md`
+  - 実装計画: `docs/plans/2026-06-05-static-docs-rag.md`
 
 ---
 
@@ -140,7 +141,7 @@
 - `[ ]` **5. 実行ステップのチェックポイント化と Lossless Resume の導入 (Phase 3)**（GeminiClaw ギャップB・昇格候補）
   - 途中でエラー（送信失敗など）が発生した際に、LLM API の再呼出を行わず失敗したフェーズから再試行できる中間状態の永続化と復旧機構。
 
-- `[x]` **6. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[x]` **6. `docs/specs/91_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
@@ -180,7 +181,7 @@
   - rmcp の HTTP/SSE トランスポートを使った外部リモート MCP サーバー接続サポートの実装。
   - Tools 機能だけでなく、Resources や Prompts にもクエリ可能にするための I/O 拡張。
 
-- `[ ]` **4. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[ ]` **4. `docs/specs/91_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
@@ -196,7 +197,7 @@
 - `[ ]` **3. 1回限り (at / deleteAfterRun) jobの自動削除サポート**
   - 実行完了後に `cron.json` から自身のジョブ定義を自動削除し、アトミックに更新保存。
 
-- `[ ]` **4. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[ ]` **4. `docs/specs/91_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
@@ -210,7 +211,7 @@
 - `[ ]` **2. 構造化ツール監査ログ (Audit Logger) の実装**
   - ツール実行結果をパラメータ切り詰めの上 `{workspace}/memory/audit.jsonl` に保存する仕組みの実装。
 
-- `[ ]` **3. `docs/specs/09_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[ ]` **3. `docs/specs/91_geminiclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 
@@ -231,7 +232,7 @@
 - `[ ]` **4. ClawHub 互換の動的 Skill ダウンローダー・インストーラーの実装**
   - `rustyclaw skills install <skill-name>` サブコマンドの実装および `workspace/skills/` へのリモート展開ロジック。
 
-- `[ ]` **5. `docs/specs/PicoClaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
+- `[ ]` **5. `docs/specs/92_picoclaw_comparison.md` の最新コードとの一致確認・更新** (DoD)
 
 ---
 

@@ -1,4 +1,4 @@
-# LLM Provider / Model 選定調査
+# 81. LLM Provider / Model 選定調査
 
 > 調査日: 2026-05-30（最終更新: cheahjs/free-llm-api-resources 参照）  
 > 対象: Groq / Cloudflare Workers AI / OpenRouter / Hugging Face / Google AI Studio / Cerebras

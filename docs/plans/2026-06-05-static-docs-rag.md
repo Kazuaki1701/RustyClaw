@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:**  
-`AGENT.md`（システム指示書）や `skills/*.md`（スキル定義）などの静的なドメイン知識ドキュメントを RPi4 上で RAG 化（インジェスト）し、`memory.db` に永続化する。  
+`AGENTS.md`（システム指示書）や `skills/*.md`（スキル定義）などの静的なドメイン知識ドキュメントを RPi4 上で RAG 化（インジェスト）し、`memory.db` に永続化する。  
 会話時に「ユーザーの入力」と類似度の高いドキュメントのみを動的にシステムプロンプトへ注入することで、外部 LLM への送信コンテキストサイズを大幅に削減（圧縮）し、不要な情報の送信を防ぐ。  
 また、このコンテキスト削減効果に伴い、**従来実施していた厳しいメッセージ履歴の強制カット（ハードキャップ）および静的プロンプトの連結処理を廃止・緩和**し、会話の文脈追従能力を最大化する。
 
@@ -77,7 +77,7 @@ RPi4 での無駄な Embedding API コール（およびローカル推論の CP
 
 ## Task 2: agent — マークダウンのチャンク分割とインジェストロジックの実装
 
-静的マークダウンファイル（`AGENT.md` や `skills/*.md`）を見出し（`#`, `##`, `###`）単位で適切にチャンク分割する。
+静的マークダウンファイル（`AGENTS.md` や `skills/*.md`）を見出し（`#`, `##`, `###`）単位で適切にチャンク分割する。
 
 **Files:**
 - Modify: `crates/rustyclaw-agent/src/lib.rs`
@@ -121,7 +121,7 @@ RPi4 での無駄な Embedding API コール（およびローカル推論の CP
   ```
 
 - [ ] **Step 2: 静的ドキュメント一括インジェスト `ingest_static_documents` の実装**
-  ファイル一覧（`workspace/AGENT.md` および `workspace/skills/*.md`）を読み込んでチャンク化し、ハッシュ値に変更がある場合のみ embedding を再生成して `memory_embeddings` に登録する。
+  ファイル一覧（`workspace/AGENTS.md` および `workspace/skills/*.md`）を読み込んでチャンク化し、ハッシュ値に変更がある場合のみ embedding を再生成して `memory_embeddings` に登録する。
   ```rust
   pub async fn ingest_static_documents(
       workspace_dir: &std::path::Path,
@@ -139,7 +139,7 @@ RPi4 での無駄な Embedding API コール（およびローカル推論の CP
       };
 
       // スキャンするファイル一覧
-      let mut files = vec![workspace_dir.join("AGENT.md")];
+      let mut files = vec![workspace_dir.join("AGENTS.md")];
       let skills_dir = workspace_dir.join("skills");
       if let Ok(entries) = std::fs::read_dir(skills_dir) {
           for entry in entries.flatten() {
@@ -347,12 +347,12 @@ RPi4 での無駄な Embedding API コール（およびローカル推論の CP
   ```
 
 - [ ] **Step 2: mtime またはハッシュ値ベース of 差分インジェスト動作検証**
-  1. ゲートウェイを起動する。初回はログに `Ingested X chunks from 'AGENT.md'` が出力されることを確認。
-  2. その後、リロード（`curl http://localhost:8080/reload`）を実行。今度は `Document 'AGENT.md' is unchanged. Skipping ingestion.` が出力され、Embedding API 呼び出しが発生しないことを確認。
-  3. `AGENT.md` に適当な空行などを追記して再度リロード。今度は検知してインジェストが走ることを確認。
+  1. ゲートウェイを起動する。初回はログに `Ingested X chunks from 'AGENTS.md'` が出力されることを確認。
+  2. その後、リロード（`curl http://localhost:8080/reload`）を実行。今度は `Document 'AGENTS.md' is unchanged. Skipping ingestion.` が出力され、Embedding API 呼び出しが発生しないことを確認。
+  3. `AGENTS.md` に適当な空行などを追記して再度リロード。今度は検知してインジェストが走ることを確認。
 
 - [ ] **Step 3: 外部 LLM への送信プロンプトの圧縮効果確認**
-  `memory/debug/llm` 下にダンプされる LLM I/O デバッグ JSON を確認し、プロンプトのシステムコンテキスト内に `## Relevant Specifications & Rules` として RAG 抽出された部分のみが注入され、`AGENT.md` の全文が含まれていない（大幅にトークンが節約されている）ことを実データで確認する。
+  `memory/debug/llm` 下にダンプされる LLM I/O デバッグ JSON を確認し、プロンプトのシステムコンテキスト内に `## Relevant Specifications & Rules` として RAG 抽出された部分のみが注入され、`AGENTS.md` の全文が含まれていない（大幅にトークンが節約されている）ことを実データで確認する。
 
 - [ ] **Step 4: 履歴メッセージ保持件数の増加確認**
   対話を繰り返した際、デバッグログやダンプにおいて、会話履歴が以前より多く（かつコンテキスト制限に引っかからずに）LLM へ送信されていることを確認する。

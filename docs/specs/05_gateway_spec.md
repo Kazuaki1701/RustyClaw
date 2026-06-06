@@ -47,50 +47,15 @@
 
 #### ④ HealthServer (HTTPサーバー)
 `tokio::net::TcpListener` による軽量 TCP ベース実装（重い Web フレームワーク依存なし）。ポート `8080` で待受。
+Liveness / Readiness プローブ、設定ホットリロードを処理します。
 
 | エンドポイント | メソッド | 内容 |
 |---|---|---|
 | `/health` | GET | Liveness プローブ → `200 OK` |
 | `/ready` | GET | 起動完了プローブ → `200 READY` |
 | `/reload` | GET | 設定ホットリロード（SIGHUP 相当） |
-| `/dashboard` または `/` | GET | ブラウザ管理 UI（シングルページ HTML） |
-| `/chat` | POST | ダッシュボードからの対話（`{"message":"..."}` → テキスト応答） |
-| `/logs/memory` | GET | `workspace/MEMORY.md` 全文 |
-| `/logs/heartbeat-digest` | GET | `workspace/memory/heartbeat-digest.md` 全文 |
-| `/logs/heartbeat-state` | GET | `workspace/memory/heartbeat-state.json`（pretty-print） |
-| `/logs/app` | GET | `~/.rustyclaw/rustyclaw.log` 末尾 100 行 |
-| `/api/queue` | GET | gmn API Pipeline Queue の現在状態（JSON） |
-| `/api/neurons` | GET | Cloudflare Neurons クォータ使用状況 JSON（`neurons_used`, `quota_limit`, `remaining`, `reset_in`, `next_reset_jst`） |
-| `/api/schedule` | GET | cron.json 内の有効ジョブの次回実行予定リスト（JSON、内部で `get_cron_schedule` と同一） |
-| `/api/usage/timeline` | GET | トークン使用量の時間別・期間別推移データ（JSON、パラメータ: `gran`, `from`） |
-| `/api/llm/io` | GET | 指定した用途カテゴリ（`?cat=<category>`、tools/discord/memory等11種）の最新LLM APIリクエスト＆レスポンス（JSON） |
 
-**ダッシュボードレイアウト（`/dashboard`）**:
-```
-┌────────────────────┬──────────────────────────────────────┐
-│                    │  🟡 Neurons クォータ（Cloudflare）    │
-│  Chat パネル       │  🔄 gmn API Pipeline Queue           │
-│  (flex: 4)         ├────────────────────────────────────  │
-│                    │  🟣 MEMORY.md                        │
-│                    ├──────────────────────────────────────┤
-│                    │ 🔵 LLM API INSPECTOR                 │
-│                    │ (tools/discord/memory等11タブ切り替え)  │
-│                    ├──────────────────────────────────────┤
-│                    │  🔵 rustyclaw.log                    │
-└────────────────────┴──────────────────────────────────────┘
-```
-- MEMORY.md / heartbeat 系: 5 秒ポーリング
-- App ログ: 2 秒ポーリング
-- Neurons / Queue パネル / LLM Inspector: 5 秒ポーリング（`/api/neurons`・`/api/queue`・`/api/llm/io`）
-- `/chat` セッション ID は `"http-dashboard"` 固定（履歴が蓄積される）
-
-**XSS 防御（DOM レンダリング方針）**:
-ダッシュボードは LAN 公開・認証なしのため、外部由来データを DOM へ反映する際は必ず無害化する。
-- チャットバブル: `.textContent` + `white-space: pre-wrap` で描画（`.innerHTML` 禁止）。
-- ログビューア / キューパネル / スケジュール / モデル内訳: `.innerHTML` テンプレートへ補間する
-  外部由来文字列（ログ本文・`session_id`・`description`・ジョブ名・モデル名等）は共通
-  `escapeHtml()` ヘルパで `& < > " '` をエスケープしてから埋め込む。
-- `/api/llm/io` の `cat` パラメータは 11 カテゴリのホワイトリスト検証でパストラバーサルを遮断。
+※ブラウザ管理 UI（ダッシュボード）表示や対話/データ取得用 API エンドポイントの詳細は、[06. Web Dashboard・管理用 API 仕様](file:///home/kazuaki/Projects/RustyClaw/docs/specs/06_dashboard_spec.md) を参照してください。
 
 ---
 
