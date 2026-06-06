@@ -115,11 +115,11 @@ impl Pipeline {
             .and_then(|m| m.context_window.as_deref());
         let ctx = parse_context_window(cw);
         match ctx {
-            0..=16_384       => 10,
-            16_385..=32_768  => 20,
-            32_769..=65_536  => 40,
-            65_537..=262_143 => 60,
-            _                => 80,
+            0..=16_384       => 30,
+            16_385..=32_768  => 50,
+            32_769..=65_536  => 80,
+            65_537..=262_143 => 100,
+            _                => 120,
         }
     }
 
@@ -135,7 +135,7 @@ impl Pipeline {
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
         // 静的ブロック（SOUL/AGENTS/MEMORY/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
         // 動的な [now:] は末尾に置くことで毎回変わる部分がキャッシュ prefix を破壊しないようにする。
-        let files = ["SOUL.md", "AGENTS.md", "USER.md"];
+        let files = ["SOUL.md", "USER.md"];
         let mut context = String::new();
 
         for filename in &files {
@@ -2736,11 +2736,11 @@ Keep it short.\n\
         let p131k = Pipeline::new(make_config("131k"), flush_sem.clone());
         let p256k = Pipeline::new(make_config("256k"), flush_sem.clone());
 
-        assert_eq!(p16k.get_history_message_limit("default"),  10, "16k → 10件");
-        assert_eq!(p32k.get_history_message_limit("default"),  20, "32k → 20件");
-        assert_eq!(p64k.get_history_message_limit("default"),  40, "64k → 40件");
-        assert_eq!(p131k.get_history_message_limit("default"), 60, "131k → 60件");
-        assert_eq!(p256k.get_history_message_limit("default"), 80, "256k → 80件");
+        assert_eq!(p16k.get_history_message_limit("default"),  30, "16k → 30件");
+        assert_eq!(p32k.get_history_message_limit("default"),  50, "32k → 50件");
+        assert_eq!(p64k.get_history_message_limit("default"),  80, "64k → 80件");
+        assert_eq!(p131k.get_history_message_limit("default"), 100, "131k → 100件");
+        assert_eq!(p256k.get_history_message_limit("default"), 120, "256k → 120件");
     }
 
     #[test]
