@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-06 (Phase 40-7 完了・優先課題からアーカイブ移動)  
+> **最終更新日**: 2026-06-06 (Phase 40-7 残存バグ 2件を ISSUE として追記)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md` に保存
 
 ---
@@ -15,6 +15,18 @@
   - Deep Scan 時（04:00 / 06:00 付近）にツール呼び出し後のコンテキストが肥大化し全モデル失敗 → Discord 通知欠落（2026-06-05 ログ確認: 9,812 tokens > Groq 6,000 上限）。
   - Heartbeat 専用のヒストリキャップ強化またはツール結果切り詰め処理を検討。
   - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`、`crates/rustyclaw-agent/src/lib.rs`（`get_history_message_limit`）
+
+- `[ ]` **ISSUE-26: Phase 40-7 残存バグ — `ingest_static_documents` の非再帰スキャンにより skills/*.md が未 ingest**
+  - `ingest_static_documents` は `read_dir`（非再帰）で `workspace/skills/` 直下の `.md` ファイルをスキャンするが、実際のファイルは `skills/<name>/SKILL.md` のサブディレクトリ構成のため全件スキップされている。
+  - 12スキル × 平均 ~4KB = **約48KB 分のスキル定義が RAG 未登録**の状態。
+  - 修正: `read_dir` を再帰スキャン（`walkdir` または手動1階層拡張）に変更し、`skills/*/*.md` を対象に含める。
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`（`ingest_static_documents`）
+
+- `[ ]` **ISSUE-27: Phase 40-7 残存バグ — `execute_heartbeat` に RAG 注入がなく Heartbeat コンテキストに doc: チャンクが届かない**
+  - `execute()` パスは `retrieve_rag_context` → `format_rag_context` を呼んで doc: チャンクをシステムプロンプトへ注入するが、`execute_heartbeat` にはその呼び出しが存在しない。
+  - Heartbeat の `build_heartbeat_context` は SOUL.md / MEMORY.md / HEARTBEAT.md の固定3ファイル読み込みのみ（計 ~14.2KB）。スキルや AGENTS.md の知識は heartbeat 実行中に参照できない。
+  - 修正: `execute_heartbeat` 内で `build_heartbeat_context` の後に `retrieve_rag_context(user_message, &self.config, rag)` を呼び、heartbeat_prompt に関連チャンクを追記する。ただし ISSUE-26 の修正後に実施すること（スキルが ingest されていない状態で RAG 注入しても効果が薄い）。
+  - 対象: `crates/rustyclaw-agent/src/lib.rs`（`execute_heartbeat`）
 
 ---
 
