@@ -1579,7 +1579,7 @@ pub(crate) fn chunk_static_document(file_name: &str, content: &str) -> Vec<Strin
         let trimmed = line.trim();
         if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
             let body = current_body.trim().to_string();
-            if !body.is_empty() {
+            if !body.is_empty() && !current_header.is_empty() {
                 let raw = format!("[{} > {}]\n{}", file_name, current_header, body);
                 chunks.push(raw.chars().take(800).collect());
             }
@@ -1629,6 +1629,7 @@ pub async fn ingest_static_documents(
         files.extend(skill_files);
     }
 
+    use sha2::{Sha256, Digest};
     for file_path in files {
         let content = match std::fs::read_to_string(&file_path) {
             Ok(c) => c,
@@ -1638,7 +1639,6 @@ pub async fn ingest_static_documents(
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
 
-        use sha2::{Sha256, Digest};
         let hash_str = format!("{:x}", Sha256::digest(content.as_bytes()));
 
         let is_changed = db.check_and_update_doc_state(file_name, &hash_str)
@@ -1662,13 +1662,20 @@ pub async fn ingest_static_documents(
         let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
         match client.embed(&text_refs).await {
             Ok(embeddings) => {
+                if embeddings.len() != chunks.len() {
+                    tracing::warn!(
+                        "ingest_static_documents: chunk/embedding count mismatch ({} vs {}) for '{}', proceeding with zip",
+                        chunks.len(), embeddings.len(), file_name
+                    );
+                }
+                let saved = embeddings.len().min(chunks.len());
                 for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
                     let id = format!("doc-{}-{}", file_name.replace('.', "_"), i);
                     if let Err(e) = db.upsert_embedding(&id, &source_id, None, chunk, emb) {
                         tracing::warn!("ingest_static_documents: upsert error: {}", e);
                     }
                 }
-                tracing::info!("ingest_static_documents: ingested {} chunks from '{}'", chunks.len(), file_name);
+                tracing::info!("ingest_static_documents: ingested {} chunks from '{}'", saved, file_name);
             }
             Err(e) => {
                 tracing::warn!("ingest_static_documents: embed API error for '{}': {}", file_name, e);
