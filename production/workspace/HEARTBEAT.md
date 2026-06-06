@@ -37,7 +37,7 @@ If skills or scripts are unavailable, skip silently.
 
 ## Step 4: Check-in if silent too long
 
-If 8+ hours have passed since last user interaction (`lastChecks.lastUserContact` in `memory/heartbeat-state.json`), send a short check-in — waking hours only, one sentence, no quiet hours.
+If 8+ hours have passed since last user interaction (`lastChecks.lastUserContact` in `memory/heartbeat-state.json`), send a short check-in — **during waking hours only, never during quiet hours (0:00–4:59)** — one sentence.
 
 ## Step 5: Proactive work
 
@@ -48,6 +48,8 @@ If 8+ hours have passed since last user interaction (`lastChecks.lastUserContact
 **Prohibited:** Do NOT run `topic-patrol`, web searches, or deliver `patrol/findings.md`. Topic Patrol runs as a separate scheduled job.
 
 ## Step 6: Response
+
+**Severity guide:** Important = action needed (urgent email, imminent deadline, unresolved error, cost/service alert). Informational = worth noting but no action. Nothing = no findings.
 
 **If all findings are Informational or Nothing → Silent run:**
 
