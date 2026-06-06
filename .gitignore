@@ -50,6 +50,7 @@ tempfile*
 /production/config/config.json
 # クロスビルド成果物（大容量バイナリ）
 /production/bin/
+/production/neuron_usage.json
 # 本番ワークスペースのランタイム生成物（DB・索引・ログ・要約・セッション）
 /production/workspace/memory.db
 /production/workspace/memory.db-journal
