@@ -18,6 +18,35 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
+const DISCORD_RAG_HISTORY_TURNS: usize = 2;
+
+fn build_discord_rag_query(history: &[rustyclaw_providers::Message], raw_user_message: &str) -> String {
+    // tool ロールおよび空 content の assistant（tool_call のみ）を除外
+    let filtered: Vec<&rustyclaw_providers::Message> = history
+        .iter()
+        .filter(|m| {
+            (m.role == "user" || m.role == "assistant")
+                && !m.content.is_empty()
+        })
+        .collect();
+
+    // 直近 N ターン分（user + assistant を 1 ターンとして N*2 メッセージ）を取得
+    let take = DISCORD_RAG_HISTORY_TURNS * 2;
+    let start = filtered.len().saturating_sub(take);
+    let recent = &filtered[start..];
+
+    let mut parts: Vec<String> = recent
+        .iter()
+        .map(|m| {
+            let role_label = if m.role == "user" { "User" } else { "Assistant" };
+            format!("{}: {}", role_label, m.content.trim())
+        })
+        .collect();
+
+    parts.push(format!("User: {}", raw_user_message));
+    parts.join("\n")
+}
+
 pub struct Pipeline {
     config: Config,
     provider: Box<dyn LlmProvider>,
@@ -3934,5 +3963,81 @@ Keep it short.\n\
         let files: &[&str] = &["SOUL.md", "HEARTBEAT.md"]; // MEMORY.md を含まない
         let contains_memory = files.contains(&"MEMORY.md");
         assert!(!contains_memory, "build_heartbeat_context は MEMORY.md を静的ロードしないべき");
+    }
+}
+
+#[cfg(test)]
+mod discord_rag_tests {
+    use super::*;
+    use rustyclaw_providers::Message;
+
+    fn msg(role: &str, content: &str) -> Message {
+        Message {
+            role: role.to_string(),
+            content: content.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn tool_call_msg() -> Message {
+        Message {
+            role: "assistant".to_string(),
+            content: "".to_string(),
+            tool_calls: Some(vec![]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_build_discord_rag_query_no_history() {
+        let result = build_discord_rag_query(&[], "Hello");
+        assert_eq!(result, "User: Hello");
+    }
+
+    #[test]
+    fn test_build_discord_rag_query_one_turn() {
+        let history = vec![
+            msg("user", "What is the weather?"),
+            msg("assistant", "It is sunny."),
+        ];
+        let result = build_discord_rag_query(&history, "And tomorrow?");
+        assert_eq!(
+            result,
+            "User: What is the weather?\nAssistant: It is sunny.\nUser: And tomorrow?"
+        );
+    }
+
+    #[test]
+    fn test_build_discord_rag_query_skips_tool_role() {
+        let history = vec![
+            msg("user", "Find coords"),
+            tool_call_msg(),
+            msg("tool", "35.6762, 139.6503"),
+            msg("assistant", "Coords are 35.67 N."),
+        ];
+        let result = build_discord_rag_query(&history, "Thanks");
+        assert_eq!(
+            result,
+            "User: Find coords\nAssistant: Coords are 35.67 N.\nUser: Thanks"
+        );
+        assert!(!result.contains("35.6762, 139.6503"));
+    }
+
+    #[test]
+    fn test_build_discord_rag_query_truncates_to_n_turns() {
+        // DISCORD_RAG_HISTORY_TURNS = 2 なので 3 ターン以上は最新 2 ターンのみ
+        let history = vec![
+            msg("user", "Turn 1 user"),
+            msg("assistant", "Turn 1 assistant"),
+            msg("user", "Turn 2 user"),
+            msg("assistant", "Turn 2 assistant"),
+            msg("user", "Turn 3 user"),
+            msg("assistant", "Turn 3 assistant"),
+        ];
+        let result = build_discord_rag_query(&history, "Current");
+        assert!(!result.contains("Turn 1"), "Turn 1 should be truncated");
+        assert!(result.contains("Turn 2 user"));
+        assert!(result.contains("Turn 3 assistant"));
+        assert!(result.ends_with("User: Current"));
     }
 }
