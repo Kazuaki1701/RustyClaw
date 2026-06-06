@@ -4,6 +4,7 @@ use futures_util::{Stream, StreamExt};
 use rustyclaw_config::{get_app_dir, Config, LlmModelConfig};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
@@ -1205,6 +1206,451 @@ pub fn create_provider(model: LlmModelConfig) -> Box<dyn LlmProvider> {
     Box::new(OpenAiCompatProvider::new(model))
 }
 
+// =========================================================
+// rig-core CompletionModel integration
+// =========================================================
+
+/// Converts rig-core `CompletionRequest` messages (plus optional preamble) to
+/// the RustyClaw provider `Message` format.
+pub fn rig_messages_to_provider<'a>(
+    preamble: Option<&str>,
+    history: impl IntoIterator<Item = &'a rig_core::completion::Message>,
+) -> Vec<Message> {
+    let mut out: Vec<Message> = Vec::new();
+
+    if let Some(sys) = preamble {
+        out.push(Message {
+            role: "system".to_string(),
+            content: sys.to_string(),
+            ..Default::default()
+        });
+    }
+
+    for msg in history {
+        match msg {
+            rig_core::completion::Message::System { content } => {
+                out.push(Message {
+                    role: "system".to_string(),
+                    content: content.clone(),
+                    ..Default::default()
+                });
+            }
+            rig_core::completion::Message::User { content } => {
+                for item in content.iter() {
+                    match item {
+                        rig_core::completion::message::UserContent::Text(t) => {
+                            out.push(Message {
+                                role: "user".to_string(),
+                                content: t.text.clone(),
+                                ..Default::default()
+                            });
+                        }
+                        rig_core::completion::message::UserContent::ToolResult(tr) => {
+                            let text = tr
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    rig_core::completion::message::ToolResultContent::Text(t) => {
+                                        Some(t.text.as_str())
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            out.push(Message {
+                                role: "tool".to_string(),
+                                content: text,
+                                tool_call_id: Some(tr.id.clone()),
+                                ..Default::default()
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            rig_core::completion::Message::Assistant { content, .. } => {
+                let mut text = String::new();
+                let mut tcs: Vec<ToolCall> = Vec::new();
+                for item in content.iter() {
+                    match item {
+                        rig_core::completion::message::AssistantContent::Text(t) => {
+                            text.clone_from(&t.text);
+                        }
+                        rig_core::completion::message::AssistantContent::ToolCall(tc) => {
+                            tcs.push(ToolCall {
+                                id: tc.id.clone(),
+                                r#type: "function".to_string(),
+                                function: FunctionCall {
+                                    name: tc.function.name.clone(),
+                                    arguments: tc.function.arguments.to_string(),
+                                },
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                out.push(Message {
+                    role: "assistant".to_string(),
+                    content: text,
+                    tool_calls: if tcs.is_empty() { None } else { Some(tcs) },
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    out
+}
+
+/// Converts a `LlmResponse` to rig-core's `CompletionResponse<LlmResponse>`.
+pub fn llm_response_to_rig(
+    resp: LlmResponse,
+) -> rig_core::completion::CompletionResponse<LlmResponse> {
+    use rig_core::completion::{CompletionResponse, Usage};
+    use rig_core::completion::message::{AssistantContent, Text, ToolCall as RigToolCall, ToolFunction};
+    use rig_core::OneOrMany;
+
+    let choice = if resp
+        .tool_calls
+        .as_ref()
+        .map(|tcs| !tcs.is_empty())
+        .unwrap_or(false)
+    {
+        let items: Vec<AssistantContent> = resp
+            .tool_calls
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|tc| {
+                AssistantContent::ToolCall(RigToolCall::new(
+                    tc.id.clone(),
+                    ToolFunction::new(
+                        tc.function.name.clone(),
+                        serde_json::from_str(&tc.function.arguments)
+                            .unwrap_or(serde_json::json!({})),
+                    ),
+                ))
+            })
+            .collect();
+        OneOrMany::many(items).unwrap_or_else(|_| {
+            OneOrMany::one(AssistantContent::Text(Text {
+                text: resp.content.clone(),
+                additional_params: None,
+            }))
+        })
+    } else {
+        OneOrMany::one(AssistantContent::Text(Text {
+            text: resp.content.clone(),
+            additional_params: None,
+        }))
+    };
+
+    CompletionResponse {
+        choice,
+        usage: Usage {
+            input_tokens: resp.prompt_tokens.unwrap_or(0) as u64,
+            output_tokens: resp.completion_tokens.unwrap_or(0) as u64,
+            total_tokens: resp.total_tokens.unwrap_or(0) as u64,
+            ..Default::default()
+        },
+        raw_response: resp,
+        message_id: None,
+    }
+}
+
+/// Converts RustyClaw provider `Message` list to rig-core `Message` format.
+/// Inverse of `rig_messages_to_provider`.
+pub fn provider_messages_to_rig(
+    messages: &[Message],
+) -> Vec<rig_core::completion::Message> {
+    use rig_core::completion::message::{AssistantContent, Text, ToolCall as RigToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent};
+    use rig_core::OneOrMany;
+
+    let mut out = Vec::new();
+    for msg in messages {
+        match msg.role.as_str() {
+            "system" => {
+                out.push(rig_core::completion::Message::System {
+                    content: msg.content.clone(),
+                });
+            }
+            "user" => {
+                out.push(rig_core::completion::Message::User {
+                    content: OneOrMany::one(UserContent::Text(Text {
+                        text: msg.content.clone(),
+                        additional_params: None,
+                    })),
+                });
+            }
+            "tool" => {
+                let tool_call_id = msg
+                    .tool_call_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                out.push(rig_core::completion::Message::User {
+                    content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                        id: tool_call_id,
+                        call_id: None,
+                        content: OneOrMany::one(ToolResultContent::Text(Text {
+                            text: msg.content.clone(),
+                            additional_params: None,
+                        })),
+                    })),
+                });
+            }
+            "assistant" => {
+                let mut items: Vec<AssistantContent> = Vec::new();
+                if let Some(ref tcs) = msg.tool_calls {
+                    for tc in tcs {
+                        items.push(AssistantContent::ToolCall(RigToolCall::new(
+                            tc.id.clone(),
+                            ToolFunction::new(
+                                tc.function.name.clone(),
+                                serde_json::from_str(&tc.function.arguments)
+                                    .unwrap_or(serde_json::json!({})),
+                            ),
+                        )));
+                    }
+                }
+                if !msg.content.is_empty() {
+                    items.push(AssistantContent::Text(Text {
+                        text: msg.content.clone(),
+                        additional_params: None,
+                    }));
+                }
+                if items.is_empty() {
+                    items.push(AssistantContent::Text(Text {
+                        text: String::new(),
+                        additional_params: None,
+                    }));
+                }
+                out.push(rig_core::completion::Message::Assistant {
+                    id: None,
+                    content: OneOrMany::many(items).unwrap_or_else(|_| {
+                        OneOrMany::one(AssistantContent::Text(Text {
+                            text: String::new(),
+                            additional_params: None,
+                        }))
+                    }),
+                });
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Maps a session_id to a routing category for provider selection.
+pub fn session_id_to_category(session_id: &str) -> String {
+    if session_id == "memory" {
+        "memory"
+    } else if session_id == "summary" || session_id.starts_with("cron:session-summary:") {
+        "summary"
+    } else if session_id.contains("daily-summary") {
+        "daily"
+    } else if session_id.contains("heartbeat") {
+        "heartbeat"
+    } else if session_id.contains("briefing") {
+        "briefing"
+    } else if session_id.contains("vitals") {
+        "vitals"
+    } else if session_id.contains("karakeep") {
+        "karakeep"
+    } else if session_id.contains("patrol") {
+        "patrol"
+    } else if session_id.contains("dashboard") {
+        "dashboard"
+    } else {
+        "discord"
+    }
+    .to_string()
+}
+
+/// Client handle for constructing a `RustyclawCompletionModel`.
+#[derive(Clone)]
+pub struct RustyclawProviderClient {
+    pub config: rustyclaw_config::Config,
+    pub purpose: String,
+    pub session_id: String,
+}
+
+impl RustyclawProviderClient {
+    pub fn new(
+        config: rustyclaw_config::Config,
+        purpose: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            config,
+            purpose: purpose.into(),
+            session_id: session_id.into(),
+        }
+    }
+}
+
+/// A rig-core `CompletionModel` adapter that wraps RustyClaw's failover provider chain.
+/// Enables `rig::agent::Agent<RustyclawCompletionModel>` for tool-using agents.
+/// The model drives rig's ReAct loop while RustyClaw's provider failover chain is preserved.
+#[derive(Clone)]
+pub struct RustyclawCompletionModel {
+    config: rustyclaw_config::Config,
+    purpose: String,
+    session_id: String,
+    pub model_name: String,
+    usage_sink: Arc<Mutex<Option<LlmResponse>>>,
+}
+
+impl RustyclawCompletionModel {
+    pub fn new(
+        config: rustyclaw_config::Config,
+        purpose: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        let purpose = purpose.into();
+        let model_name = config
+            .get_model_chain(&purpose)
+            .first()
+            .map(|m| m.model_name.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        Self {
+            config,
+            purpose,
+            session_id: session_id.into(),
+            model_name,
+            usage_sink: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Returns a handle to the usage sink shared across all clones of this model.
+    /// After `Chat::chat()` completes, the sink holds the last `LlmResponse` returned
+    /// by the provider chain, which can be used to propagate token usage metadata.
+    pub fn usage_sink(&self) -> Arc<Mutex<Option<LlmResponse>>> {
+        Arc::clone(&self.usage_sink)
+    }
+
+    /// Implements the failover chain: tries each model in the purpose's chain until one succeeds.
+    async fn complete_with_chain(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+    ) -> Result<LlmResponse, rig_core::completion::CompletionError> {
+        let chain = self.config.get_model_chain(&self.purpose);
+        if chain.is_empty() {
+            return Err(rig_core::completion::CompletionError::ProviderError(format!(
+                "no models configured for purpose '{}'",
+                self.purpose
+            )));
+        }
+
+        let category = session_id_to_category(&self.session_id);
+
+        for (idx, model_cfg) in chain.iter().enumerate() {
+            let provider_id = if model_cfg.model_provider == "gmn"
+                || model_cfg.model_provider == "gemini"
+            {
+                "gmn".to_string()
+            } else {
+                resolve_provider_id(model_cfg)
+            };
+            if provider_cooldown_remaining(&provider_id).is_some() {
+                continue;
+            }
+
+            let opts = CompletionOptions {
+                model: model_cfg.model_name.clone(),
+                max_tokens: max_tokens.or(model_cfg.max_tokens),
+                temperature: temperature.or(model_cfg.temperature),
+                timeout: std::time::Duration::from_secs(300),
+                category: Some(category.clone()),
+            };
+            let provider = create_provider(model_cfg.clone());
+            match provider.complete(messages, tools, &opts).await {
+                Ok(resp) => {
+                    if idx > 0 {
+                        tracing::warn!(
+                            purpose = %self.purpose,
+                            used_model = %model_cfg.model_name,
+                            fallback_index = idx,
+                            "fallback model used in rig agent"
+                        );
+                    }
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        model = %model_cfg.model_name,
+                        error = %e,
+                        "model failed in rig agent chain, trying next"
+                    );
+                }
+            }
+        }
+
+        Err(rig_core::completion::CompletionError::ProviderError(format!(
+            "all models failed for purpose '{}'",
+            self.purpose
+        )))
+    }
+}
+
+impl rig_core::completion::CompletionModel for RustyclawCompletionModel {
+    type Response = LlmResponse;
+    type StreamingResponse = ();
+    type Client = RustyclawProviderClient;
+
+    fn make(client: &Self::Client, _model: impl Into<String>) -> Self {
+        Self::new(client.config.clone(), client.purpose.clone(), client.session_id.clone())
+    }
+
+    async fn completion(
+        &self,
+        request: rig_core::completion::CompletionRequest,
+    ) -> Result<
+        rig_core::completion::CompletionResponse<LlmResponse>,
+        rig_core::completion::CompletionError,
+    > {
+        let messages =
+            rig_messages_to_provider(request.preamble.as_deref(), request.chat_history.iter());
+
+        let tools: Vec<ToolDef> = request
+            .tools
+            .iter()
+            .map(|td| ToolDef {
+                name: td.name.clone(),
+                description: td.description.clone(),
+                parameters: td.parameters.clone(),
+            })
+            .collect();
+
+        let llm_resp = self
+            .complete_with_chain(
+                &messages,
+                &tools,
+                request.max_tokens.map(|n| n as u32),
+                request.temperature.map(|t| t as f32),
+            )
+            .await?;
+
+        *self.usage_sink.lock().unwrap() = Some(llm_resp.clone());
+        Ok(llm_response_to_rig(llm_resp))
+    }
+
+    async fn stream(
+        &self,
+        _request: rig_core::completion::CompletionRequest,
+    ) -> Result<
+        rig_core::streaming::StreamingCompletionResponse<()>,
+        rig_core::completion::CompletionError,
+    > {
+        Err(rig_core::completion::CompletionError::ProviderError(
+            "Streaming via rig::agent::Agent not supported; use execute_stream() directly"
+                .to_string(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1710,6 +2156,58 @@ mod tests {
         // 空入力は即 Ok(vec![]) を返す（HTTP 呼び出しなし）
         let result = model.embed_texts(vec![]).await.unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_rig_messages_from_completion_request() {
+        use rig_core::completion::Message as RigMsg;
+        use rig_core::completion::message::{AssistantContent, UserContent, Text, ToolResult, ToolResultContent, ToolCall, ToolFunction};
+        use rig_core::OneOrMany;
+
+        let history = vec![
+            RigMsg::User {
+                content: OneOrMany::one(UserContent::Text(Text { text: "hello".to_string(), additional_params: None })),
+            },
+            RigMsg::Assistant {
+                id: None,
+                content: OneOrMany::one(AssistantContent::Text(Text { text: "hi".to_string(), additional_params: None })),
+            },
+            RigMsg::User {
+                content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                    id: "call-1".to_string(),
+                    call_id: None,
+                    content: OneOrMany::one(ToolResultContent::Text(Text { text: "tool output".to_string(), additional_params: None })),
+                })),
+            },
+        ];
+
+        let msgs = rig_messages_to_provider(None, history.iter());
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "hello");
+        assert_eq!(msgs[1].role, "assistant");
+        assert_eq!(msgs[2].role, "tool");
+        assert_eq!(msgs[2].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(msgs[2].content, "tool output");
+    }
+
+    #[test]
+    fn test_rig_messages_preamble_injected() {
+        let msgs = rig_messages_to_provider(Some("system prompt"), std::iter::empty());
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "system");
+        assert_eq!(msgs[0].content, "system prompt");
+    }
+
+    #[test]
+    fn test_completion_model_usage_sink_starts_empty() {
+        let model = RustyclawCompletionModel::new(
+            rustyclaw_config::Config::default(),
+            "default",
+            "test-session",
+        );
+        let sink = model.usage_sink();
+        assert!(sink.lock().unwrap().is_none());
     }
 }
 

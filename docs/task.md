@@ -89,10 +89,13 @@
   - `InMemoryVectorStore` の採用、`MEMORY.md` チャンクとセッション要約のインメモリ統合 RAG 化。
   - 実装済み・稼働中（commit `55f773f` で CF embedding バグ修正済み。06:49 デプロイ後エラー皆無）。
   - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-unified-rag.md`
-- [ ] **6. rig-core 全面リファクタリング (Unified RAG & rig-core Refactoring)**
-  - `#[tool]` アトリビュートマクロ、`rmcp` クライアントへの移行、`rig::agent::Agent` 移行による ReAct/RAG ループの一本化。
-  - 前提: Phase 40-5 の CF embedding バグ修正完了後。
+- `[~]` **6. rig-core 全面リファクタリング (Phase 40-6)**
+  - `rmcp` クライアントへの移行、`rig::agent::Agent` 移行による ReAct/RAG ループの一本化。
   - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-refactoring.md`
+  - ✅ Task 3: `RigToolAdapter` + `ToolRegistry::to_dyn_tools()` 実装（commit `1837b64`, `e311cb1`）
+  - ✅ Task 6: `Pipeline::execute_with_rig_agent()` 実装（`RustyclawCompletionModel` + `AgentBuilder` + `Chat::chat()`、commit `e311cb1`）
+  - ⏳ Task 4: `rustyclaw-mcp` → rig-core `rmcp` feature への移行は未実施
+  - 残: `execute_with_tools` を `execute_with_rig_agent` に切り替え（呼び出し側の配線変更）が必要
 - [ ] **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）**
   - 静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入。固定プロンプト最小化・履歴上限緩和も含む。
   - 前提: Phase 40-5 の CF embedding バグ修正完了後。

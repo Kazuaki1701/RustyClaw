@@ -500,7 +500,7 @@ impl LaneRegistry {
                                             })
                                     } else {
                                         let run_purpose = if session_id == "cron:topic-patrol" { "patrol" } else { "discord" };
-                                        pipeline.execute_with_tools(&workspace_path, &session_id, &content, &tool_reg, run_purpose, progress_tx_opt).await
+                                        pipeline.execute_with_rig_agent(&workspace_path, &session_id, &content, &tool_reg, run_purpose, progress_tx_opt).await
                                     };
 
                                     // 進捗表示の終了とクリーンアップ
