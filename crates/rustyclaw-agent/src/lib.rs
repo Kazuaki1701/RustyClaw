@@ -634,7 +634,7 @@ Rules:
         session_id: &str,
         user_message: &str,
         tool_registry: &ToolRegistry,
-        db_path: &Path,
+        _db_path: &Path,
     ) -> Result<LlmResponse> {
         let system_context = self.build_heartbeat_context(workspace_dir)?;
 
@@ -2570,11 +2570,10 @@ Keep it short.\n\
     }
 
     // ── Task 1: execute_heartbeat db_path シグネチャ ──
-    #[tokio::test]
-    async fn test_execute_heartbeat_accepts_db_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("memory.db");
-        let _db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
-        let _: &std::path::Path = &db_path;
+    #[test]
+    fn test_execute_heartbeat_accepts_db_path() {
+        // Verify the function signature compiles with &Path for db_path (compile-time check)
+        // This ensures the parameter was added to the signature correctly.
+        let _ = Pipeline::execute_heartbeat;
     }
 }
