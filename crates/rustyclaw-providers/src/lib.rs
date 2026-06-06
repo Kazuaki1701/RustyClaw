@@ -785,7 +785,7 @@ impl CloudflareEmbeddingClient {
 #[derive(Clone)]
 pub struct LocalEmbeddingClient {
     // fastembed 5 の embed は &mut self を要求するため Mutex で包む
-    model: std::sync::Arc<std::sync::Mutex<fastembed::TextEmbedding>>,
+    model: Arc<Mutex<fastembed::TextEmbedding>>,
 }
 
 impl LocalEmbeddingClient {
@@ -799,7 +799,7 @@ impl LocalEmbeddingClient {
         )
         .map_err(|e| anyhow::anyhow!("fastembed init failed: {}", e))?;
         Ok(Self {
-            model: std::sync::Arc::new(std::sync::Mutex::new(model)),
+            model: Arc::new(Mutex::new(model)),
         })
     }
 
@@ -809,7 +809,7 @@ impl LocalEmbeddingClient {
             return Ok(vec![]);
         }
         let owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
-        let model = std::sync::Arc::clone(&self.model);
+        let model = Arc::clone(&self.model);
         tokio::task::spawn_blocking(move || {
             let mut guard = model
                 .lock()
