@@ -220,8 +220,7 @@ impl HeartbeatService {
                                 if let Some(ref ts) = messages[i].timestamp
                                     && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts)
                                 {
-                                    let local_dt = dt.with_timezone(&Local);
-                                    time_str = local_dt.format("%H:%M").to_string();
+                                    time_str = dt.format("%H:%M").to_string();
                                 }
 
                                 session_lines.push(format!(
