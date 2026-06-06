@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use chrono::{Local, DateTime, Timelike};
+use regex::Regex;
 use rustyclaw_config::Config;
 use rustyclaw_providers::Message;
 use rustyclaw_storage::{DbManager, SessionLogger};
@@ -85,9 +86,9 @@ impl HeartbeatService {
                 if !filename.ends_with(".jsonl")
                     || filename.starts_with("cron")
                     || filename.starts_with("cli-")
-                    || filename.starts_with("http-")
+                    || (filename.starts_with("http-") && filename != "http-dashboard.jsonl")
                 {
-                    continue; // cron-* / CLI テスト / HTTP ダッシュボード除外
+                    continue; // cron-* / CLI テスト / http-dashboard 以外の HTTP セッション除外
                 }
 
                 // ファイル変更時刻チェック
@@ -124,9 +125,20 @@ impl HeartbeatService {
                 if let Ok(file) = File::open(&path) {
                     let reader = BufReader::new(file);
                     let mut messages = Vec::new();
+                    let is_http_dashboard = session_id == "http-dashboard";
 
                     for line_res in reader.lines().flatten() {
                         if let Ok(msg) = serde_json::from_str::<Message>(&line_res) {
+                            if is_http_dashboard {
+                                // http-dashboard は無制限に成長するため直近24時間のみ対象
+                                let within_24h = msg.timestamp.as_deref()
+                                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+                                    .map(|dt| now_dt.signed_duration_since(dt.with_timezone(&Local)).num_hours() < 24)
+                                    .unwrap_or(false);
+                                if !within_24h {
+                                    continue;
+                                }
+                            }
                             messages.push(msg);
                         }
                     }
@@ -246,12 +258,48 @@ impl HeartbeatService {
 
     /// Heartbeat 応答処理: HEARTBEAT_OK の有無による配信制御
     pub async fn process_heartbeat_response(&self, response_content: &str, db_path: &Path) -> Result<()> {
-        let is_silent = response_content.to_lowercase().contains("heartbeat_ok");
+        // 1. <think>/<thought> ブロックを除外（Gemma 系モデルの思考ブロック対策）
+        // ※ Rust の regex クレートはバックリファレンス非対応のため、タグ別に個別マッチ
+        static RE_THINK: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+        let re_think = RE_THINK.get_or_init(|| {
+            Regex::new(r"(?s)<think>.*?</think>|<thought>.*?</thought>").unwrap()
+        });
+        let without_think = re_think.replace_all(response_content, "");
 
-        if is_silent {
+        // 2. マークダウン記号を除去して正規化（**HEARTBEAT_OK** 等も検出できるように）
+        let normalized = without_think.replace(['*', '`', '~'], "");
+
+        // 3. いずれかの行が正確に "HEARTBEAT_OK" であれば Silent
+        let is_silent = normalized.lines().any(|line| line.trim() == "HEARTBEAT_OK");
+
+        // 4. 混在ケース検出: Silent 判定だが本文が残っている場合（モデルが指示を無視した場合の保険）
+        let stripped_content = normalized
+            .lines()
+            .filter(|l| l.trim() != "HEARTBEAT_OK")
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+        let has_content = stripped_content.len() > 20;
+
+        let effective_content = if is_silent && has_content {
+            // 本文あり + HEARTBEAT_OK 混在 → HEARTBEAT_OK を除いた本文で Proactive 処理
+            tracing::warn!(
+                "HeartbeatService: Mixed response detected (content + HEARTBEAT_OK). \
+                 Treating as Proactive. Stripped content length: {}",
+                stripped_content.len()
+            );
+            Some(stripped_content.as_str())
+        } else {
+            None
+        };
+
+        let treat_as_silent = is_silent && !has_content;
+
+        if treat_as_silent {
             // Mute / Silent (Nothing / Informational)
             tracing::info!("HeartbeatService: HEARTBEAT_OK detected. Silent mode active. Response is logged to memory/logs/ instead of channel.");
-            
+
             // Obsidian日次ログ memory/logs/YYYY-MM-DD.md に静かに追記 (fail-open)
             let today = Local::now().format("%Y-%m-%d").to_string();
             let logs_dir = self.workspace_path.join("memory").join("logs");
@@ -274,7 +322,8 @@ impl HeartbeatService {
             let _ = rustyclaw_storage::atomic_write(&log_file, file_content.as_bytes()).await;
 
         } else {
-            // Proactive speak / Critical
+            // Proactive speak / Critical（混在ケースは stripped_content を使用）
+            let proactive_content = effective_content.unwrap_or(response_content);
             tracing::info!("HeartbeatService: Proactive vocal speak triggered! Sending proactive message...");
 
             // home_channel_id が設定されていればそれを優先、なければ旧来のセッション検索
@@ -326,7 +375,7 @@ impl HeartbeatService {
             let posts_path = posts_dir.join("proactive-posts.md");
             
             let now = Local::now();
-            let new_entry = format!("[{}]{}:{}", now.to_rfc3339(), target_session_id, response_content.replace('\n', " "));
+            let new_entry = format!("[{}]{}:{}", now.to_rfc3339(), target_session_id, proactive_content.replace('\n', " "));
             
             {
                 let mut kept = Vec::new();
@@ -357,7 +406,7 @@ impl HeartbeatService {
             let logger = SessionLogger::new(&self.workspace_path);
             let assistant_msg = Message {
                 role: "assistant".to_string(),
-                content: response_content.to_string(),
+                content: proactive_content.to_string(),
                 name: None,
                 trigger: Some("proactive".to_string()),
                 timestamp: Some(chrono::Local::now().to_rfc3339()),
@@ -369,7 +418,7 @@ impl HeartbeatService {
             let event = SystemEvent::AgentResponse {
                 session_id: target_session_id,
                 channel_id,
-                content: response_content.to_string(),
+                content: proactive_content.to_string(),
             };
             let _ = self.bus.publish(event);
         }

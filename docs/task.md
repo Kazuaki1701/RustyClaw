@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-03 (Phase 38 items 2,4,6,7,8 完了)  
+> **最終更新日**: 2026-06-03 (Phase 39 追加: マルチチャンネル対応)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -49,6 +49,27 @@
 - `[x]` **8. USER.md Interests への sources: 指定の整備**
   - 全9トピックに `sources:` を追記（HN / Reddit / github: / URL）。
   - 対象: `production/workspace/USER.md`（実装済み）
+
+---
+
+### Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル） 🔴
+> GeminiClaw は Discord / Slack / Telegram のマルチチャンネルに対応しており、notifications チャンネル（home と独立したバックグラウンドジョブ通知先）を持つ。RustyClaw は Discord のみで、LINE 導入予定に伴いこのギャップを回収する。  
+> 調査資料: [`docs/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/2026-06-03-geminiclaw-notifications-channel-analysis.md`](2026-06-03-geminiclaw-notifications-channel-analysis.md)
+
+- `[ ]` **1. LINE チャンネルコネクタの実装**
+  - `rustyclaw-channels` に `LineConnector` を追加（`Channel` トレイト実装）。
+  - LINE Messaging API（REST）による送信と、Webhook（HTTPS POST）受信エンドポイントの実装。
+  - `channel_secret` を使った HMAC-SHA256 署名検証を必須実装。
+  - session_id 命名規則: `line-U{userId}-{YYYYMMDD}` 形式。
+  - gateway への `LineConnector` 初期化・起動組み込みと `MessageBus` 配信分岐の追加。
+  - 対象: `crates/rustyclaw-channels/src/lib.rs`、`crates/rustyclaw-gateway/src/lib.rs`
+
+- `[ ]` **2. Notifications チャンネル設定の導入**
+  - GeminiClaw の `notifications: { channel, channelId }` 相当。home と独立したバックグラウンドジョブ通知先チャンネル（未設定時は home にフォールバック）。
+  - `DiscordConfig`（および将来の LINE/Telegram 設定）に `notifications_channel_id` を追加、または `Config` 直下にプラットフォーム横断の `notifications` 設定を追加。
+  - `heartbeat.rs::process_heartbeat_response` の配信先を `notifications_channel_id` 優先に切り替え。
+  - 背景: LINE を home にした場合、HEARTBEAT_OK の稼働ログが LINE に届き続けるノイズを防ぐための分離。
+  - 対象: `crates/rustyclaw-config/src/lib.rs`、`crates/rustyclaw-gateway/src/heartbeat.rs`
 
 ---
 

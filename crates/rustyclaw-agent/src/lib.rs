@@ -98,38 +98,21 @@ impl Pipeline {
         ))
     }
 
-    /// 用途ごとのモデルの TPM 制限に基づいて、会話履歴の圧縮しきい値を動的に決定する。
-    fn get_history_limit(&self, purpose: &str) -> usize {
-        let model_cfg = self.config.get_model(purpose);
-        let tpm = self.config.model_list.iter()
-            .find(|m| m.model == model_cfg.model_name && m.enabled)
-            .and_then(|m| m.tpm)
-            .unwrap_or(40000); // 未設定の場合は十分大きな値をデフォルトとする
-
-        if tpm <= 6000 {
-            800
-        } else if tpm <= 12000 {
-            1500
-        } else {
-            3000
-        }
-    }
-
-    /// TPM 上限に基づくメッセージ件数ハードキャップ。
-    /// トークン推定のアンダーフロー問題の補完として、compact_if_needed_with_overhead 後に適用する。
+    /// context_window ベースのメッセージ件数ハードキャップ。
+    /// モデルの context_window 文字列を parse_context_window() で解釈し、
+    /// 大きいモデルほど多くの履歴を保持できるようにする。
     fn get_history_message_limit(&self, purpose: &str) -> usize {
         let model_cfg = self.config.get_model(purpose);
-        let tpm = self.config.model_list.iter()
+        let cw = self.config.model_list.iter()
             .find(|m| m.model == model_cfg.model_name && m.enabled)
-            .and_then(|m| m.tpm)
-            .unwrap_or(40000);
-
-        if tpm <= 6000 {
-            10   // groq-llama-8b 等: 末尾 10 件 (~3K トークン)
-        } else if tpm <= 12000 {
-            20   // groq-llama-70b 等: 末尾 20 件 (~6K トークン)
-        } else {
-            10   // CF / LMS: neurons 節約のため末尾 10 件
+            .and_then(|m| m.context_window.as_deref());
+        let ctx = parse_context_window(cw);
+        match ctx {
+            0..=16_384       => 10,
+            16_385..=32_768  => 20,
+            32_769..=65_536  => 40,
+            65_537..=262_143 => 60,
+            _                => 80,
         }
     }
 
@@ -473,6 +456,25 @@ impl Pipeline {
             conversation_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
         }
 
+        let memory_model = config.get_model("memory");
+
+        // コンテキストサイズ安全チェック: flush プロンプトの推定トークン数がモデルの
+        // context_window の 80% を超える場合はスキップして 400 エラーを防ぐ。
+        let flush_text_tokens = (conversation_text.chars().count() * 3 / 2) + 2_000;
+        let flush_model_cw = config.model_list.iter()
+            .find(|m| m.model == memory_model.model_name && m.enabled)
+            .and_then(|m| m.context_window.as_deref());
+        let flush_ctx_limit = (parse_context_window(flush_model_cw) * 4) / 5;
+        if flush_text_tokens > flush_ctx_limit {
+            tracing::warn!(
+                session = %session_id,
+                estimated_tokens = flush_text_tokens,
+                ctx_limit = flush_ctx_limit,
+                "memory flush: skipping — estimated tokens exceeds model context limit"
+            );
+            return Ok(());
+        }
+
         // 既存の MEMORY.md を読み込む（なければ空）
         let memory_path = workspace_dir.join("MEMORY.md");
         let existing_memory = fs::read_to_string(&memory_path).unwrap_or_default();
@@ -508,8 +510,6 @@ Rules:
             if existing_memory.is_empty() { "(empty)" } else { &existing_memory },
             conversation_text,
         );
-
-        let memory_model = config.get_model("memory");
         let provider = create_provider(memory_model.clone());
         let messages = vec![
             Message {
@@ -617,50 +617,93 @@ Rules:
         Ok(context)
     }
 
-    /// Heartbeat 専用実行（軽量コンテキスト使用、履歴なし）
+    /// Heartbeat 専用実行（軽量コンテキスト使用、履歴なし、ツールループ付き）
     pub async fn execute_heartbeat(
         &self,
         workspace_dir: &Path,
         session_id: &str,
         user_message: &str,
+        tool_registry: &ToolRegistry,
     ) -> Result<LlmResponse> {
         let system_context = self.build_heartbeat_context(workspace_dir)?;
 
         let logger = SessionLogger::new(workspace_dir);
-        let mut messages = Vec::new();
-        messages.push(Message {
-            role: "system".to_string(),
-            content: system_context,
-            name: None,
-            ..Default::default()
-        });
         let user_msg = Message {
             role: "user".to_string(),
             content: user_message.to_string(),
             name: None,
             ..Default::default()
         };
-        messages.push(user_msg.clone());
-
-        self.dump_request(workspace_dir, &messages);
-
-        let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &[], Duration::from_secs(900)).await?;
-        response.content = filter_json_leaks(&response.content);
+        let mut messages = vec![
+            Message { role: "system".to_string(), content: system_context, name: None, ..Default::default() },
+            user_msg.clone(),
+        ];
 
         logger.append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
-        let assistant_msg = Message {
-            role: response.role.clone(),
-            content: response.content.clone(),
-            name: None,
-            ..Default::default()
-        };
-        logger.append_message(session_id, &assistant_msg)
-            .context("Failed to save assistant response in session log (fail-closed)")?;
 
-        self.dump_response(workspace_dir, &response.content, &response.role);
+        let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
+            .to_llm_schemas()
+            .iter()
+            .map(|schema| rustyclaw_providers::ToolDef {
+                name: schema["name"].as_str().unwrap_or("").to_string(),
+                description: schema["description"].as_str().unwrap_or("").to_string(),
+                parameters: schema["input_schema"].clone(),
+            })
+            .collect();
 
-        Ok(response)
+        let max_loops = 5;
+        for _ in 0..max_loops {
+            self.dump_request(workspace_dir, &messages);
+
+            let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &provider_tools, Duration::from_secs(900)).await?;
+            response.content = filter_json_leaks(&response.content);
+
+            let assistant_msg = Message {
+                role: response.role.clone(),
+                content: response.content.clone(),
+                tool_calls: response.tool_calls.clone(),
+                name: None,
+                ..Default::default()
+            };
+            messages.push(assistant_msg.clone());
+            logger.append_message(session_id, &assistant_msg)
+                .context("Failed to save assistant response in session log (fail-closed)")?;
+            self.dump_response(workspace_dir, &response.content, &response.role);
+
+            if let Some(ref calls) = response.tool_calls {
+                if !calls.is_empty() {
+                    for call in calls {
+                        tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
+                        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                        let tool_result = if let Some(tool) = tool_registry.get(&call.function.name) {
+                            tool.execute(args).await
+                        } else {
+                            rustyclaw_tools::ToolResult {
+                                content: format!("Error: Tool '{}' not found in registry", call.function.name),
+                                is_error: true,
+                            }
+                        };
+                        let tool_msg = Message {
+                            role: "tool".to_string(),
+                            content: tool_result.content,
+                            tool_call_id: Some(call.id.clone()),
+                            name: Some(call.function.name.clone()),
+                            ..Default::default()
+                        };
+                        messages.push(tool_msg.clone());
+                        logger.append_message(session_id, &tool_msg)
+                            .context("Failed to save tool result message in session log (fail-closed)")?;
+                    }
+                    continue;
+                }
+            }
+
+            return Ok(response);
+        }
+
+        Err(anyhow::anyhow!("Heartbeat agent loop exceeded maximum step limit of {}", max_loops))
     }
 
     /// 通常（一括）の対話実行
@@ -687,10 +730,6 @@ Rules:
         let cleaned_history = self.process_proactive_posts(session_id, history_messages, &mut system_context);
 
         let mut history = ConversationHistory::new(cleaned_history);
-        let history_limit = self.get_history_limit("default");
-        // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
-        let overhead_tokens = (system_context.chars().count() * 3) / 2;
-        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
         history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
@@ -954,12 +993,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let cleaned_history = self.process_proactive_posts(session_id, history_messages, &mut system_context);
 
         let mut history = ConversationHistory::new(cleaned_history);
-        let history_limit = self.get_history_limit(purpose);
-        // ISSUE-02: system プロンプト＋ツール定義分のトークンを考慮して実効上限を下げる
-        let overhead_chars = system_context.chars().count()
-            + tool_registry.to_llm_schemas().iter().map(|s| s.to_string().chars().count()).sum::<usize>();
-        let overhead_tokens = (overhead_chars * 3) / 2;
-        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
         history.trim_to_last(self.get_history_message_limit(purpose));
 
         // 送信用メッセージリストの構築 (System + History)
@@ -1108,10 +1141,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let mut history = ConversationHistory::new(history_messages);
-        let history_limit = self.get_history_limit("default");
-        // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
-        let overhead_tokens = (system_context.chars().count() * 3) / 2;
-        history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
         history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
@@ -1272,6 +1301,22 @@ fn extract_delimited_block(text: &str, start_tag: &str, end_tag: &str) -> Option
         .unwrap_or(text.len());
     let content = text[content_start..content_end].trim().to_string();
     if content.is_empty() { None } else { Some(content) }
+}
+
+/// config.json の context_window 文字列（"8k", "131k", "256k", "1M" 等）をトークン数に変換する。
+/// 未設定または認識不能な場合は保守的なデフォルト 32,768 を返す。
+fn parse_context_window(context_window: Option<&str>) -> usize {
+    let s = match context_window {
+        Some(s) if !s.is_empty() => s.trim().to_lowercase(),
+        _ => return 32_768,
+    };
+    if let Some(num) = s.strip_suffix('m') {
+        num.trim().parse::<usize>().unwrap_or(1) * 1_048_576
+    } else if let Some(num) = s.strip_suffix('k') {
+        num.trim().parse::<usize>().unwrap_or(32) * 1_024
+    } else {
+        s.parse::<usize>().unwrap_or(32_768)
+    }
 }
 
 /// 70/20/10 戦略でテキストを `max_bytes` 以内に切り詰める。
@@ -1929,5 +1974,67 @@ Keep it short.\n\
         assert!(system_context.contains("Your Previous Posts in This Channel"));
         assert!(system_context.contains("It might rain soon, grab an umbrella!"));
         assert!(system_context.contains("2026-05-31 12:00:00"));
+    }
+
+    #[test]
+    fn test_parse_context_window_k_suffix() {
+        assert_eq!(parse_context_window(Some("8k")), 8_192);
+        assert_eq!(parse_context_window(Some("16k")), 16_384);
+        assert_eq!(parse_context_window(Some("32k")), 32_768);
+        assert_eq!(parse_context_window(Some("131k")), 134_144);
+        assert_eq!(parse_context_window(Some("256k")), 262_144);
+    }
+
+    #[test]
+    fn test_parse_context_window_m_suffix() {
+        assert_eq!(parse_context_window(Some("1M")), 1_048_576);
+    }
+
+    #[test]
+    fn test_parse_context_window_none_or_empty() {
+        assert_eq!(parse_context_window(None), 32_768);
+        assert_eq!(parse_context_window(Some("")), 32_768);
+    }
+
+    #[test]
+    fn test_get_history_message_limit_uses_context_window() {
+        use rustyclaw_config::{Config, ModelEntry, AgentsConfig, ModelNames};
+
+        fn make_config(context_window: &str) -> Config {
+            Config {
+                model_list: vec![ModelEntry {
+                    model_name: "test-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "test-model-api".to_string(),
+                    api_base: "http://localhost".to_string(),
+                    api_key: "key".to_string(),
+                    max_tokens: Some(2048),
+                    temperature: Some(0.7),
+                    enabled: true,
+                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    context_window: Some(context_window.to_string()),
+                    cf_aig_gateway_id: None,
+                }],
+                agents: AgentsConfig {
+                    default: ModelNames::Single("test-model".to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }
+
+        let flush_sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+
+        let p16k  = Pipeline::new(make_config("16k"),  flush_sem.clone());
+        let p32k  = Pipeline::new(make_config("32k"),  flush_sem.clone());
+        let p64k  = Pipeline::new(make_config("64k"),  flush_sem.clone());
+        let p131k = Pipeline::new(make_config("131k"), flush_sem.clone());
+        let p256k = Pipeline::new(make_config("256k"), flush_sem.clone());
+
+        assert_eq!(p16k.get_history_message_limit("default"),  10, "16k → 10件");
+        assert_eq!(p32k.get_history_message_limit("default"),  20, "32k → 20件");
+        assert_eq!(p64k.get_history_message_limit("default"),  40, "64k → 40件");
+        assert_eq!(p131k.get_history_message_limit("default"), 60, "131k → 60件");
+        assert_eq!(p256k.get_history_message_limit("default"), 80, "256k → 80件");
     }
 }

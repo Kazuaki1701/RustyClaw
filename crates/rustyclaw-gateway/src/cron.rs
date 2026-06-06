@@ -25,6 +25,21 @@ pub(crate) fn find_next_session_needing_summary(sessions_dir: &std::path::Path, 
         let local_modified: chrono::DateTime<chrono::Local> = modified.into();
         let session_date = local_modified.format("%Y-%m-%d").to_string();
         let summary_path = ws_path.join("memory").join("summaries").join(format!("{}-{}.md", session_date, safe_session_id));
+
+        // サマリーファイルが過去 10 分以内に更新されていれば再トリガーしない。
+        // 生成中（プレースホルダー書き込み後）および完了直後の重複発火を防ぐ。
+        if summary_path.exists() {
+            if let Some(summary_age_secs) = summary_path.metadata().ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|sm| now.duration_since(sm).ok())
+                .map(|d| d.as_secs())
+            {
+                if summary_age_secs < 600 {
+                    continue;
+                }
+            }
+        }
+
         let needs_summary = if !summary_path.exists() {
             true
         } else {
@@ -485,6 +500,37 @@ mod tests {
 
         let result = find_next_session_needing_summary(&sessions_dir, ws.path());
         assert!(result.is_none(), "recent sessions (< 5 min idle) must be excluded");
+    }
+
+    #[test]
+    fn test_recently_summarized_session_is_excluded() {
+        let ws = tempfile::tempdir().unwrap();
+        let sessions_dir = ws.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let summaries_dir = ws.path().join("memory").join("summaries");
+        std::fs::create_dir_all(&summaries_dir).unwrap();
+
+        // JSONL mtime = 400s ago (passes 5-min idle check: 400 > 300)
+        let session_path = sessions_dir.join("discord-test-session.jsonl");
+        let mut f = std::fs::File::create(&session_path).unwrap();
+        writeln!(f, r#"{{"role":"user","content":"hi"}}"#).unwrap();
+        let jsonl_time = std::time::SystemTime::now() - std::time::Duration::from_secs(400);
+        filetime::set_file_mtime(&session_path, filetime::FileTime::from_system_time(jsonl_time)).unwrap();
+
+        // session_date は JSONL mtime から動的に生成（production コードと同じロジック）
+        let local_modified: chrono::DateTime<chrono::Local> = jsonl_time.into();
+        let session_date = local_modified.format("%Y-%m-%d").to_string();
+
+        // Summary mtime = 500s ago:
+        //   sm(500s) < modified(400s) → true → needs_summary=true without guard
+        //   summary_age_secs=500 < 600 → 10-min guard fires → session skipped
+        let summary_path = summaries_dir.join(format!("{}-discord-test-session.md", session_date));
+        std::fs::write(&summary_path, "<!-- turns: 1 -->").unwrap();
+        let summary_time = std::time::SystemTime::now() - std::time::Duration::from_secs(500);
+        filetime::set_file_mtime(&summary_path, filetime::FileTime::from_system_time(summary_time)).unwrap();
+
+        let result = find_next_session_needing_summary(&sessions_dir, ws.path());
+        assert!(result.is_none(), "recently summarized session (summary < 10 min old) must be excluded by mtime guard");
     }
 }
 

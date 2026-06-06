@@ -1,14 +1,14 @@
 {
   "agents": {
     "global_fallback_model_name": "groq-llama-8b",
-    "default":   "lms-gemma-4-e4b",
-    "tools":     "lms-gemma-4-e4b",
-    "discord":   ["cf-gemma-4-26b", "lms-gemma-4-e4b"],
-    "line":      ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "heartbeat": ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "patrol":    ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "summary":   ["lms-gemma-4-e4b", "groq-llama-8b"],
-    "memory":    ["lms-gemma-4-e4b", "groq-llama-8b"]
+    "default":   "lms-gemma-4-26b",
+    "tools":     "lms-gemma-4-26b",
+    "discord":   ["cf-gemma-4-26b", "lms-gemma-4-26b"],
+    "line":      ["lms-gemma-4-26b", "groq-llama-8b"],
+    "heartbeat": ["lms-gemma-4-26b", "groq-llama-8b"],
+    "patrol":    ["lms-gemma-4-26b", "groq-llama-8b"],
+    "summary":   ["lms-gemma-4-26b", "groq-llama-8b"],
+    "memory":    ["groq-llama-8b"]
   },
   "model_list": [
     {
@@ -237,6 +237,17 @@
       "model_name": "lms-gemma-4-e4b",
       "provider": "openai",
       "model": "google/gemma-4-e4b",
+      "api_base": "http://192.168.1.110:1234/v1",
+      "api_key": "lm-studio",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": false,
+      "context_window": "16k"
+    },
+    {
+      "model_name": "lms-gemma-4-26b",
+      "provider": "openai",
+      "model": "google/gemma-4-26b-a4b",
       "api_base": "http://192.168.1.110:1234/v1",
       "api_key": "lm-studio",
       "max_tokens": 2048,
