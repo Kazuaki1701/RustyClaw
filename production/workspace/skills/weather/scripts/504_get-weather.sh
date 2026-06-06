@@ -1,53 +1,40 @@
 #!/bin/bash
-# 天気予報: 大森・厚木 の現在気温・風速・今日の最高/最低・75分降水量を取得
+# 天気予報: 大森・厚木 の天気概況・降水確率を tsukumijima API（気象庁データ）から取得
 
 set -euo pipefail
 
+BASE_URL="https://weather.tsukumijima.net/api/forecast"
+
 fetch_weather() {
     local name="$1"
-    local lat="$2"
-    local lon="$3"
-
-    local url="https://api.open-meteo.com/v1/forecast"
-    url+="?latitude=${lat}&longitude=${lon}"
-    url+="&minutely_15=precipitation"
-    url+="&current=temperature_2m,wind_speed_10m"
-    url+="&daily=temperature_2m_max,temperature_2m_min"
-    url+="&timezone=Asia%2FTokyo"
-    url+="&forecast_days=1"
+    local city="$2"
+    local include_forecast_text="${3:-0}"
 
     local raw
-    raw=$(curl -sf "$url") || {
-        echo "{\"location\":\"${name}\",\"error\":\"API request failed\"}"
+    raw=$(curl -sSf "${BASE_URL}?city=${city}") || {
+        jq -n --arg loc "$name" --arg err "API request failed" '{"location":$loc,"error":$err}'
         return
     }
 
-    local now
-    now=$(date +"%Y-%m-%dT%H:%M")
-
-    echo "$raw" | jq --arg name "$name" --arg now "$now" '
+    echo "$raw" | jq --arg name "$name" --arg include_text "$include_forecast_text" '
         . as $root |
-        ($root.minutely_15.time | to_entries) as $time_entries |
-        ($time_entries | map(select(.value >= $now)) | .[0:5]) as $future_slots |
+        ($root.forecasts[0].temperature.max.celsius | if . == null then null else tonumber end) as $max_c |
+        ($root.forecasts[0].temperature.min.celsius | if . == null then null else tonumber end) as $min_c |
         {
-            location:        $name,
-            current_temp_c:  $root.current.temperature_2m,
-            wind_speed_kmh:  $root.current.wind_speed_10m,
-            today_max_c:     $root.daily.temperature_2m_max[0],
-            today_min_c:     $root.daily.temperature_2m_min[0],
-            rain_next_60min: [
-                $future_slots[] |
-                {
-                    time: (.value[11:16]),
-                    mm:   (.key as $i | $root.minutely_15.precipitation[$i] // 0)
-                }
-            ]
-        }
+            location:       $name,
+            telop:          $root.forecasts[0].telop,
+            today_max_c:    $max_c,
+            today_min_c:    $min_c,
+            weather_detail: $root.forecasts[0].detail.weather,
+            wind:           $root.forecasts[0].detail.wind,
+            chance_of_rain: $root.forecasts[0].chanceOfRain
+        } |
+        if $include_text == "1" then . + {forecast_text: $root.description.bodyText} else . end
     ' || {
-        echo "{\"location\":\"${name}\",\"error\":\"jq parse error\"}"
+        jq -n --arg loc "$name" --arg err "jq parse error" '{"location":$loc,"error":$err}'
         return
     }
 }
 
-fetch_weather "OMORI"  "35.5613" "139.7241"
-fetch_weather "ATSUGI" "35.4432" "139.3624"
+fetch_weather "OMORI"  "130010" "1"
+fetch_weather "ATSUGI" "140010" "0"
