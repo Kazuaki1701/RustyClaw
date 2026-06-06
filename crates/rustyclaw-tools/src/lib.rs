@@ -594,18 +594,18 @@ impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
                     let json_path = rustyclaw_config::get_config_dir().join("vault.json");
                     if let Ok(file) = std::fs::File::open(json_path) {
                         let reader = std::io::BufReader::new(file);
-                        if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(reader) {
-                            if let Some(v) = json.get(vault_key).and_then(|v| v.as_str()) {
-                                resolved_opt = Some(v.to_string());
-                            }
+                        if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(reader)
+                            && let Some(v) = json.get(vault_key).and_then(|v| v.as_str())
+                        {
+                            resolved_opt = Some(v.to_string());
                         }
                     }
                 }
                 let env_var_name = vault_key.replace('-', "_").to_uppercase();
-                if resolved_opt.is_none() {
-                    if let Ok(env_val) = std::env::var(&env_var_name) {
-                        resolved_opt = Some(env_val);
-                    }
+                if resolved_opt.is_none()
+                    && let Ok(env_val) = std::env::var(&env_var_name)
+                {
+                    resolved_opt = Some(env_val);
                 }
                 match resolved_opt {
                     Some(val) => val,
@@ -650,7 +650,6 @@ impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[tokio::test]
     async fn test_tool_registration_and_retrieval() {

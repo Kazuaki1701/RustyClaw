@@ -36,7 +36,7 @@ impl ProviderError {
                         .and_local_timezone(chrono::Local)
                         .unwrap();
                     if now >= next_reset {
-                        next_reset = next_reset + chrono::Duration::days(1);
+                        next_reset += chrono::Duration::days(1);
                     }
                     let remaining_secs = next_reset.signed_duration_since(now).num_seconds();
                     if remaining_secs > 0 {
@@ -51,7 +51,7 @@ impl ProviderError {
                     // リセット時間文の直後の区切り（ピリオド、改行、ダブルクォーテーション等）で切り出し、
                     // メッセージ後半に含まれる "model" 等の 'm' に誤反応するのを防ぐ
                     let limit_part = if let Some(end_pos) =
-                        sub.find(|c| c == '.' || c == '\n' || c == '"' || c == '\\')
+                        sub.find(['.', '\n', '"', '\\'])
                     {
                         &sub[..end_pos]
                     } else {
@@ -338,10 +338,10 @@ impl OpenAiCompatProvider {
     }
 
     fn resolve_model(&self, model: &str) -> String {
-        if model == "flash" {
-            if let Ok(env_val) = std::env::var("RUSTYCLAW_FLASH_MODEL_NAME") {
-                return env_val;
-            }
+        if model == "flash"
+            && let Ok(env_val) = std::env::var("RUSTYCLAW_FLASH_MODEL_NAME")
+        {
+            return env_val;
         }
         model.to_string()
     }
@@ -545,22 +545,22 @@ impl LlmProvider for OpenAiCompatProvider {
             .await
             .context("Failed to parse LLM JSON response")?;
 
-        if neurons_from_header.is_none() && url.contains("cloudflare.com") {
-            if let Some(usage) = &resp_data.usage {
-                if usage.prompt_tokens > 0 || usage.completion_tokens > 0 {
-                    let model_name = resp_data.model.as_deref().unwrap_or(&resolved_model);
-                    let neurons =
-                        calc_cf_neurons(model_name, usage.prompt_tokens, usage.completion_tokens);
-                    tracing::info!(
-                        "CF Neurons calculated: {:.2} (prompt={}, completion={}, model={})",
-                        neurons,
-                        usage.prompt_tokens,
-                        usage.completion_tokens,
-                        model_name
-                    );
-                    record_neuron_usage(neurons);
-                }
-            }
+        if neurons_from_header.is_none()
+            && url.contains("cloudflare.com")
+            && let Some(usage) = &resp_data.usage
+            && (usage.prompt_tokens > 0 || usage.completion_tokens > 0)
+        {
+            let model_name = resp_data.model.as_deref().unwrap_or(&resolved_model);
+            let neurons =
+                calc_cf_neurons(model_name, usage.prompt_tokens, usage.completion_tokens);
+            tracing::info!(
+                "CF Neurons calculated: {:.2} (prompt={}, completion={}, model={})",
+                neurons,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                model_name
+            );
+            record_neuron_usage(neurons);
         }
 
         let choice = resp_data
@@ -583,7 +583,7 @@ impl LlmProvider for OpenAiCompatProvider {
             .category
             .clone()
             .unwrap_or_else(|| "discord".to_string());
-        if res.tool_calls.as_ref().map_or(false, |tc| !tc.is_empty()) {
+        if res.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
             resolved_category = "tools".to_string();
         }
         dump_llm_io(&resolved_category, &resolved_model, messages, &res);
@@ -714,21 +714,19 @@ impl LlmProvider for OpenAiCompatProvider {
                         continue;
                     }
 
-                    if line.starts_with("data: ") {
-                        let data = &line["data: ".len()..];
+                    if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" {
                             break;
                         }
 
-                        if let Ok(parsed) = serde_json::from_str::<OpenAiStreamResponse>(data) {
-                            if let Some(choice) = parsed.choices.first() {
-                                if let Some(content) = &choice.delta.content {
-                                    full_response_content.push_str(content);
-                                    yield StreamChunk {
-                                        content: content.clone(),
-                                    };
-                                }
-                            }
+                        if let Ok(parsed) = serde_json::from_str::<OpenAiStreamResponse>(data)
+                            && let Some(choice) = parsed.choices.first()
+                            && let Some(content) = &choice.delta.content
+                        {
+                            full_response_content.push_str(content);
+                            yield StreamChunk {
+                                content: content.clone(),
+                            };
                         }
                     }
                 }
@@ -1122,10 +1120,10 @@ impl LlmProvider for GmnCliProvider {
             }
             raw_lines.push(line);
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                if val["type"] == "content" {
-                    if let Some(text) = val["text"].as_str() {
-                        final_content.push_str(text);
-                    }
+                if val["type"] == "content"
+                    && let Some(text) = val["text"].as_str()
+                {
+                    final_content.push_str(text);
                 }
             } else {
                 final_content.push_str(line);
@@ -1224,20 +1222,22 @@ impl LlmProvider for GmnCliProvider {
                     }
 
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                        if val["type"] == "content" {
-                            if let Some(content_text) = val["text"].as_str() {
-                                has_yielded = true;
-                                yield StreamChunk {
-                                    content: content_text.to_string(),
-                                };
-                            }
-                        } else if val["type"] == "error" {
-                            if let Some(err_str) = val["error"].as_str() {
-                                if err_str.contains("quota") || err_str.contains("RESOURCE_EXHAUSTED") || err_str.contains("429") || err_str.contains("rate limited") {
-                                    rate_limit_error = Some(err_str.to_string());
-                                    break;
-                                }
-                            }
+                        if val["type"] == "content"
+                            && let Some(content_text) = val["text"].as_str()
+                        {
+                            has_yielded = true;
+                            yield StreamChunk {
+                                content: content_text.to_string(),
+                            };
+                        } else if val["type"] == "error"
+                            && let Some(err_str) = val["error"].as_str()
+                            && (err_str.contains("quota")
+                                || err_str.contains("RESOURCE_EXHAUSTED")
+                                || err_str.contains("429")
+                                || err_str.contains("rate limited"))
+                        {
+                            rate_limit_error = Some(err_str.to_string());
+                            break;
                         }
                     } else {
                         if line.contains("quota") || line.contains("RESOURCE_EXHAUSTED") || line.contains("429") || line.contains("rate limited") {
@@ -1824,6 +1824,102 @@ impl rig_core::completion::CompletionModel for RustyclawCompletionModel {
     }
 }
 
+/// CF Workers AI のモデル別 neurons/M tokens レートから消費 neurons を計算する。
+/// レートは CF 公式ドキュメントの値（2026-05-30 確認）。
+/// 未知のモデルは gemma-4-26b 相当のレートにフォールバック。
+fn calc_cf_neurons(model: &str, prompt_tokens: u32, completion_tokens: u32) -> f64 {
+    // (input_neurons_per_m, output_neurons_per_m)
+    let (input_rate, output_rate): (f64, f64) = if model.contains("qwen3-30b") {
+        (4_625.0, 30_475.0)
+    } else if model.contains("granite") {
+        (1_542.0, 10_158.0)
+    } else {
+        // gemma-4-26b および未知モデルのデフォルト
+        (9_091.0, 27_273.0)
+    };
+    prompt_tokens as f64 * input_rate / 1_000_000.0
+        + completion_tokens as f64 * output_rate / 1_000_000.0
+}
+
+static NEURON_USAGE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+fn record_neuron_usage(neurons: f64) {
+    let _guard = NEURON_USAGE_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap();
+
+    let neuron_path = get_app_dir().join("neuron_usage.json");
+    let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    let mut neurons_used = 0.0;
+
+    if let Some(json) = std::fs::File::open(&neuron_path)
+        .ok()
+        .and_then(|file| serde_json::from_reader::<_, serde_json::Value>(file).ok())
+        && json.get("last_reset_date").and_then(|v| v.as_str()) == Some(&today_utc)
+    {
+        neurons_used = json
+            .get("neurons_used")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+    }
+
+    neurons_used += neurons;
+
+    let updated_json = serde_json::json!({
+        "last_reset_date": today_utc,
+        "neurons_used": neurons_used
+    });
+    if let Ok(serialized) = serde_json::to_string_pretty(&updated_json) {
+        let _ = std::fs::create_dir_all(neuron_path.parent().unwrap());
+        if let Err(e) = std::fs::write(&neuron_path, serialized) {
+            tracing::error!("Failed to write neuron_usage.json: {}", e);
+        }
+    }
+}
+
+pub fn get_neuron_stats() -> serde_json::Value {
+    let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let mut neurons_used = 0.0;
+
+    let neuron_path = get_app_dir().join("neuron_usage.json");
+    if let Some(json) = std::fs::File::open(&neuron_path)
+        .ok()
+        .and_then(|file| serde_json::from_reader::<_, serde_json::Value>(file).ok())
+        && json.get("last_reset_date").and_then(|v| v.as_str()) == Some(&today_utc)
+    {
+        neurons_used = json
+            .get("neurons_used")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+    }
+
+    let now = chrono::Local::now();
+    let mut next_reset = chrono::Local::now()
+        .date_naive()
+        .and_hms_opt(9, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap();
+    if now >= next_reset {
+        next_reset += chrono::Duration::days(1);
+    }
+
+    let remaining_secs = next_reset.signed_duration_since(now).num_seconds();
+    let hours = remaining_secs / 3600;
+    let minutes = (remaining_secs % 3600) / 60;
+    let reset_in = format!("{}h {}m", hours, minutes);
+
+    serde_json::json!({
+        "neurons_used": neurons_used,
+        "quota_limit": 10000.0,
+        "remaining": (10000.0 - neurons_used).max(0.0),
+        "reset_in": reset_in,
+        "next_reset_jst": next_reset.format("%Y-%m-%d %H:%M:%S").to_string()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2398,11 +2494,10 @@ mod tests {
         use rig_core::OneOrMany;
         use rig_core::completion::Message as RigMsg;
         use rig_core::completion::message::{
-            AssistantContent, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
-            UserContent,
+            AssistantContent, Text, ToolResult, ToolResultContent, UserContent,
         };
 
-        let history = vec![
+        let history = [
             RigMsg::User {
                 content: OneOrMany::one(UserContent::Text(Text {
                     text: "hello".to_string(),
@@ -2479,106 +2574,3 @@ mod tests {
     }
 }
 
-/// CF Workers AI のモデル別 neurons/M tokens レートから消費 neurons を計算する。
-/// レートは CF 公式ドキュメントの値（2026-05-30 確認）。
-/// 未知のモデルは gemma-4-26b 相当のレートにフォールバック。
-fn calc_cf_neurons(model: &str, prompt_tokens: u32, completion_tokens: u32) -> f64 {
-    // (input_neurons_per_m, output_neurons_per_m)
-    let (input_rate, output_rate): (f64, f64) = if model.contains("qwen3-30b") {
-        (4_625.0, 30_475.0)
-    } else if model.contains("granite") {
-        (1_542.0, 10_158.0)
-    } else {
-        // gemma-4-26b および未知モデルのデフォルト
-        (9_091.0, 27_273.0)
-    };
-    prompt_tokens as f64 * input_rate / 1_000_000.0
-        + completion_tokens as f64 * output_rate / 1_000_000.0
-}
-
-static NEURON_USAGE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-fn record_neuron_usage(neurons: f64) {
-    let _guard = NEURON_USAGE_LOCK
-        .get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-        .unwrap();
-
-    let neuron_path = get_app_dir().join("neuron_usage.json");
-    let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
-
-    let mut neurons_used = 0.0;
-
-    if neuron_path.exists() {
-        if let Ok(file) = std::fs::File::open(&neuron_path) {
-            if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
-                if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
-                    if date_str == today_utc {
-                        neurons_used = json
-                            .get("neurons_used")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0);
-                    }
-                }
-            }
-        }
-    }
-
-    neurons_used += neurons;
-
-    let updated_json = serde_json::json!({
-        "last_reset_date": today_utc,
-        "neurons_used": neurons_used
-    });
-    if let Ok(serialized) = serde_json::to_string_pretty(&updated_json) {
-        let _ = std::fs::create_dir_all(neuron_path.parent().unwrap());
-        if let Err(e) = std::fs::write(&neuron_path, serialized) {
-            tracing::error!("Failed to write neuron_usage.json: {}", e);
-        }
-    }
-}
-
-pub fn get_neuron_stats() -> serde_json::Value {
-    let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let mut neurons_used = 0.0;
-
-    let neuron_path = get_app_dir().join("neuron_usage.json");
-    if neuron_path.exists() {
-        if let Ok(file) = std::fs::File::open(&neuron_path) {
-            if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
-                if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
-                    if date_str == today_utc {
-                        neurons_used = json
-                            .get("neurons_used")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0);
-                    }
-                }
-            }
-        }
-    }
-
-    let now = chrono::Local::now();
-    let mut next_reset = chrono::Local::now()
-        .date_naive()
-        .and_hms_opt(9, 0, 0)
-        .unwrap()
-        .and_local_timezone(chrono::Local)
-        .unwrap();
-    if now >= next_reset {
-        next_reset = next_reset + chrono::Duration::days(1);
-    }
-
-    let remaining_secs = next_reset.signed_duration_since(now).num_seconds();
-    let hours = remaining_secs / 3600;
-    let minutes = (remaining_secs % 3600) / 60;
-    let reset_in = format!("{}h {}m", hours, minutes);
-
-    serde_json::json!({
-        "neurons_used": neurons_used,
-        "quota_limit": 10000.0,
-        "remaining": (10000.0 - neurons_used).max(0.0),
-        "reset_in": reset_in,
-        "next_reset_jst": next_reset.format("%Y-%m-%d %H:%M:%S").to_string()
-    })
-}

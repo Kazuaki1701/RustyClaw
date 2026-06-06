@@ -37,18 +37,16 @@ pub(crate) fn find_next_session_needing_summary(
 
         // サマリーファイルが過去 10 分以内に更新されていれば再トリガーしない。
         // 生成中（プレースホルダー書き込み後）および完了直後の重複発火を防ぐ。
-        if summary_path.exists() {
-            if let Some(summary_age_secs) = summary_path
+        if summary_path.exists()
+            && let Some(summary_age_secs) = summary_path
                 .metadata()
                 .ok()
                 .and_then(|m| m.modified().ok())
                 .and_then(|sm| now.duration_since(sm).ok())
                 .map(|d| d.as_secs())
-            {
-                if summary_age_secs < 600 {
-                    continue;
-                }
-            }
+            && summary_age_secs < 600
+        {
+            continue;
         }
 
         let needs_summary = if !summary_path.exists() {
@@ -221,25 +219,25 @@ impl CronService {
                     find_next_session_needing_summary(&sessions_dir, &ws_path)
                 {
                     let logger = rustyclaw_storage::SessionLogger::new(&ws_path);
-                    if let Ok(history) = logger.load_history(&safe_session_id) {
-                        if !history.is_empty() {
-                            tracing::info!(
-                                "CronService: Session {} has been idle for 5+ mins and needs summary. Triggering...",
-                                safe_session_id
+                    if let Ok(history) = logger.load_history(&safe_session_id)
+                        && !history.is_empty()
+                    {
+                        tracing::info!(
+                            "CronService: Session {} has been idle for 5+ mins and needs summary. Triggering...",
+                            safe_session_id
+                        );
+                        let event = SystemEvent::IncomingMessage {
+                            session_id: format!("cron:session-summary:{}", safe_session_id),
+                            user_id: "cron".to_string(),
+                            channel_id: "cron".to_string(),
+                            content: "session-summary".to_string(),
+                            priority: Priority::Background,
+                        };
+                        if let Err(e) = bus_summary.publish(event) {
+                            tracing::error!(
+                                "CronService: Failed to publish Session Summary event: {:#}",
+                                e
                             );
-                            let event = SystemEvent::IncomingMessage {
-                                session_id: format!("cron:session-summary:{}", safe_session_id),
-                                user_id: "cron".to_string(),
-                                channel_id: "cron".to_string(),
-                                content: "session-summary".to_string(),
-                                priority: Priority::Background,
-                            };
-                            if let Err(e) = bus_summary.publish(event) {
-                                tracing::error!(
-                                    "CronService: Failed to publish Session Summary event: {:#}",
-                                    e
-                                );
-                            }
                         }
                     }
                 }
@@ -552,7 +550,7 @@ mod tests {
         let result2 = find_next_session_needing_summary(&sessions_dir, ws.path());
         assert!(result2.is_some());
         // 1回の呼び出しで返るのは必ず1件
-        assert_eq!(result.unwrap().len() > 0, true);
+        assert!(!result.unwrap().is_empty());
     }
 
     #[test]
