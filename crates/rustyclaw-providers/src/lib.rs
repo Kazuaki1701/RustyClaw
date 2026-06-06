@@ -784,7 +784,8 @@ impl CloudflareEmbeddingClient {
 /// 初回呼び出し時にモデルファイルをダウンロード・キャッシュする (~30MB)。
 #[derive(Clone)]
 pub struct LocalEmbeddingClient {
-    model: std::sync::Arc<fastembed::TextEmbedding>,
+    // fastembed 5 の embed は &mut self を要求するため Mutex で包む
+    model: std::sync::Arc<std::sync::Mutex<fastembed::TextEmbedding>>,
 }
 
 impl LocalEmbeddingClient {
@@ -792,13 +793,13 @@ impl LocalEmbeddingClient {
     /// cache_dir: モデルキャッシュ先ディレクトリ（例: `~/.rustyclaw/models/`）。
     pub fn new(cache_dir: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
         let model = fastembed::TextEmbedding::try_new(
-            fastembed::InitOptions::new(fastembed::EmbeddingModel::MLE5Small)
+            fastembed::InitOptions::new(fastembed::EmbeddingModel::MultilingualE5Small)
                 .with_show_download_progress(true)
                 .with_cache_dir(cache_dir.as_ref().to_path_buf()),
         )
         .map_err(|e| anyhow::anyhow!("fastembed init failed: {}", e))?;
         Ok(Self {
-            model: std::sync::Arc::new(model),
+            model: std::sync::Arc::new(std::sync::Mutex::new(model)),
         })
     }
 
@@ -810,7 +811,10 @@ impl LocalEmbeddingClient {
         let owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
         let model = std::sync::Arc::clone(&self.model);
         tokio::task::spawn_blocking(move || {
-            model
+            let mut guard = model
+                .lock()
+                .map_err(|e| anyhow::anyhow!("fastembed mutex poisoned: {}", e))?;
+            guard
                 .embed(owned, None)
                 .map_err(|e| anyhow::anyhow!("fastembed embed failed: {}", e))
         })
