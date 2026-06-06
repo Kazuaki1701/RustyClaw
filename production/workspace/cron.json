@@ -51,7 +51,7 @@
       "type": "cron",
       "expression": "04:45"
     },
-    "prompt": "Use the 'karakeep' skill to parse user interests from USER.md, match them against recent bookmarks, apply the '_recommended' tag using '502_karakeep-tag-items.sh', and write the standardized log to memory/logs/YYYY-MM-DD.md.🌸",
+    "prompt": "Use the 'karakeep' skill to parse user interests from USER.md, match them against recent bookmarks, apply the '_recommended' tag using 'skills/karakeep/scripts/502_karakeep-tag-items.sh', and write the standardized log to memory/logs/YYYY-MM-DD.md.🌸",
     "channel_id": "1491909716945928392"
   },
   {
@@ -62,7 +62,7 @@
       "type": "cron",
       "expression": "04:00"
     },
-    "prompt": "Use the 'karakeep' skill to run safe RSS auto-cleanup using '501_karakeep-cleanup.sh', and write the standardized log to memory/logs/YYYY-MM-DD.md.",
+    "prompt": "Use the 'karakeep' skill to run safe RSS auto-cleanup using 'skills/karakeep/scripts/501_karakeep-cleanup.sh', and write the standardized log to memory/logs/YYYY-MM-DD.md.",
     "channel_id": "cron"
   }
 ]

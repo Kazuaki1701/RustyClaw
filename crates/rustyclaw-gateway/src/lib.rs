@@ -699,24 +699,6 @@ impl Gateway {
             tool_registry.register(mcp_tool);
         }
 
-
-
-        // Obsidian ネイティブツール登録
-        if let Some(o) = config.tools.obsidian.as_ref().filter(|o| o.enabled) {
-            if !o.host.is_empty() && !o.api_key.is_empty() {
-                tool_registry.register(Arc::new(rustyclaw_tools::ObsidianSearchTool::new(
-                    o.host.clone(), o.api_key.clone(),
-                )));
-                tool_registry.register(Arc::new(rustyclaw_tools::ObsidianReadTool::new(
-                    o.host.clone(), o.api_key.clone(),
-                )));
-                tool_registry.register(Arc::new(rustyclaw_tools::ObsidianWriteTool::new(
-                    o.host.clone(), o.api_key.clone(),
-                )));
-                tracing::info!("Registered native Obsidian tools.");
-            }
-        }
-
         // Brave Search ネイティブツール登録
         if let Some(b) = config.tools.brave_search.as_ref().filter(|b| b.enabled) {
             if !b.api_key.is_empty() {

@@ -135,7 +135,7 @@
   - `509_delete-gmail.sh`（`_ai-agent` ラベル存在検証ガード内蔵）。
   - `GwsGmailTool`, `GwsGmailDeleteTool` 構造体およびテストの削除。
 
-- `[ ]` **4. Obsidian 操作の統一スキル化（Phase D）**
+- `[x]` **4. Obsidian 操作の統一スキル化（Phase D）**
   - `skills/obsidian/` スキルフォルダを新設。
   - `507_obsidian-ops.sh`（search/read/write/append サブコマンド統合、`$vault:obsidian-api-key` 注入）。
   - `ObsidianSearchTool`, `ObsidianReadTool`, `ObsidianWriteTool` および `percent_encode()` の削除。
