@@ -1434,9 +1434,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let model = RustyclawCompletionModel::new(self.config.clone(), purpose, session_id);
         let usage_sink = model.usage_sink();
 
+        // max_turns を明示設定。未設定時は usize::default()=0 となり tool call 1往復後に MaxTurnsError になる (rig-core#0.38)
         let agent = AgentBuilder::new(model)
             .preamble(&system_context)
             .tool_server_handle(tool_handle)
+            .default_max_turns(20)
             .build();
 
         // プロバイダーメッセージを rig メッセージ形式に変換
