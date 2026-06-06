@@ -779,6 +779,46 @@ impl CloudflareEmbeddingClient {
     }
 }
 
+/// fastembed (ONNX Runtime) を使ったローカル埋め込みクライアント。
+/// `intfloat/multilingual-e5-small` (384 次元) をローカル推論する。
+/// 初回呼び出し時にモデルファイルをダウンロード・キャッシュする (~30MB)。
+#[derive(Clone)]
+pub struct LocalEmbeddingClient {
+    model: std::sync::Arc<fastembed::TextEmbedding>,
+}
+
+impl LocalEmbeddingClient {
+    /// ONNX モデルを初期化する。
+    /// cache_dir: モデルキャッシュ先ディレクトリ（例: `~/.rustyclaw/models/`）。
+    pub fn new(cache_dir: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+        let model = fastembed::TextEmbedding::try_new(
+            fastembed::InitOptions::new(fastembed::EmbeddingModel::MLE5Small)
+                .with_show_download_progress(true)
+                .with_cache_dir(cache_dir.as_ref().to_path_buf()),
+        )
+        .map_err(|e| anyhow::anyhow!("fastembed init failed: {}", e))?;
+        Ok(Self {
+            model: std::sync::Arc::new(model),
+        })
+    }
+
+    /// テキストをベクトル化する（384 次元）。空の入力は即座に `Ok(vec![])` を返す。
+    pub async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+        let owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
+        let model = std::sync::Arc::clone(&self.model);
+        tokio::task::spawn_blocking(move || {
+            model
+                .embed(owned, None)
+                .map_err(|e| anyhow::anyhow!("fastembed embed failed: {}", e))
+        })
+        .await
+        .context("LocalEmbeddingClient: spawn_blocking panicked")?
+    }
+}
+
 /// rig-core の EmbeddingModel トレイトを実装したラッパー。
 /// CloudflareEmbeddingClient（OpenAI互換 / CF Workers AI）を rig の VectorStore と統合する。
 #[derive(Clone)]
@@ -2208,6 +2248,17 @@ mod tests {
         );
         let sink = model.usage_sink();
         assert!(sink.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires fastembed model download (~30MB) on first run; cached after"]
+    async fn test_local_embedding_client_embed_dims() {
+        let cache_dir = std::env::temp_dir().join("rustyclaw_fastembed_test");
+        let client = LocalEmbeddingClient::new(&cache_dir).expect("model init failed");
+        let result = client.embed(&["Hello world", "こんにちは"]).await.expect("embed failed");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].len(), 384, "expected 384 dims for multilingual-e5-small");
+        assert_ne!(result[0], result[1], "different texts should produce different vectors");
     }
 }
 
