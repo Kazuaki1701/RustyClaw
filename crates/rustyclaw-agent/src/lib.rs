@@ -1440,9 +1440,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
 /// rig-core InMemoryVectorStore を使った統合 RAG エンジン。
 /// SQLite（永続化）と InMemoryVectorStore（高速検索）のハイブリッド構成。
-/// source 情報は ID プレフィックス（"memory::N", "session::SESSION_ID"）で管理する。
+/// source 情報は SQLite の source 列を source_map に保持し、検索時に参照する。
 pub struct UnifiedRagEngine {
     store: std::sync::Mutex<InMemoryVectorStore<String>>,
+    /// id → source のマッピング（DB の source 列を保持）
+    source_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     model: rustyclaw_providers::CloudflareEmbeddingModel,
 }
 
@@ -1450,6 +1452,7 @@ impl UnifiedRagEngine {
     pub fn new(model: rustyclaw_providers::CloudflareEmbeddingModel) -> Self {
         Self {
             store: std::sync::Mutex::new(InMemoryVectorStore::default()),
+            source_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             model,
         }
     }
@@ -1458,10 +1461,13 @@ impl UnifiedRagEngine {
     pub fn rebuild_from_db(&self, db: &rustyclaw_storage::DbManager) -> anyhow::Result<()> {
         let rows = db.load_all_embeddings_with_ids()?;
         let mut store = self.store.lock().unwrap();
+        let mut smap = self.source_map.lock().unwrap();
         *store = InMemoryVectorStore::default();
+        smap.clear();
         let documents: Vec<(String, String, OneOrMany<Embedding>)> = rows
             .into_iter()
-            .map(|(id, _source, text, vec_f32)| {
+            .map(|(id, source, text, vec_f32)| {
+                smap.insert(id.clone(), source);
                 let emb = Embedding {
                     document: text.clone(),
                     vec: vec_f32.iter().map(|&x| x as f64).collect(),
@@ -1477,7 +1483,7 @@ impl UnifiedRagEngine {
     pub fn add_one(
         &self,
         id: &str,
-        _source: &str,
+        source: &str,
         _session_id: Option<&str>,
         text: &str,
         vec_f32: &[f32],
@@ -1488,6 +1494,7 @@ impl UnifiedRagEngine {
         };
         let mut store = self.store.lock().unwrap();
         store.add_documents_with_ids([(id.to_string(), text.to_string(), OneOrMany::one(emb))]);
+        self.source_map.lock().unwrap().insert(id.to_string(), source.to_string());
     }
 
     /// top_k 件の (source, text, score) を返す。
@@ -1517,10 +1524,12 @@ impl UnifiedRagEngine {
                 .collect()
         };
 
+        let smap = self.source_map.lock().unwrap();
         Ok(id_scores.into_iter().filter_map(|(score, id)| {
-            let source = if id.starts_with("memory::") { "memory".to_string() }
-                else if id.starts_with("session::") { "session".to_string() }
-                else { "unknown".to_string() };
+            let source = smap.get(&id).cloned().unwrap_or_else(|| {
+                tracing::warn!("UnifiedRagEngine::search: source not found for id={}", id);
+                "unknown".to_string()
+            });
             let text = text_map.get(&id)?.clone();
             Some((source, text, score))
         }).collect())
