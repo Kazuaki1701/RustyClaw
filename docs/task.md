@@ -22,9 +22,9 @@
 
 > 実装状況により今後の計画に与える影響が大きい案件。
 
-- `[ ]` **Phase 41-1: Dashboard チャット RAG 活用（アプローチ C ハイブリッド）** (#12)
-  - 設計書: [2026-06-07-dashboard-rag-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-07-dashboard-rag-design.md)
-  - 計画書: [2026-06-07-dashboard-rag-implementation.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-07-dashboard-rag-implementation.md)
+- `[x]` **Phase 41-1: Dashboard チャット RAG 活用（アプローチ C ハイブリッド）** (#12)
+  - 設計書: [2026-06-07-dashboard-rag-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/plans/2026-06-07-dashboard-rag-design.md)
+  - 計画書: [2026-06-07-dashboard-rag-implementation.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/plans/2026-06-07-dashboard-rag-implementation.md)
   - ADR: [001-dashboard-rag-approach-c-hybrid.md](file:///home/kazuaki/Projects/RustyClaw/docs/adr/001-dashboard-rag-approach-c-hybrid.md)
 
 ---
