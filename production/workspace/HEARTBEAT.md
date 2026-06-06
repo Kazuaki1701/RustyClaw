@@ -1,70 +1,39 @@
 # Heartbeat — Memory & Awareness
 
 You are running a periodic background check (every ~30 min). Your goal is to
-maintain awareness of recent activity and act on anything that needs attention.
-
-Not every check needs to run every time. Use `memory/heartbeat-state.json` to
-track when you last ran each check, and rotate through them intelligently:
-
-```json
-{
-  "lastChecks": {
-    "activityReview": "2026-03-09T12:00:00Z",
-    "memoryMaintenance": "2026-03-09T09:00:00Z",
-    "calendar": "2026-03-09T12:00:00Z",
-    "email": "2026-03-09T12:00:00Z",
-    "weather": "2026-03-09T06:00:00Z",
-    "karakeepPatrol": "2026-03-09T06:00:00Z",
-    "lastUserContact": "2026-03-09T12:00:00Z"
-  }
-}
-```
+review recent activity and act only when something genuinely needs attention.
 
 ## Quiet hours (0:00–4:59)
 
 Check the current local time (use `config.timezone`).
 During **0:00–4:59**, only act on truly urgent items (critical emails, imminent deadlines).
-Do NOT send proactive check-ins, weather updates, or casual reminders during quiet hours.
-
-## How to notify
-
-RustyClaw automatically posts the agent's text response directly to the Discord home channel. If any notifications or alerts are required, simply include the notification text as part of your final response content. No special tool calls are required to post messages to Discord.
+Do NOT send proactive check-ins or casual reminders during quiet hours.
 
 ## Step 1: Review recent activity (every run)
 
-Read these sources to build a picture of what's been happening:
+The user message contains a `Recent activity digest` — read it to understand
+what has happened since the last heartbeat. Also consult `MEMORY.md` (already
+in your context) for background.
 
-1. `memory/heartbeat-digest.md` — auto-generated session deltas since last run
-2. Most recent files in `memory/summaries/` — session summaries (decisions, errors, pending work)
-3. `memory/logs/YYYY-MM-DD.md` — daily activity log
-
-As you review, look for:
+Look for:
 - **Incomplete work** — tasks started but not finished, or explicitly "later" / "TODO"
-- **Errors or failures** — sessions that ended with unresolved errors, failed builds, broken tests
-- **New decisions or preferences** — things the user said worth remembering long-term
-- **Anything unusual** — patterns that seem off, or context you think the user would want to know about
+- **Errors or failures** — sessions that ended with unresolved errors or failed builds
+- **New decisions or preferences** — things worth noting
+- **Anything unusual** — patterns that seem off
 
-## Step 2: Memory maintenance (every few hours)
+## Step 2: Weather alert (pre-checked)
 
-Periodically (2–4 times per day, not every run):
-
-1. Review recent `memory/summaries/` and `memory/logs/` files
-2. Update `MEMORY.md` with distilled learnings from recent sessions
-3. Remove outdated info from `MEMORY.md`
-4. If recent sessions reveal new interests, add them to `USER.md` Interests section
-
-Think of it like reviewing your journal and updating your mental model.
-Session summaries are raw notes; MEMORY.md is curated wisdom.
-
-Check `lastChecks.memoryMaintenance` — if less than 3 hours ago, skip.
+If the user message contains a weather alert (rain, extreme temperature, etc.),
+include a concise notification in your response.
+The weather data is already fetched by the system — do not attempt to fetch it yourself.
 
 ## Step 3: Calendar & Email check (every run)
 
-Check these on **every heartbeat** — they change frequently and the user needs timely awareness.
+Check these on every heartbeat — they change frequently and the user needs timely awareness.
 
 ### Calendar
 - Activate the `calendar` skill (`[use-skill: calendar]`).
-- Execute the script `skills/calendar/scripts/505_get-calendar.sh` via the `run_workspace_script` tool (no arguments required).
+- Execute the script `skills/calendar/scripts/calendar-ops.sh` via the `run_workspace_script` tool with arguments `["list_family"]`.
 - If an event starts within 30 minutes and not yet notified, include a reminder in your response.
 - For tomorrow's events: mention once in the evening — don't repeat in subsequent runs.
 - Note any scheduling conflicts.
@@ -73,60 +42,60 @@ Check these on **every heartbeat** — they change frequently and the user needs
 - Activate the `gmail` skill (`[use-skill: gmail]`).
 - Execute the script `skills/gmail/scripts/506_get-gmail.sh` via the `run_workspace_script` tool (no arguments required).
 - If urgent or important unread emails exist, summarize and include in your response.
+- **費用発生の可能性がある案件は必ず Important として通知する。**
+  - 例: 年会費・有料化・サブスクリプション請求・料金プラン変更・未払い通知・カード請求確定など
+  - 金額・サービス名・期日をスニペットから読み取れる範囲で添えること
 - Skip routine/automated emails (newsletters, CI notifications, etc.).
 
 If the required skills or scripts are not available, skip silently.
 
-## Step 4: Weather check (2–3 times per day)
+## Step 4: Check-in if silent too long
 
-- Activate the `weather` skill (`[use-skill: weather]`).
-- Execute the script `skills/weather/scripts/504_get-weather.sh` via the `run_workspace_script` tool (no arguments required).
-- Morning, midday, and evening are good times to check.
-- Notify if: rain/snow is expected within 60 minutes, extreme temperatures are forecasted, or significant changes occur.
-- Check `lastChecks.weather` — if it has been less than 4 hours, skip.
+If it's been **8+ hours** since the last user interaction (check
+`lastChecks.lastUserContact` in `memory/heartbeat-state.json` and compare with
+`[now:]`), send a short, natural check-in — only during waking hours.
+Keep it to one sentence. Do NOT check in during quiet hours.
 
-## Step 5: Check-in if silent too long
+## Step 5: Proactive work
 
-If it's been **8+ hours** since the last user interaction (check `lastChecks.lastUserContact` and recent session timestamps), send a lightweight check-in:
-- "Anything you need?" / "Quiet day — let me know if anything comes up"
-- Keep it short and natural, not robotic
-- Only during waking hours (respect quiet hours above)
-- Do NOT check in if the user has been actively chatting in other sessions
-
-## Step 6: Proactive work (rotate)
-
-- If a session had unresolved errors or failed tasks → notify the user with context
+- If a session had unresolved errors or failed tasks → notify with context
 - If work was left incomplete and enough time has passed → send a reminder
-- If you spotted something the user should know about → tell them
+- If you spotted something the user should know → tell them
 
-### Background tasks (no permission needed)
-- Read and organize memory files
-- Check on projects (git status, pending PRs, etc.)
-- Update documentation that's gone stale
-- Clean up old or redundant memory entries
+**Prohibited in Heartbeat:**
+- Do NOT run the `topic-patrol` skill
+- Do NOT perform web searches to explore or discover topics
+- Do NOT deliver findings from `patrol/findings.md`
+- Topic Patrol (explore and deliver) runs as a separate scheduled job — never from Heartbeat
 
-### Use your judgment
-You have full context of the user's recent activity. If something feels like it needs
-attention — even if it doesn't fit neatly into the categories above — act on it.
-The user trusts you to be a proactive assistant, not a passive checklist runner.
+## Step 6: Response
 
-## Step 7: Karakeep Patrol (periodic)
+Classify every finding before responding:
 
-1. Activate the `karakeep` skill (`[use-skill: karakeep]`).
-2. Execute the script `skills/karakeep/scripts/503_karakeep-list.sh` via the `run_workspace_script` tool with arguments `["20"]` to fetch recent bookmarks.
-3. Filter items tagged `_bookmarked` or `_doitlater`.
-4. For `_doitlater`: extract actionable tasks and prepare reminders.
-5. For `_bookmarked`: evaluate applicability to K-sama's environment and Obsidian.
-6. If a valuable use case or configuration is identified, prepare a summary for the next briefing or notify immediately if it's a critical tool.
+| Severity | Definition | Examples |
+|---|---|---|
+| **Important** | Requires immediate user attention | Weather warning, urgent email, event within 30 min, unresolved system failure |
+| **Informational** | Worth noting but not urgent | Routine calendar, non-urgent email, maintenance done |
+| **Nothing** | No findings | — |
 
-Check `lastChecks.karakeepPatrol` — if less than 12 hours ago, skip.
+---
 
-## Step 8: Response
+**If all findings are Informational or Nothing → Silent run:**
 
-If no critical issues and no notifications sent:
-- **Respond with `HEARTBEAT_OK`** (pipeline signal)
-- **Do NOT post `HEARTBEAT_OK` to Discord.** (Per directive: "Heartbeat OK の場合は、Discord への報告不要")
+Respond with exactly:
 
-If critical issues were found or notifications sent, provide a concise summary.
+```
+HEARTBEAT_OK
+```
 
-After responding, update `memory/heartbeat-state.json` with timestamps for checks you ran.
+**Nothing else. No greetings, no summaries, no "quiet day" remarks.**
+`HEARTBEAT_OK` is a pipeline signal. The system suppresses it from Discord automatically.
+
+---
+
+**If any finding is Important → Discord notification:**
+
+- Write a concise alert (2–5 lines, Japanese).
+- **Do NOT include `HEARTBEAT_OK` anywhere in the response.**
+- The absence of `HEARTBEAT_OK` is the signal that triggers Discord delivery.
+- Never mix notification text with `HEARTBEAT_OK` in the same response.

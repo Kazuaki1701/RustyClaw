@@ -510,13 +510,39 @@ impl HeartbeatService {
              &forecast_days=1"
         );
         let parsed_val: serde_json::Value = match reqwest::get(&url).await {
-            Ok(resp) => match resp.json().await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!("HeartbeatService: Weather Patrol response parse failed: {}", e);
-                    return Ok(None);
+            Ok(resp) => {
+                let status = resp.status();
+                match resp.text().await {
+                    Ok(body) => {
+                        if !status.is_success() {
+                            let snippet: String = body.chars().take(300).collect();
+                            tracing::error!(
+                                "HeartbeatService: Weather Patrol HTTP {}: {}",
+                                status, snippet
+                            );
+                            return Ok(None);
+                        }
+                        match serde_json::from_str::<serde_json::Value>(&body) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let snippet: String = body.chars().take(300).collect();
+                                tracing::error!(
+                                    "HeartbeatService: Weather Patrol JSON parse failed (HTTP {}): {} — body: {}",
+                                    status, e, snippet
+                                );
+                                return Ok(None);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "HeartbeatService: Weather Patrol failed to read response body (HTTP {}): {}",
+                            status, e
+                        );
+                        return Ok(None);
+                    }
                 }
-            },
+            }
             Err(e) => {
                 tracing::error!("HeartbeatService: Weather Patrol API fetch failed: {}", e);
                 return Ok(None);

@@ -278,8 +278,11 @@ impl CronService {
                                         }
 
                                         tracing::info!("CronService: Triggering dynamic cron job ({})...", job.name);
+                                        let session_id = format!("cron:{}", job.id);
+                                        let display_name = format!("{} ({})", job.name, expr);
+                                        crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &display_name);
                                         let event = SystemEvent::IncomingMessage {
-                                            session_id: format!("cron:{}", job.id),
+                                            session_id,
                                             user_id: "cron".to_string(),
                                             channel_id: job.channel_id.clone(),
                                             content: job.prompt.clone(),
@@ -319,8 +322,10 @@ impl CronService {
                                     }
 
                                     tracing::info!("CronService: Triggering dynamic interval job ({})...", job.name);
+                                    let session_id = format!("cron:{}", job.id);
+                                    crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &job.name);
                                     let event = SystemEvent::IncomingMessage {
-                                        session_id: format!("cron:{}", job.id),
+                                        session_id,
                                         user_id: "cron".to_string(),
                                         channel_id: job.channel_id.clone(),
                                         content: job.prompt.clone(),

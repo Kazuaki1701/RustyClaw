@@ -5,14 +5,14 @@
     "enabled": true,
     "trigger": {
       "type": "cron",
-      "expression": "05:00"
+      "expression": "05:05"
     },
     "prompt": "daily-briefing skill to execute. Aggregate yesterday's session summaries, today's calendar, email, and tasks into a prioritized briefing. Additionally, please include the schedules for あゆみ様 (ayabe.ayumi@gmail.com) and ゆうき様 (28hs0ibka0oa84810dupunrskk@group.calendar.google.com) from their shared calendars.🌸",
     "channel_id": "1491909716945928392"
   },
   {
     "id": "topic-patrol-explore",
-    "name": "Topic Patrol (Explore / 深夜探索)",
+    "name": "Topic Patrol Explore",
     "enabled": true,
     "trigger": {
       "type": "cron",
@@ -23,18 +23,18 @@
   },
   {
     "id": "topic-patrol-deliver",
-    "name": "Topic Patrol (Deliver / 朝の配信)",
+    "name": "Topic Patrol Deliver",
     "enabled": true,
     "trigger": {
       "type": "cron",
-      "expression": "09:00"
+      "expression": "05:35"
     },
     "prompt": "Run the topic-patrol skill.\n\n配信: 許可",
     "channel_id": "1485590981251432560"
   },
   {
     "id": "vitals-morning",
-    "name": "Vital Check Morning (06:00)",
+    "name": "Vital Check Morning",
     "enabled": true,
     "trigger": {
       "type": "cron",
@@ -45,7 +45,7 @@
   },
   {
     "id": "vitals-night",
-    "name": "Vital Check Night (22:00)",
+    "name": "Vital Check Night",
     "enabled": true,
     "trigger": {
       "type": "cron",
@@ -67,7 +67,7 @@
   },
   {
     "id": "karakeep-cleanup",
-    "name": "Karakeep Auto Cleanup (2 weeks stale RSS)",
+    "name": "Karakeep Auto Cleanup",
     "enabled": true,
     "trigger": {
       "type": "cron",
