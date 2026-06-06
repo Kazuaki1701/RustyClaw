@@ -123,6 +123,10 @@ pub struct EmbeddingConfig {
     /// ローカルモデルは intfloat/multilingual-e5-small (384 次元)。
     #[serde(default)]
     pub use_local_embedding: bool,
+    /// Heartbeat 専用の RAG top_k（省略時は top_k にフォールバック）。
+    /// Heartbeat は固定 Step を実行するだけなので top_k=5 は過剰（ISSUE-30）。
+    #[serde(default)]
+    pub heartbeat_top_k: Option<usize>,
 }
 
 /// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
@@ -986,6 +990,28 @@ mod tests {
         let cfg: EmbeddingConfig =
             serde_json::from_str(r#"{"use_local_embedding": true}"#).unwrap();
         assert!(cfg.use_local_embedding);
+    }
+
+    #[test]
+    fn test_embedding_config_heartbeat_top_k() {
+        let json = r#"{
+            "enabled": true,
+            "use_local_embedding": true,
+            "api_endpoint": "",
+            "api_key": "",
+            "model": "intfloat/multilingual-e5-small",
+            "dimensions": 384,
+            "top_k": 5,
+            "similarity_threshold": 0.6,
+            "heartbeat_top_k": 2
+        }"#;
+        let cfg: EmbeddingConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.heartbeat_top_k, Some(2));
+
+        // フィールドがない場合は None
+        let json_without = r#"{"enabled": true}"#;
+        let cfg2: EmbeddingConfig = serde_json::from_str(json_without).unwrap();
+        assert_eq!(cfg2.heartbeat_top_k, None);
     }
 
     #[test]
