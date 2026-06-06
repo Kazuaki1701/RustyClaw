@@ -4,33 +4,51 @@ This file contains curated long-term memory. Keep concise (< 5KB).
 Remove outdated entries. Prefer facts over narratives.
 
 ## User Preferences
-- **Identity & Mission:** 名前は GeminiClaw（GEMI）。K様の専属個人秘書として、スケジュール管理、メール整理、知識蓄積等のワークフローを支援し、K様が重要事項に集中できる環境を整えることが使命。 [2026-05-22]
-- **Karakeep Config:** APIキー `KARAKEEP_API_KEY`、サーバーURL `KARAKEEP_SERVER_ADDR` (http://192.168.1.2:33000) を使用。 [2026-05-04]
-- **Restart Reporting:** 再起動指示を受けた際は、速やかに再起動し、準備が整い次第その旨を報告する。 [2026-05-02]
-- **Cloudflare & Obsidian Focus:** Cloudflare (Workers AI, AI Gateway), Wrangler CLI, Obsidian Local REST API への関心。 [2026-05-01]
-- **Boss Patterns:** K様の判断基準、こだわり、行動ルールを `memory/GEMI/BOSS_PATTERNS.md` に集約。 [2026-04-05]
+- **Identity & Mission:** 名前は GEMI。K様の専属個人秘書として、スケジュール管理、メール整理、知識蓄積等のワークフローを支援する。 [2026-05-22]
 - **Preferred language:** Japanese (日本語) [2026-03-22]
-- **1Password:** 当面導入予定はないため、情報更新は不要。 [2026-04-28]
-- **Link Quality:** Tech Patrol では各アイテムごとに必ず情報ソース（URL）を付与し、有効性を検証する。[2026-04-29]
- 
-## Ongoing Tasks
-- **System Health Check (2026-05-28):** Obsidian REST API、Karakeep API、Google Calendar/Gmail の各接続が正常であることを本日も実機テストにより確認済み。 [2026-05-28]
-- **Obsidian REST API Skill:** Local REST APIを介したノート操作（読込・検索・追記・更新・Dataview）が可能。 [2026-05-22]
-- **Vitals Coach Skill:** Garminデータの分析・アドバイス。毎日 06:00, 18:00, 23:00 定期チェック。 [2026-04-06]
-- **FE Exam:** 2026-05-10に実施済み。結果待ち。 [2026-05-11]
-- **Karakeep Auto Recommendation:** 毎朝04:45に `_recommended` タグを付与するCronジョブ運用中。 [2026-05-11]
- 
-## Technical Insights
-- **Agent Environment:** `sandboxEnv` 変更の反映にはサービス再起動 (`sudo systemctl restart rustyclaw`) が必要. [2026-04-11]
-- **Obsidian MCP:** SSE endpoint は `http://192.168.1.2:8000/sse` (httpUrl指定必須). [2026-04-11]
-- **Latest Tech (2026-05-21):** Gemma 4/Llama 4 (Thinking対応), Google AI Pro (リブランド), Obsidian Bases (v1.12), Cloudflare Agentic Cloud, MCP v3.1, Linux 7.0 (Rust). [2026-05-21]
- 
-## Important Context
-- **Knowledge Base:** 記憶を `memory/GEMI/` に集約し、日次ログ・要約は `memory/logs/`、`memory/summaries/` に完全移行。 [2026-05-29]
-- **Workspace:** マウント先 `memory/ObsidianVault`、ファイル体系は仕様書 `docs/specs/03_workspace_spec.md` に準拠。 [2026-04-10]
-- **Communication:** Discord 2000文字制限配慮。メンションなしもGEMI宛。 [2026-04-27]
-- **Notification集約:** ブリーフィングは `#daily-briefing`、アラートは `#一般`。 [2026-04-10]
+- **Boss Patterns:** K様の判断基準・こだわり・行動ルールは `memory/GEMI/BOSS_PATTERNS.md` に集約。 [2026-04-05]
 - **Base Locations:** 居住地（大森駅）、勤務地（本厚木駅）。経路は大森-本厚木（相鉄・小田急）。 [2026-04-10]
-- **Vitals Status:** 2026-05-21 06:00時点：Body Battery 47%。睡眠の質が課題。 [2026-05-21]
-- **Today's Status:** 2026-05-28(木): 15:00過ぎ。午後の業務時間中。システム稼働正常。 [2026-05-28]
-- **Quiet Hours:** 0:00 - 4:59 (Asia/Tokyo). 至急案件のみ対応。 [2026-05-08]
+
+## Communication & Information Protocols (CRITICAL)
+これらのプロトコルは、情報提供における「信頼性」と「可読性」を確保するための最重要ルールです。
+
+### 🔗 Link Citation Protocol (MUST FOLLOW)
+1. **有効性確認（Mandatory）**: 紹介するすべてのURLリンクについて、必ずアクセス可否の確認（`web_fetch`等の実行）を義務化する。情報源の有効性検証を最優先事項とする。
+2. **出典明記レベル**: 根拠となる情報は、「具体的なページ（完全URL）」まで遡って提供することを徹底する。
+3. **引用形式**: 「**[取得したページタイトル](完全なURL)**」の形式で表示することを標準とする。
+
+### 💬 General Communication Rules
+- **Discord:** 2000文字制限配慮。メンションなしも GEMI 宛として認識する。 [2026-04-27]
+- **Notification Channels:** ブリーフィングは `#daily-briefing`、アラートは `#一般`。 [2026-04-10]
+
+## Ongoing Tasks & Automation Schedule
+- **Calendar Management:** Google Calendar APIを使用。定型的なイベントは自動で読み取り、衝突がないか確認する。
+- **Vitals Data Analysis:** Garminデータ分析が毎日 06:00・22:00 の2回実行される（Home Assistant経由）。 [2026-05-30]
+- **Karakeep Automation:**
+    - 毎朝 04:45 にブックマークに対し `_recommended` タグを自動付与するCronジョブが運用されている。 [2026-05-31]
+    - 定期的なメンテナンスとして、RSSステータスに応じたクリーンアップ処理（Karakeep Auto Cleanup）も実行される。
+- **System Workflow Jobs (Cron):** ワークフロー維持のため複数の自動タスクがスケジュールされている。
+    - `Topic Patrol`: 定期的な情報巡回・検証を行う。
+    - `Daily Briefing`: 日次の要約やブリーフィングを生成する。
+- **FE Exam (資格試験):** 2026-06-13に基本情報技術者試験（FE）を受験予定。 [2026-05-13]
+
+## Technical Insights & Capabilities
+- **Agent Runtime:** RustyClaw（Raspberry Pi 4, aarch64）。設定変更反映はサービス再起動 (`sudo systemctl restart rustyclaw`) が必要。 [2026-05-30]
+- **Core Functionality:** 単なるLLMではなく、複数のAPI/ツール群を組み合わせて動作する統合システムである。複雑なタスク実行もAPI連携によりシミュレーション可能。
+- **Available APIs & Tools:**
+    - **Google Workspace API:** カレンダー（予定の参照・書き込み）、Gmail（未読メール検索など）。
+    - **Knowledge Base Access:** Obsidian (Local REST API)、長期記憶 (`memory_search`) を活用した情報読み取り、メモ記録。
+    - **Web Access:** `web_search` (最新トピック検索)、`web_fetch` (記事内容取得)。
+    - **Specific Tools:** Karakeep（ブックマーク管理）、YOLP API（天気）。
+- **CF Neurons:** Cloudflare Workers AI の無料枠 is 10,000 neurons/日。09:00 JST リセット。dev/prod で共有のため枯渇しやすい。 [2026-05-30]
+- **Calendar Access:** 現状、外部カレンダーの参照には具体的な名称やURLなど、詳細な識別子が必要。単なる名前だけではアクセスが困難な場合がある。
+
+### 📧 Gmail Search Protocols
+*   **基本検索条件 (General):** Google標準オペレーター (`is:unread`, `from:`, `subject:`) を組み合わせることで、目的のメールをピンポイントで抽出する。
+*   **定型未読チェッククエリ (Routine Check):** 緊急性の高い直近の情報に絞り込み、負荷を軽減するため以下の形式を使用する。
+    - **`is:unread newer_than:X max:Y`**: 「未読」かつ「直近X時間以内」のメールを最大Y件まで取得する。（例：`is:unread newer_than:1h max:5`）
+
+## Important Context
+- **Knowledge Base Structure:** `memory/GEMI/` (知識)、日次ログ: `memory/logs/`、要約: `memory/summaries/`。 [2026-05-29]
+- **Quiet Hours:** 0:00–4:59 (Asia/Tokyo). 至急案件のみ対応. [2026-05-08]
+- **Karakeep Tags:** `_bookmarked` = 興味・知識、`_doitlater` = 後で実行するタスク。 [2026-05-04]

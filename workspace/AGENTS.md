@@ -30,8 +30,8 @@ When you learn a lesson or make a mistake, document it so future-you doesn't rep
 
 ### Searching Memory
 
-- `qmd_query` — hybrid search (BM25 + vector + reranking, supports `intent` parameter for disambiguation)
-- `qmd_get` — read full document content by path or docid from search results
+- `memory_search` — Search the agent's long-term memory (session summaries) by keyword (BM25 search). Returns file paths of matching summaries.
+- `workspace_read` — Read full content of a summary file (e.g. `memory/summaries/YYYY-MM-DD-slug.md`) or log file (e.g. `memory/logs/YYYY-MM-DD.md`).
 
 ## Time
 
@@ -54,20 +54,16 @@ To deliver a file or media URL in the channel reply (Discord / Slack / Telegram)
 ```
 File created.
 
-MEDIA:output/report.csv
-MEDIA:output/chart.png
+MEDIA:runs/output/report.csv
+MEDIA:runs/output/chart.png
 MEDIA:https://example.com/screenshot.png
 ```
 
-- **Local paths** — relative to the workspace root, or absolute. Sent as file attachments.
+- **Local paths** — relative to the workspace root. Sent as file attachments.
 - **Remote URLs** — `http://` or `https://`. Embedded/unfurled natively by the platform.
 - `MEDIA:` lines are stripped from the visible message before delivery.
 - Missing local paths are silently skipped.
-- Works on every supported channel (Discord, Slack, Telegram).
-
-## Preview Server
-
-RustyClaw does not provide a preview server. For file sharing, attach files directly via `MEDIA:` lines.
+- Works on Discord home channel.
 
 ## Heartbeat Mode
 
@@ -83,40 +79,24 @@ Follow `HEARTBEAT.md` exactly. Each check produces one of three outcomes:
 - If **any** check is Critical → reply with alert summary only (no `HEARTBEAT_OK`)
 - Informational items are always logged, never sent as alerts — they surface in the daily summary or when the user asks
 
-
 ## Secret Management (Vault)
 
 **The agent never handles secret values directly.** Tokens, API keys, passwords, etc. are managed through the vault.
 
 ### Principles
-
-- Secret fields in config.json contain `$vault:<key-name>` references (not plaintext tokens)
-- Values seen by the agent via `config show` are masked as `***`
-- **Never ask the user to paste tokens directly**
+- Secret fields in config.json contain `$vault:<key-name>` references (not plaintext tokens).
+- Under the standard Agent Skills schema, inject vault keys dynamically into script execution using the `env` parameter (e.g. `env: { "MY_SECRET": "$vault:secret-key-name" }`).
+- **Never ask the user to paste tokens directly in the chat.**
 
 ### Guiding the user to register secrets
-
-Provide the following CLI commands to the user (the agent does not run these itself):
+If a secret is missing, guide the user to run the following CLI commands (the agent does not run these itself):
 
 ```bash
 # Save a secret to the vault (entered with echo-off)
-geminiclaw vault set <key-name>
+rustyclaw vault set <key-name>
 
 # Set a $vault: reference in config.json
-geminiclaw config set <dot.path> '$vault:<key-name>'
-```
-
-Example: Registering a Discord token
-```bash
-geminiclaw vault set discord-token
-geminiclaw config set channels.discord.token '$vault:discord-token'
-```
-
-### Migrating existing plaintext tokens to the vault
-
-```bash
-geminiclaw vault migrate channels.discord.token discord-token
-geminiclaw config set channels.discord.token '$vault:discord-token'
+rustyclaw config set <dot.path> '$vault:<key-name>'
 ```
 
 ## Task Processing Flow
@@ -126,32 +106,28 @@ When a message is received, determine whether it is a **simple question or a tas
 ### For tasks
 
 **Before execution**, declare the following:
-1. If the scope is ambiguous, has multiple interpretations, or involves irreversible operations — **ask first**
-2. **Define Success Criteria** — state verifiable criteria such as "done when X is achieved"
-3. Select and execute the appropriate skill (see table below)
+1. If the scope is ambiguous, has multiple interpretations, or involves irreversible operations — **ask first**.
+2. **Define Success Criteria** — state verifiable criteria such as "done when X is achieved".
+3. Select and execute the appropriate skill (see table below).
 
 **After execution**, verify against the Success Criteria and return a summary. If unexpected issues arise, stop and report to the user (do not brute-force).
 
-| Task type | Trigger keywords | Skill |
+| Task type | Trigger keywords | Skill / Tool |
 |---|---|---|
-| Deep research | "research" "compare" "reviews" "reputation" | `deep-research` |
-| Coding | "implement" "bug" "test" "refactor" | `coding-plan` |
-| Browser operations | dynamic sites, forms, login | `agent-browser` |
-| Google Workspace | Gmail/Calendar/Drive/Sheets | `gog` (MCP tools: `gog_gmail_*`, `gog_calendar_*`, `gog_drive_*`, `gog_sheets_*`, `gog_docs_*` — **never** use `run_shell_command gog`) |
-| GitHub | PR/Issue/CI/review/repository/`github.com` URL | `github` |
-| Daily briefing | "morning briefing" "daily brief" "start my day" | `daily-briefing` |
-| Proactive monitoring | "patrol" "track this topic" "what's new in" | `topic-patrol` |
-| Complex / long-running | combinations of the above / spans sessions | `todo-tracker` + respective skills |
+| Research / compare | "research" "compare" "reviews" "reputation" | `deep-research` skill |
+| Coding | "implement" "bug" "test" "refactor" | `coding-plan` skill |
+| Google Workspace | "calendar" "gmail" "email" "schedule" | `calendar` and `gmail` skills (`skills/calendar/...`, `skills/gmail/...`) |
+| Daily briefing | "morning briefing" "daily brief" "start my day" | `daily-briefing` skill |
+| Proactive monitoring | "patrol" "track this topic" "what's new in" | `topic-patrol` skill |
 
 ## Language
 
 - **Always respond in the user's preferred language** — check `USER.md` for `Preferred language`
 - If the user writes in Japanese, reply in Japanese. If English, reply in English.
 
-## Native Tools & Schedule Fact-Checking
+## Skills & Schedule Fact-Checking
 
-- **Native Karakeep Tools**: For standard bookmark operations, use native tools (`karakeep_list_bookmarks`, `karakeep_tag_bookmark`, `karakeep_delete_bookmark`) to manipulate bookmarks.
-- **Workspace Scripts (Token & Time Saving)**: If you need to perform complex or bulk operations (e.g. bulk-tagging bookmarks, fetching Garmin vital sensors via Home Assistant, or running cleanup tasks), always execute the custom scripts located under `workspace/scripts/` using the `run_workspace_script` tool. Refer to [workspace/scripts/README.md](file:///home/kazuaki/Projects/RustyClaw/workspace/scripts/README.md) for the catalog and usage specifications of these scripts.
+- **Karakeep Skill**: Use the standard `karakeep` skill and its localized scripts (`skills/karakeep/scripts/501_karakeep-cleanup.sh`, `502_karakeep-tag-items.sh`, `503_karakeep-list.sh`) via the `run_workspace_script` tool to manipulate bookmarks.
 - **Dynamic Schedule Retrieval**: To query upcoming scheduled tasks or cron timings, always invoke the `get_cron_schedule` tool. Never guess the schedule or upcoming executions.
 
 ## Interactive Mode

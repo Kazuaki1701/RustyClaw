@@ -24,45 +24,15 @@ _This is about understanding a person, not building a dossier._
 - **Projects**: Managing daily notes and knowledge base in Obsidian.
 
 ## Interests
-- Fish shell (Modern Shell)
-- Gemma / Ollama (Local LLM)
-- 最新技術 (Latest Technology)
-- AI
-- AI Agent
+- AI Agent / Autonomous Agent (Claude, Anthropic, MCP)
+- Cloudflare (Workers AI, AI Gateway, Vectorize, Wrangler)
+- Obsidian (Knowledge Management, Local REST API)
 - HomeAssistant
-- Tech
-- CLI Tools (tmux, yazi)
-- Terminal Customization
-- Ghostty (GPU Accelerated Terminal)
-- VS Code / Antigravity IDE (AI-native development)
-- Google Antigravity (Advanced AI IDE)
-- Cline (Autonomous AI Agent / Security Design) [2026-04-10]
-- Claude Managed Agents (Anthropic) [2026-04-10]
-- Windows Terminal (Modern Terminal)
-- API token 管理 (Secret Management)
-- Obsidian (Knowledge Management)
-- Obsidian API Server (Self-hosted) [2026-04-09]
-- Obsidian Headless Client (Libre-hosted/Official) [2026-04-10]
-- Model Context Protocol (MCP) [2026-04-10]
-- Agent Skills (agentskills.io) [2026-04-09]
-- 基本情報技術者試験 (FE)
-- 進化するメモリ / Evolutionary Memory (Claude Code) [2026-04-09]
-- ペイン・トラッカー / Pain Tracking [2026-04-09]
-- Karakeep (Self-hosted Bookmark/Memory Management) [2026-04-14]
-- Zorai / Mux (Next-gen AI Agent Multiplexers) [2026-04-30]
-- Cloudflare Free Tier AI (Workers AI / Vectorize / D1) [2026-05-01]
-- Cloudflare [2026-05-01]
-- Cloudflare/AI Gateway [2026-05-01]
-- Cloudflare/Workers AI [2026-05-01]
-- Wrangler CLI [2026-05-01]
-- Obsidian Local REST API [2026-05-01]
-- Zellij (Terminal Workspace) [2026-05-02]
-- gemini-cli-openai (Integration Tool) [2026-05-02]
-<!-- Topics the user finds interesting. Patrol uses this section as its exploration source. -->
-<!-- Add topics as you learn what the user cares about. Remove ones that go stale. -->
-<!-- Let this section grow and shrink naturally — no need to maintain a fixed list. -->
-<!-- Optional: add "sources:" to guide where Patrol looks. -->
-<!-- e.g. sources: HN, Reddit/r/programming, github:owner/repo, @twitter_handle, https://blog.example.com -->
+- Karakeep (Self-hosted Bookmarks)
+- Terminal tools (Fish shell, Ghostty, Zellij, tmux, yazi)
+- Latest AI/ML tech (Local LLM, Gemma, Ollama)
+- Evolutionary Memory / AI memory systems
+- Self-hosted infrastructure
 
 ## Preferences & Habits
 - **Link Quality:** High preference for verified, working links in Topic Patrol. Dislikes "guessed" or broken URLs. 紹介する各アイテムごとに必ず情報ソースへのリンク（URL）を付与し、**送信前に必ずリンクが有効であることを `web_fetch` 等で確認すること。** [2026-04-01/2026-04-29]

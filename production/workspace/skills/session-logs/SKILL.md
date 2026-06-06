@@ -72,30 +72,26 @@ workspace_read: { "path": "memory/logs/YYYY-MM-DD.md" }
 
 ## Advanced Analysis via Scripts
 
-For token usage, tool frequency, and other structured analysis, write a temporary analysis script and execute it:
+For token usage, tool frequency, and other structured analysis, use the secure pre-packaged scripts within the skill directory:
 
-**Step 1** — Write the script via `workspace_write`:
-```bash
-# Example: scripts/session-stats.sh
-#!/bin/bash
-# Count messages per session
-for f in sessions/*.jsonl; do
-  count=$(wc -l < "$f")
-  echo "$count $f"
-done | sort -rn | head -20
-```
+### Count messages & analyze tokens
+Use `run_workspace_script` to get session message counts and SQLite-based token usage statistics:
+- **Tool**: `run_workspace_script`
+- **Parameters**:
+  - `script_name`: `skills/session-logs/scripts/session-stats.sh`
+  - `args`: `[]` (optional: `["--days", "7"]` or `["--date", "YYYYMMDD"]`)
 
-**Step 2** — Run it via `run_workspace_script`:
-```
-run_workspace_script: { "script_name": "session-stats.sh" }
-```
-
-> **Note**: Token usage statistics are tracked in SQLite (`memory.db`). A dedicated analysis script in `scripts/` can query this database for cost breakdowns.
+### Search full session history
+Use `run_workspace_script` to search raw `.jsonl` files for deep keyword matching:
+- **Tool**: `run_workspace_script`
+- **Parameters**:
+  - `script_name`: `skills/session-logs/scripts/session-search.sh`
+  - `args`: `["your keyword"]` (optional: `["your keyword", "--date", "20260531"]`)
 
 ## Searching Summaries by Topic
 
-```
-# Use memory_search for keyword-based retrieval
+Use `memory_search` for keyword-based summary retrieval:
+```json
 memory_search: { "query": "Garmin vitals coach" }
 memory_search: { "query": "cron job failure" }
 memory_search: { "query": "MEMORY.md update" }
@@ -103,7 +99,7 @@ memory_search: { "query": "MEMORY.md update" }
 
 ## Tips
 
-- Use `memory_search` first — it searches all summaries instantly via BM25
-- Fall back to `workspace_read` on specific files when you need the full conversation text
-- Session filenames encode the channel and date — use them to narrow down time ranges
-- For token cost analysis, a dedicated script querying `memory.db` is needed (see Advanced Analysis)
+- Use `memory_search` first — it searches all summaries instantly via BM25.
+- Fall back to `workspace_read` on specific files when you need the full conversation text.
+- Session filenames encode the channel and date — use them to narrow down time ranges.
+- For token cost analysis, use `skills/session-logs/scripts/session-stats.sh` (see Advanced Analysis).

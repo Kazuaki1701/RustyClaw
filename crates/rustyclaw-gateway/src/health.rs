@@ -862,6 +862,7 @@ const PROVIDER_COLORS = {
   groq:       '#f55036',
   openrouter: '#6e45e2',
   gmn:        '#4285f4',
+  local:      '#00e5a0',
 };
 async function updateConcurrency(){
   try{
@@ -1039,7 +1040,7 @@ function renderSummary(d){
   const byProvider = d.by_provider ?? {};
   const providerEntries = Object.entries(byProvider);
   const maxProvTokens = Math.max(1, ...providerEntries.map(([,v])=>v.tokens));
-  const PROV_COLORS_STATS = { cloudflare:'#f48120', groq:'#f55036', openrouter:'#6e45e2', gmn:'#4285f4' };
+  const PROV_COLORS_STATS = { cloudflare:'#f48120', groq:'#f55036', openrouter:'#6e45e2', gmn:'#4285f4', local:'#00e5a0' };
   document.getElementById('providerBreakdown').innerHTML = providerEntries.length
     ? providerEntries.map(([name, v]) => {
         const pct = ((v.tokens / maxProvTokens) * 100).toFixed(1);

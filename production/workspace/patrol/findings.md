@@ -575,3 +575,6 @@
 - AI Model Evolution 2026: Trends show a shift toward native multi-modal MoE models (Llama 4 Scout, Gemma 4) with 1M+ context windows and autonomous "Thinking" modes. OpenAI released GPT-5.5 Instant with reduced hallucinations. — shared
   - Source: Industry trends May 2026
   - Verification: Partially OK (Caution: High-velocity versioning)
+## 2026-06-01 (Rotation Index 34)
+- Cloudflare Agents Week 2026: AI GatewayがMCP Server Portalとして機能し、エージェント基盤の標準化が進んでいる。これは今後のAIインフラ設計における重要なトレンドであり、自律型エージェント運用を大きく変える可能性がある。— shared (19:37)
+- Unitree G1 Humanoid: 23〜43 DOFを持つヒューマノイドが量産フェーズに入り、羽田空港での手荷物運搬テストなど商業利用が進展している。Physical AIの具体的な応用事例として注目に値する。— shared (19:37)

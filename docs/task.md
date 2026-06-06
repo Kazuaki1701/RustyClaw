@@ -8,9 +8,26 @@
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
 > それ以外の独自機能・改善案件は一旦 🟢 に降格。GeminiClaw ギャップが解消され次第、改めて優先度を見直す。
 
----
-
 ## 🔴 GeminiClaw 機能ギャップ（最優先）
+
+### Phase 37: GeminiClaw 高度先進機能の移植と統合 🔴
+> 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。
+
+- `[ ]` **1. 自律性制御 (Autonomy Level) システムの導入**
+  - `Config` に `autonomy_level` を追加し、`autonomous` / `supervised` / `read_only` の切り替えをサポート。
+  - `supervised` 時に書き込み操作を一時中断し承認を待つゲートウェイインターセプション処理の実装。
+
+- `[ ]` **2. Tailscale 連携 Web プレビューサーバーの実装**
+  - `axum` または `warp` による非同期 HTTP サーバースレッドの実装。
+  - `workspace/previews/` 配下の静的ファイルサービングと、安全な Tailscale アドレス経由でのプレビューURL提示。
+
+- `[ ]` **3. Bubblewrap による実行スクリプトのサンドボックス化（ラズパイ環境保護）**
+  - `bwrap` コマンドラインラッピングによる `WorkspaceExecuteScriptTool` の保護。
+  - `/workspace` ディレクトリのみを書き込み可能バインドし、ホストOSやSSDの不用意な破壊を防ぐ。
+
+- `[ ]` **4. プロンプト予算 (Prompt Budget) 設定によるコンテキスト配分管理**
+  - `config.json` に `prompt_budget` の上限値を定義。
+  - 会話圧縮（コンパクション）のトリガーしきい値と動的連動させるリファクタリング。
 
 ---
 
@@ -108,6 +125,20 @@
 
 ---
 
+## Phase 35b: 標準 SKILL 仕様準拠の強化と不整合の改修 🔴
+
+- `[ ]` **1. `allowed-tools` のパース柔軟化（文字列・配列両対応）**
+  - 標準仕様である「スペース区切りの単一文字列」（例: `allowed-tools: toolA toolB`）と、従来のYAML配列形式（`Vec<String>`）の両方を柔軟にデシリアライズできるカスタムデシリアライザを `skills.rs` に導入。
+
+- `[ ]` **2. `SKILL.md` フロントマター検証（Validation）の実装**
+  - スキル名 (`name`) の文字数（1〜64文字）、使用可能文字（小文字英数字・ハイフンのみ、ハイフン開始終了不可、連続ハイフン不可）、および親ディレクトリ名との一致検証を実装。
+  - `description`（1〜1024文字）および `compatibility`（1〜500文字）の文字数制限チェックを実装し、不整合時に警告またはスキップ処理を追加。
+
+- `[ ]` **3. `SKILL.md` 内相対ファイル・ディレクトリ参照リンクの動的書き換え処理**
+  - レベル2 Activation 時にインジェクトするスキル本文内にある相対参照（`references/` などの Markdown リンク）を、ワークスペース相対パス（`skills/[skill-name]/references/...`）に自動書き換えして LLM に提示する機構を `inject_skill_content` に追加。
+
+---
+
 ## Phase 36: 残存するネイティブツールの完全スキル化・疎結合化 🔴
 > 設計書・実装計画策定済み（2026-05-31）。各 Phase の spec/plan は `docs/superpowers/` に保存。
 
@@ -140,7 +171,7 @@
   - `507_obsidian-ops.sh`（search/read/write/append サブコマンド統合、`$vault:obsidian-api-key` 注入）。
   - `ObsidianSearchTool`, `ObsidianReadTool`, `ObsidianWriteTool` および `percent_encode()` の削除。
 
-- `[ ]` **5. ゲートウェイ自動登録の解除と cargo test のオールグリーン検証**
+- `[x]` **5. ゲートウェイ自動登録の解除と cargo test のオールグリーン検証**
 
 - `[ ]` **6. RPi4 実機検証と deploy.sh による配備**
 
