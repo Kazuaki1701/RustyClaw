@@ -115,11 +115,11 @@ impl Pipeline {
             .and_then(|m| m.context_window.as_deref());
         let ctx = parse_context_window(cw);
         match ctx {
-            0..=16_384       => 10,
-            16_385..=32_768  => 20,
-            32_769..=65_536  => 40,
-            65_537..=262_143 => 60,
-            _                => 80,
+            0..=16_384       => 30,
+            16_385..=32_768  => 50,
+            32_769..=65_536  => 80,
+            65_537..=262_143 => 100,
+            _                => 120,
         }
     }
 
@@ -133,9 +133,9 @@ impl Pipeline {
     }
 
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
-        // 静的ブロック（SOUL/AGENTS/MEMORY/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
+        // 静的ブロック（SOUL/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
         // 動的な [now:] は末尾に置くことで毎回変わる部分がキャッシュ prefix を破壊しないようにする。
-        let files = ["SOUL.md", "AGENTS.md", "USER.md"];
+        let files = ["SOUL.md", "USER.md"];
         let mut context = String::new();
 
         for filename in &files {
@@ -1440,9 +1440,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
 /// rig-core InMemoryVectorStore を使った統合 RAG エンジン。
 /// SQLite（永続化）と InMemoryVectorStore（高速検索）のハイブリッド構成。
-/// source 情報は ID プレフィックス（"memory::N", "session::SESSION_ID"）で管理する。
+/// source 情報は SQLite の source 列を source_map に保持し、検索時に参照する。
 pub struct UnifiedRagEngine {
     store: std::sync::Mutex<InMemoryVectorStore<String>>,
+    /// id → source のマッピング（DB の source 列を保持）
+    source_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     model: rustyclaw_providers::CloudflareEmbeddingModel,
 }
 
@@ -1450,6 +1452,7 @@ impl UnifiedRagEngine {
     pub fn new(model: rustyclaw_providers::CloudflareEmbeddingModel) -> Self {
         Self {
             store: std::sync::Mutex::new(InMemoryVectorStore::default()),
+            source_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             model,
         }
     }
@@ -1458,10 +1461,13 @@ impl UnifiedRagEngine {
     pub fn rebuild_from_db(&self, db: &rustyclaw_storage::DbManager) -> anyhow::Result<()> {
         let rows = db.load_all_embeddings_with_ids()?;
         let mut store = self.store.lock().unwrap();
+        let mut smap = self.source_map.lock().unwrap();
         *store = InMemoryVectorStore::default();
+        smap.clear();
         let documents: Vec<(String, String, OneOrMany<Embedding>)> = rows
             .into_iter()
-            .map(|(id, _source, text, vec_f32)| {
+            .map(|(id, source, text, vec_f32)| {
+                smap.insert(id.clone(), source);
                 let emb = Embedding {
                     document: text.clone(),
                     vec: vec_f32.iter().map(|&x| x as f64).collect(),
@@ -1477,7 +1483,7 @@ impl UnifiedRagEngine {
     pub fn add_one(
         &self,
         id: &str,
-        _source: &str,
+        source: &str,
         _session_id: Option<&str>,
         text: &str,
         vec_f32: &[f32],
@@ -1488,10 +1494,11 @@ impl UnifiedRagEngine {
         };
         let mut store = self.store.lock().unwrap();
         store.add_documents_with_ids([(id.to_string(), text.to_string(), OneOrMany::one(emb))]);
+        self.source_map.lock().unwrap().insert(id.to_string(), source.to_string());
     }
 
     /// top_k 件の (source, text, score) を返す。
-    /// source は ID プレフィックスから抽出。
+    /// source は DB の source カラムから取得（source_map 経由）。
     pub async fn search(
         &self,
         query_text: &str,
@@ -1517,10 +1524,12 @@ impl UnifiedRagEngine {
                 .collect()
         };
 
+        let smap = self.source_map.lock().unwrap();
         Ok(id_scores.into_iter().filter_map(|(score, id)| {
-            let source = if id.starts_with("memory::") { "memory".to_string() }
-                else if id.starts_with("session::") { "session".to_string() }
-                else { "unknown".to_string() };
+            let source = smap.get(&id).cloned().unwrap_or_else(|| {
+                tracing::warn!("UnifiedRagEngine::search: source not found for id={}", id);
+                "unknown".to_string()
+            });
             let text = text_map.get(&id)?.clone();
             Some((source, text, score))
         }).collect())
@@ -1566,6 +1575,124 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| if s.len() > 512 { s.chars().take(512).collect::<String>() } else { s })
         .collect()
+}
+
+/// 静的マークダウンを `##` / `###` 見出し単位でチャンク分割する。
+/// 各チャンク先頭に `[ファイル名 > 見出し]` の文脈を付与し、800 文字で切り捨てる。
+pub(crate) fn chunk_static_document(file_name: &str, content: &str) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current_header = String::new();
+    let mut current_body = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
+            let body = current_body.trim().to_string();
+            if !body.is_empty() && !current_header.is_empty() {
+                let raw = format!("[{} > {}]\n{}", file_name, current_header, body);
+                chunks.push(raw.chars().take(800).collect());
+            }
+            current_header = trimmed.to_string();
+            current_body.clear();
+        } else if !trimmed.starts_with("# ") && trimmed != "#" {
+            // 最上位見出し (#) 行はスキップ（ドキュメントタイトルはチャンク対象外）
+            current_body.push_str(line);
+            current_body.push('\n');
+        }
+    }
+    let body = current_body.trim().to_string();
+    if !body.is_empty() && !current_header.is_empty() {
+        let raw = format!("[{} > {}]\n{}", file_name, current_header, body);
+        chunks.push(raw.chars().take(800).collect());
+    }
+    chunks
+}
+
+/// workspace_dir 内の AGENTS.md および skills/*.md をチャンク化し、
+/// ハッシュ差分がある場合のみ memory.db に embedding を保存する。Fail-open。
+pub async fn ingest_static_documents(
+    workspace_dir: &std::path::Path,
+    config: &Config,
+    db_path: &std::path::Path,
+) {
+    let (api_endpoint, api_key, _model) = match config.get_embedding_client_params() {
+        Some(p) => p,
+        None => return,
+    };
+    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(&api_endpoint, &api_key);
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => { tracing::warn!("ingest_static_documents: db open error: {}", e); return; }
+    };
+
+    // スキャン対象ファイル: AGENTS.md + skills/*.md
+    let mut files = vec![workspace_dir.join("AGENTS.md")];
+    let skills_dir = workspace_dir.join("skills");
+    if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+        let mut skill_files: Vec<_> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().map_or(false, |ext| ext == "md"))
+            .collect();
+        skill_files.sort();
+        files.extend(skill_files);
+    }
+
+    use sha2::{Sha256, Digest};
+    for file_path in files {
+        let content = match std::fs::read_to_string(&file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        let hash_str = format!("{:x}", Sha256::digest(content.as_bytes()));
+
+        let is_changed = db.check_and_update_doc_state(file_name, &hash_str)
+            .unwrap_or(true);
+
+        if !is_changed {
+            tracing::debug!("ingest_static_documents: '{}' unchanged, skipping", file_name);
+            continue;
+        }
+
+        tracing::info!("ingest_static_documents: '{}' changed, ingesting...", file_name);
+        let chunks = chunk_static_document(file_name, &content);
+        if chunks.is_empty() { continue; }
+
+        let source_id = format!("doc:{}", file_name);
+        if let Err(e) = db.delete_embeddings_by_source(&source_id) {
+            tracing::warn!("ingest_static_documents: delete error for '{}': {}", file_name, e);
+            continue;
+        }
+
+        let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
+        match client.embed(&text_refs).await {
+            Ok(embeddings) => {
+                if embeddings.len() != chunks.len() {
+                    tracing::warn!(
+                        "ingest_static_documents: chunk/embedding count mismatch ({} vs {}) for '{}', proceeding with zip",
+                        chunks.len(), embeddings.len(), file_name
+                    );
+                }
+                let saved = embeddings.len().min(chunks.len());
+                for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                    let id = format!("doc-{}-{}", file_name.replace('.', "_"), i);
+                    if let Err(e) = db.upsert_embedding(&id, &source_id, None, chunk, emb) {
+                        tracing::warn!("ingest_static_documents: upsert error: {}", e);
+                    }
+                }
+                tracing::info!("ingest_static_documents: ingested {} chunks from '{}'", saved, file_name);
+            }
+            Err(e) => {
+                tracing::warn!("ingest_static_documents: embed API error for '{}': {}", file_name, e);
+                // ハッシュを空にリセットして次回再試行を促す
+                let _ = db.check_and_update_doc_state(file_name, "");
+            }
+        }
+    }
 }
 
 /// MEMORY.md を読み込み、バレット行をチャンク化してベクトル化し memory.db に保存する。
@@ -1677,9 +1804,14 @@ pub(crate) async fn ingest_session_summary(
 }
 
 /// RAG 検索結果をシステムプロンプト注入用の Markdown に変換する。
-/// source="memory" と source="session" を別セクションで表示する。
+/// source="doc:*" を最初に、source="memory"、source="session" の順で別セクション表示する。
 pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
     if items.is_empty() { return String::new(); }
+
+    let doc_items: Vec<&str> = items.iter()
+        .filter(|(src, _, _)| src.starts_with("doc:"))
+        .map(|(_, txt, _)| txt.as_str())
+        .collect();
     let memory_items: Vec<&str> = items.iter()
         .filter(|(src, _, _)| src == "memory")
         .map(|(_, txt, _)| txt.as_str())
@@ -1688,7 +1820,14 @@ pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
         .filter(|(src, _, _)| src == "session")
         .map(|(_, txt, _)| txt.as_str())
         .collect();
+
     let mut out = String::new();
+
+    if !doc_items.is_empty() {
+        out.push_str("\n\n## Relevant Specifications & Rules\n");
+        out.push_str("Use the following guidelines for task execution:\n\n");
+        for text in &doc_items { out.push_str(text); out.push('\n'); }
+    }
     if !memory_items.is_empty() {
         out.push_str("\n\n## Relevant Memory\n");
         out.push_str("The following memories are relevant to the current conversation:\n\n");
@@ -2597,11 +2736,11 @@ Keep it short.\n\
         let p131k = Pipeline::new(make_config("131k"), flush_sem.clone());
         let p256k = Pipeline::new(make_config("256k"), flush_sem.clone());
 
-        assert_eq!(p16k.get_history_message_limit("default"),  10, "16k → 10件");
-        assert_eq!(p32k.get_history_message_limit("default"),  20, "32k → 20件");
-        assert_eq!(p64k.get_history_message_limit("default"),  40, "64k → 40件");
-        assert_eq!(p131k.get_history_message_limit("default"), 60, "131k → 60件");
-        assert_eq!(p256k.get_history_message_limit("default"), 80, "256k → 80件");
+        assert_eq!(p16k.get_history_message_limit("default"),  30, "16k → 30件");
+        assert_eq!(p32k.get_history_message_limit("default"),  50, "32k → 50件");
+        assert_eq!(p64k.get_history_message_limit("default"),  80, "64k → 80件");
+        assert_eq!(p131k.get_history_message_limit("default"), 100, "131k → 100件");
+        assert_eq!(p256k.get_history_message_limit("default"), 120, "256k → 120件");
     }
 
     #[test]
@@ -2620,6 +2759,24 @@ Keep it short.\n\
         assert!(result.contains("Rust is fast"));
         assert!(result.contains("RPi4 has 8GB RAM"));
         assert!(result.contains("## Relevant Memory"));
+    }
+
+    #[test]
+    fn test_format_rag_context_with_doc_items() {
+        let items = vec![
+            ("doc:AGENTS.md".to_string(), "## Tool Usage\nUse tools carefully.".to_string(), 0.85_f64),
+            ("memory".to_string(), "User prefers brevity".to_string(), 0.80_f64),
+            ("session".to_string(), "Previously discussed weather".to_string(), 0.75_f64),
+        ];
+        let result = format_rag_context(&items);
+        assert!(result.contains("## Relevant Specifications & Rules"), "doc: セクションが含まれること");
+        assert!(result.contains("Tool Usage"), "doc: チャンク内容が含まれること");
+        assert!(result.contains("## Relevant Memory"), "memory セクションが含まれること");
+        assert!(result.contains("## Relevant Past Sessions"), "session セクションが含まれること");
+        // doc セクションが memory セクションより先に来ること
+        let doc_pos = result.find("## Relevant Specifications").unwrap();
+        let mem_pos = result.find("## Relevant Memory").unwrap();
+        assert!(doc_pos < mem_pos, "doc セクションが memory より先であること");
     }
 
     #[test]
@@ -2779,5 +2936,24 @@ Keep it short.\n\
         let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
         assert!(result.contains("No new gmail items"), "Should indicate no new items: {}", result);
         assert!(result.contains("already seen"), "Should mention already-seen count: {}", result);
+    }
+
+    #[test]
+    fn test_chunk_static_document_splits_by_heading() {
+        let content = "# Doc\n\n## Section A\nContent A line1\nContent A line2\n\n## Section B\nContent B\n";
+        let chunks = chunk_static_document("test.md", content);
+        assert_eq!(chunks.len(), 2, "## 見出し単位で 2 チャンクになること");
+        assert!(chunks[0].contains("Section A"), "チャンク0 に Section A を含むこと");
+        assert!(chunks[0].contains("[test.md >"), "ファイル名コンテキストが付くこと");
+        assert!(chunks[1].contains("Section B"), "チャンク1 に Section B を含むこと");
+    }
+
+    #[test]
+    fn test_chunk_static_document_truncates_long_chunks() {
+        let long_line = "x".repeat(900);
+        let content = format!("## Big\n{}", long_line);
+        let chunks = chunk_static_document("big.md", &content);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].chars().count() <= 800, "800文字を超えないこと");
     }
 }

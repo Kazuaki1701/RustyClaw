@@ -112,6 +112,11 @@ impl DbManager {
             );
             CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source
                 ON memory_embeddings(source);
+            CREATE TABLE IF NOT EXISTS document_states (
+                file_path TEXT PRIMARY KEY,
+                last_hash TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
         ")
         .context("Failed to create SQLite tables")?;
 
@@ -215,6 +220,38 @@ impl DbManager {
             rusqlite::params![format!("-{} days", keep_days)],
         ).context("Failed to delete old session embeddings")?;
         Ok(())
+    }
+
+    /// ファイルのハッシュ値を検証し、前回から変更されているかを判定する。
+    /// 変更されている（または未登録）の場合は true を返し、ハッシュ値を更新する。
+    /// Fail-closed: DB エラー時は true を返して再インジェストを促す。
+    pub fn check_and_update_doc_state(&self, file_path: &str, current_hash: &str) -> Result<bool> {
+        // Use a closure to allow early-return with ? while catching all errors at the outer level.
+        let inner = || -> Result<bool> {
+            let mut stmt = self.conn.prepare(
+                "SELECT last_hash FROM document_states WHERE file_path = ?1"
+            )?;
+            let mut rows = stmt.query([file_path])?;
+
+            if let Some(row) = rows.next()? {
+                let last_hash: String = row.get(0)?;
+                if last_hash == current_hash {
+                    return Ok(false);
+                }
+            }
+
+            self.conn.execute(
+                "INSERT OR REPLACE INTO document_states (file_path, last_hash, updated_at)
+                 VALUES (?1, ?2, datetime('now'))",
+                rusqlite::params![file_path, current_hash],
+            )?;
+            Ok(true)
+        };
+
+        Ok(inner().unwrap_or_else(|e| {
+            tracing::warn!("check_and_update_doc_state: DB error for '{}', forcing re-ingest: {}", file_path, e);
+            true
+        }))
     }
 
     /// コサイン類似度を計算する
@@ -986,5 +1023,21 @@ mod tests {
         ).unwrap();
         assert_eq!(n_session, 1);
         assert_eq!(n_memory,  1);
+    }
+
+    #[test]
+    fn test_check_and_update_doc_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = DbManager::new(&db_path).unwrap();
+
+        // 新規ファイル → 変更あり (true)
+        assert!(db.check_and_update_doc_state("AGENTS.md", "hash_v1").unwrap());
+        // 同じハッシュ → 変更なし (false)
+        assert!(!db.check_and_update_doc_state("AGENTS.md", "hash_v1").unwrap());
+        // ハッシュ変更 → 変更あり (true)
+        assert!(db.check_and_update_doc_state("AGENTS.md", "hash_v2").unwrap());
+        // 別ファイル → 変更あり (true)
+        assert!(db.check_and_update_doc_state("skills/test.md", "hash_v1").unwrap());
     }
 }

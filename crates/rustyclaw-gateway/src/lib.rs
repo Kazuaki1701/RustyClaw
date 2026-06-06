@@ -860,6 +860,16 @@ impl Gateway {
         let cron_svc = cron::CronService::new(bus.clone(), db_path);
         cron_svc.start();
 
+        // ④ 静的ドキュメント RAG インジェスト（バックグラウンド、起動時）
+        {
+            let ws = self.workspace_path.clone();
+            let cfg = config.clone();
+            let db = self.workspace_path.join("memory.db");
+            tokio::spawn(async move {
+                rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+            });
+        }
+
         // ③ HealthServer (HTTPサーバー) の起動
         let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(1);
         let health_server = health::HealthServer::new(
@@ -890,10 +900,17 @@ impl Gateway {
                     match rustyclaw_config::load_config(&self.config_path) {
                         Ok(new_config) => {
                             registry.update_config(new_config.clone());
+                            // 静的ドキュメント RAG を再インジェスト（変更ファイルのみ）
+                            {
+                                let ws = self.workspace_path.clone();
+                                let cfg = new_config.clone();
+                                let db = self.workspace_path.join("memory.db");
+                                tokio::spawn(async move {
+                                    rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+                                });
+                            }
                             let m = new_config.get_model("default");
                             tracing::info!("Configuration reloaded successfully: provider={}, model={}", m.model_provider, m.model_name);
-                            // TODO: reload 時の RAG 再構築は次回実装
-                            // pipeline は各タスクのローカル変数であり、ここからはアクセス不可
                         }
                         Err(e) => {
                             tracing::error!("Failed to reload configuration: {:#}. Using previous configuration.", e);
@@ -906,10 +923,17 @@ impl Gateway {
                     match rustyclaw_config::load_config(&self.config_path) {
                         Ok(new_config) => {
                             registry.update_config(new_config.clone());
+                            // 静的ドキュメント RAG を再インジェスト（変更ファイルのみ）
+                            {
+                                let ws = self.workspace_path.clone();
+                                let cfg = new_config.clone();
+                                let db = self.workspace_path.join("memory.db");
+                                tokio::spawn(async move {
+                                    rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
+                                });
+                            }
                             let m = new_config.get_model("default");
                             tracing::info!("Configuration reloaded successfully via HTTP: provider={}, model={}", m.model_provider, m.model_name);
-                            // TODO: reload 時の RAG 再構築は次回実装
-                            // pipeline は各タスクのローカル変数であり、ここからはアクセス不可
                         }
                         Err(e) => {
                             tracing::error!("Failed to reload configuration via HTTP: {:#}. Using previous configuration.", e);
