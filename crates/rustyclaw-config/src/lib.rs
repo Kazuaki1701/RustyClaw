@@ -69,14 +69,28 @@ pub struct ModelEntry {
     pub cf_aig_gateway_id: Option<String>,
 }
 
-fn default_provider() -> String { "openai".to_string() }
-fn default_max_tokens() -> Option<u32> { Some(2048) }
-fn default_temperature() -> Option<f32> { Some(0.7) }
-fn bool_true() -> bool { true }
+fn default_provider() -> String {
+    "openai".to_string()
+}
+fn default_max_tokens() -> Option<u32> {
+    Some(2048)
+}
+fn default_temperature() -> Option<f32> {
+    Some(0.7)
+}
+fn bool_true() -> bool {
+    true
+}
 
-fn default_embedding_dims() -> usize { 1024 }
-fn default_top_k() -> usize { 5 }
-fn default_similarity_threshold() -> f32 { 0.65 }
+fn default_embedding_dims() -> usize {
+    1024
+}
+fn default_top_k() -> usize {
+    5
+}
+fn default_similarity_threshold() -> f32 {
+    0.65
+}
 
 /// RAG ベクトルメモリの埋め込みモデル設定
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -105,6 +119,10 @@ pub struct EmbeddingConfig {
     /// セッション要約 embedding の保持日数（省略時は 7 日）
     #[serde(default)]
     pub session_summary_ttl_days: Option<u32>,
+    /// true のとき fastembed ローカルモデルを使用する（CloudflareAPI の代替）。
+    /// ローカルモデルは intfloat/multilingual-e5-small (384 次元)。
+    #[serde(default)]
+    pub use_local_embedding: bool,
 }
 
 /// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
@@ -117,7 +135,9 @@ pub enum ModelNames {
 }
 
 impl Default for ModelNames {
-    fn default() -> Self { Self::Single(String::new()) }
+    fn default() -> Self {
+        Self::Single(String::new())
+    }
 }
 
 impl ModelNames {
@@ -125,7 +145,7 @@ impl ModelNames {
     pub fn primary(&self) -> &str {
         match self {
             Self::Single(s) => s,
-            Self::Chain(v)  => v.first().map(|s| s.as_str()).unwrap_or(""),
+            Self::Chain(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
         }
     }
 
@@ -133,7 +153,7 @@ impl ModelNames {
     pub fn as_chain(&self) -> Vec<&str> {
         match self {
             Self::Single(s) => vec![s.as_str()],
-            Self::Chain(v)  => v.iter().map(|s| s.as_str()).collect(),
+            Self::Chain(v) => v.iter().map(|s| s.as_str()).collect(),
         }
     }
 }
@@ -147,19 +167,19 @@ pub struct AgentsConfig {
     #[serde(default)]
     pub global_fallback_model_name: Option<String>,
     #[serde(default)]
-    pub summary:   Option<ModelNames>,
+    pub summary: Option<ModelNames>,
     #[serde(default)]
-    pub memory:    Option<ModelNames>,
+    pub memory: Option<ModelNames>,
     #[serde(default)]
-    pub tools:     Option<ModelNames>,
+    pub tools: Option<ModelNames>,
     #[serde(default)]
-    pub discord:   Option<ModelNames>,
+    pub discord: Option<ModelNames>,
     #[serde(default)]
-    pub line:      Option<ModelNames>,
+    pub line: Option<ModelNames>,
     #[serde(default)]
     pub heartbeat: Option<ModelNames>,
     #[serde(default)]
-    pub patrol:    Option<ModelNames>,
+    pub patrol: Option<ModelNames>,
     /// embedding モデルとして使用する model_list エントリの model_name
     #[serde(default)]
     pub embedding: Option<String>,
@@ -327,7 +347,8 @@ fn resolve_value(val: &str) -> String {
         if let Ok(env_val) = std::env::var(vault_key) {
             return env_val;
         }
-        if let Ok(env_val) = std::env::var(format!("RUSTYCLAW_VAULT_{}", vault_key.to_uppercase())) {
+        if let Ok(env_val) = std::env::var(format!("RUSTYCLAW_VAULT_{}", vault_key.to_uppercase()))
+        {
             return env_val;
         }
         if let Ok(secrets) = vault::load_vault(None) {
@@ -357,7 +378,8 @@ impl Config {
     /// model_name (config キー) → 解決済み LlmModelConfig に変換する内部ヘルパー。
     /// enabled: false のエントリは None を返す。
     fn resolve_model(&self, model_name: &str, purpose: &str) -> Option<LlmModelConfig> {
-        self.model_list.iter()
+        self.model_list
+            .iter()
             .find(|m| m.model_name == model_name && m.enabled)
             .map(|e| LlmModelConfig {
                 model_purpose: purpose.to_string(),
@@ -375,14 +397,18 @@ impl Config {
     /// purpose の ModelNames を返す（未設定なら default）。
     fn get_model_names_for_purpose(&self, purpose: &str) -> &ModelNames {
         match purpose {
-            "summary"   => self.agents.summary.as_ref().unwrap_or(&self.agents.default),
-            "memory"    => self.agents.memory.as_ref().unwrap_or(&self.agents.default),
-            "tools"     => self.agents.tools.as_ref().unwrap_or(&self.agents.default),
-            "discord"   => self.agents.discord.as_ref().unwrap_or(&self.agents.default),
-            "line"      => self.agents.line.as_ref().unwrap_or(&self.agents.default),
-            "heartbeat" => self.agents.heartbeat.as_ref().unwrap_or(&self.agents.default),
-            "patrol"    => self.agents.patrol.as_ref().unwrap_or(&self.agents.default),
-            _           => &self.agents.default,
+            "summary" => self.agents.summary.as_ref().unwrap_or(&self.agents.default),
+            "memory" => self.agents.memory.as_ref().unwrap_or(&self.agents.default),
+            "tools" => self.agents.tools.as_ref().unwrap_or(&self.agents.default),
+            "discord" => self.agents.discord.as_ref().unwrap_or(&self.agents.default),
+            "line" => self.agents.line.as_ref().unwrap_or(&self.agents.default),
+            "heartbeat" => self
+                .agents
+                .heartbeat
+                .as_ref()
+                .unwrap_or(&self.agents.default),
+            "patrol" => self.agents.patrol.as_ref().unwrap_or(&self.agents.default),
+            _ => &self.agents.default,
         }
     }
 
@@ -400,7 +426,8 @@ impl Config {
             }
         }
 
-        name_list.iter()
+        name_list
+            .iter()
             .filter_map(|name| self.resolve_model(name, purpose))
             .collect()
     }
@@ -414,7 +441,8 @@ impl Config {
             return first;
         }
         // 全 named モデルが disabled → model_list 先頭 enabled モデルを最終手段として返す
-        self.model_list.iter()
+        self.model_list
+            .iter()
             .find(|m| m.enabled)
             .map(|e| LlmModelConfig {
                 model_purpose: purpose.to_string(),
@@ -450,7 +478,11 @@ impl Config {
     /// 2. 見つからない場合は `embedding.api_endpoint` / `api_key` を直接使用（後方互換）。
     pub fn get_embedding_client_params(&self) -> Option<(String, String, Option<String>)> {
         if let Some(ref name) = self.agents.embedding {
-            if let Some(entry) = self.model_list.iter().find(|m| m.model_name == *name && m.enabled) {
+            if let Some(entry) = self
+                .model_list
+                .iter()
+                .find(|m| m.model_name == *name && m.enabled)
+            {
                 let is_cf = entry.api_base.contains("cloudflare.com");
                 let endpoint = if is_cf {
                     entry.api_base.clone()
@@ -463,7 +495,11 @@ impl Config {
         }
         if let Some(ref emb) = self.embedding {
             if emb.enabled && !emb.api_endpoint.is_empty() {
-                return Some((emb.api_endpoint.clone(), emb.api_key.clone(), emb.model.clone()));
+                return Some((
+                    emb.api_endpoint.clone(),
+                    emb.api_key.clone(),
+                    emb.model.clone(),
+                ));
             }
         }
         None
@@ -528,8 +564,8 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     let file = File::open(&path)
         .with_context(|| format!("Failed to open config file at {:?}", path.as_ref()))?;
     let reader = BufReader::new(file);
-    let mut config: Config = serde_json::from_reader(reader)
-        .with_context(|| "Failed to parse config.json schema")?;
+    let mut config: Config =
+        serde_json::from_reader(reader).with_context(|| "Failed to parse config.json schema")?;
 
     config.override_with_env();
     config.resolve_secrets();
@@ -555,7 +591,10 @@ mod tests {
                     max_tokens: Some(2048),
                     temperature: Some(0.7),
                     enabled: true,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: Some("131k".to_string()),
                     cf_aig_gateway_id: None,
                 },
@@ -568,7 +607,10 @@ mod tests {
                     max_tokens: Some(1500),
                     temperature: Some(0.3),
                     enabled: true,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: None,
                     cf_aig_gateway_id: None,
                 },
@@ -649,29 +691,48 @@ mod tests {
     fn test_get_model_new_purposes() {
         let mut config = make_test_config();
         // 未設定 → default にフォールバック
-        assert_eq!(config.get_model("tools").model_name,     "llama-3.1-8b-instant");
-        assert_eq!(config.get_model("discord").model_name,   "llama-3.1-8b-instant");
-        assert_eq!(config.get_model("line").model_name,      "llama-3.1-8b-instant");
-        assert_eq!(config.get_model("heartbeat").model_name, "llama-3.1-8b-instant");
+        assert_eq!(config.get_model("tools").model_name, "llama-3.1-8b-instant");
+        assert_eq!(
+            config.get_model("discord").model_name,
+            "llama-3.1-8b-instant"
+        );
+        assert_eq!(config.get_model("line").model_name, "llama-3.1-8b-instant");
+        assert_eq!(
+            config.get_model("heartbeat").model_name,
+            "llama-3.1-8b-instant"
+        );
 
         // 明示設定した場合はそちらを返す
-        config.agents.discord   = Some(ModelNames::Single("test-70b".to_string()));
+        config.agents.discord = Some(ModelNames::Single("test-70b".to_string()));
         config.agents.heartbeat = Some(ModelNames::Single("test-70b".to_string()));
-        config.agents.tools     = Some(ModelNames::Single("test-70b".to_string()));
-        assert_eq!(config.get_model("discord").model_name,   "llama-3.3-70b-versatile");
-        assert_eq!(config.get_model("heartbeat").model_name, "llama-3.3-70b-versatile");
-        assert_eq!(config.get_model("tools").model_name,     "llama-3.3-70b-versatile");
+        config.agents.tools = Some(ModelNames::Single("test-70b".to_string()));
+        assert_eq!(
+            config.get_model("discord").model_name,
+            "llama-3.3-70b-versatile"
+        );
+        assert_eq!(
+            config.get_model("heartbeat").model_name,
+            "llama-3.3-70b-versatile"
+        );
+        assert_eq!(
+            config.get_model("tools").model_name,
+            "llama-3.3-70b-versatile"
+        );
     }
 
     #[test]
     fn test_env_override() {
         let mut config = make_test_config();
-        unsafe { std::env::set_var("RUSTYCLAW_MODEL_NAME", "test-70b"); }
+        unsafe {
+            std::env::set_var("RUSTYCLAW_MODEL_NAME", "test-70b");
+        }
         config.override_with_env();
         assert_eq!(config.agents.default.primary(), "test-70b");
         let model = config.get_model("default");
         assert_eq!(model.model_name, "llama-3.3-70b-versatile");
-        unsafe { std::env::remove_var("RUSTYCLAW_MODEL_NAME"); }
+        unsafe {
+            std::env::remove_var("RUSTYCLAW_MODEL_NAME");
+        }
     }
 
     #[test]
@@ -686,16 +747,23 @@ mod tests {
                 max_tokens: Some(2048),
                 temperature: Some(0.7),
                 enabled: true,
-                rpm: None, rpd: None, tpm: None, tpd: None,
+                rpm: None,
+                rpd: None,
+                tpm: None,
+                tpd: None,
                 context_window: None,
                 cf_aig_gateway_id: None,
             }],
             ..Default::default()
         };
-        unsafe { std::env::set_var("TEST_API_KEY_CFG", "resolved_key"); }
+        unsafe {
+            std::env::set_var("TEST_API_KEY_CFG", "resolved_key");
+        }
         config.resolve_secrets();
         assert_eq!(config.model_list[0].api_key, "resolved_key");
-        unsafe { std::env::remove_var("TEST_API_KEY_CFG"); }
+        unsafe {
+            std::env::remove_var("TEST_API_KEY_CFG");
+        }
     }
 
     #[test]
@@ -723,7 +791,10 @@ mod tests {
     fn test_model_names_mixed_in_config() {
         let json = r#"{ "single": "groq-8b", "chain": ["groq-70b", "or-deepseek"] }"#;
         #[derive(serde::Deserialize)]
-        struct Tmp { single: ModelNames, chain: ModelNames }
+        struct Tmp {
+            single: ModelNames,
+            chain: ModelNames,
+        }
         let tmp: Tmp = serde_json::from_str(json).unwrap();
         assert_eq!(tmp.single.primary(), "groq-8b");
         assert_eq!(tmp.chain.primary(), "groq-70b");
@@ -742,7 +813,10 @@ mod tests {
                     max_tokens: Some(2048),
                     temperature: Some(0.7),
                     enabled: true,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: None,
                     cf_aig_gateway_id: None,
                 },
@@ -755,7 +829,10 @@ mod tests {
                     max_tokens: Some(1500),
                     temperature: Some(0.5),
                     enabled: true,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: None,
                     cf_aig_gateway_id: None,
                 },
@@ -768,7 +845,10 @@ mod tests {
                     max_tokens: Some(1024),
                     temperature: Some(0.5),
                     enabled: true,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: None,
                     cf_aig_gateway_id: None,
                 },
@@ -781,7 +861,10 @@ mod tests {
                     max_tokens: Some(2048),
                     temperature: Some(0.7),
                     enabled: false,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: None,
                     cf_aig_gateway_id: None,
                 },
@@ -887,8 +970,22 @@ mod tests {
         let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
         assert!(cfg.session_summary_ttl_days.is_none());
 
-        let cfg2: EmbeddingConfig = serde_json::from_str(r#"{"session_summary_ttl_days": 14}"#).unwrap();
+        let cfg2: EmbeddingConfig =
+            serde_json::from_str(r#"{"session_summary_ttl_days": 14}"#).unwrap();
         assert_eq!(cfg2.session_summary_ttl_days, Some(14));
+    }
+
+    #[test]
+    fn test_embedding_config_use_local_default_false() {
+        let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(!cfg.use_local_embedding, "default should be false");
+    }
+
+    #[test]
+    fn test_embedding_config_use_local_true() {
+        let cfg: EmbeddingConfig =
+            serde_json::from_str(r#"{"use_local_embedding": true}"#).unwrap();
+        assert!(cfg.use_local_embedding);
     }
 
     #[test]

@@ -21,8 +21,7 @@ impl Config {
         Ok(Self {
             base_url: std::env::var("LMS_BASE_URL")
                 .unwrap_or_else(|_| "http://192.168.1.110:1234/v1".to_string()),
-            api_key: std::env::var("LMS_API_KEY")
-                .unwrap_or_else(|_| "lm-studio".to_string()),
+            api_key: std::env::var("LMS_API_KEY").unwrap_or_else(|_| "lm-studio".to_string()),
             main_model: std::env::var("MAIN_MODEL")
                 .unwrap_or_else(|_| "google/gemma-4-e4b".to_string()),
             summary_model: std::env::var("SUMMARY_MODEL")
@@ -224,8 +223,8 @@ async fn run_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_core::completion::message::{Text, ToolCall, ToolFunction};
     use rig_core::OneOrMany;
+    use rig_core::completion::message::{Text, ToolCall, ToolFunction};
 
     #[test]
     fn extract_text_returns_text_from_choice() {

@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
 use rustyclaw_agent::Pipeline;
-use rustyclaw_config::{get_app_dir, get_config_dir, load_config};
 use rustyclaw_config::vault;
+use rustyclaw_config::{get_app_dir, get_config_dir, load_config};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -120,7 +120,8 @@ fn setup_logging() -> Result<()> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    let local_time = tracing_subscriber::fmt::time::ChronoLocal::new("%Y-%m-%dT%H:%M:%S%.3f%z".to_string());
+    let local_time =
+        tracing_subscriber::fmt::time::ChronoLocal::new("%Y-%m-%dT%H:%M:%S%.3f%z".to_string());
 
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_timer(local_time.clone())
@@ -139,7 +140,10 @@ fn setup_logging() -> Result<()> {
         .with(file_layer)
         .init();
 
-    tracing::info!("Logging initialized. Logs are saved to {:?}", log_dir.join("rustyclaw.log"));
+    tracing::info!(
+        "Logging initialized. Logs are saved to {:?}",
+        log_dir.join("rustyclaw.log")
+    );
     Box::leak(Box::new(_guard));
 
     Ok(())
@@ -164,13 +168,19 @@ fn read_secret() -> Result<String> {
         use std::os::unix::io::AsRawFd;
         let fd = io::stdin().as_raw_fd();
         let mut termios: libc::termios = unsafe { std::mem::zeroed() };
-        unsafe { libc::tcgetattr(fd, &mut termios); }
+        unsafe {
+            libc::tcgetattr(fd, &mut termios);
+        }
         let termios_orig = termios;
         termios.c_lflag &= !libc::ECHO;
-        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios); }
+        unsafe {
+            libc::tcsetattr(fd, libc::TCSANOW, &termios);
+        }
         let mut s = String::new();
         let result = io::stdin().read_line(&mut s);
-        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios_orig); }
+        unsafe {
+            libc::tcsetattr(fd, libc::TCSANOW, &termios_orig);
+        }
         println!();
         result?;
         return Ok(s.trim().to_string());
@@ -183,9 +193,16 @@ fn read_secret() -> Result<String> {
     }
 }
 
-fn add_vault_ref(map: &mut HashMap<String, (bool, Vec<String>)>, key: &str, source: String, critical: bool) {
+fn add_vault_ref(
+    map: &mut HashMap<String, (bool, Vec<String>)>,
+    key: &str,
+    source: String,
+    critical: bool,
+) {
     let entry = map.entry(key.to_string()).or_insert((false, Vec::new()));
-    if critical { entry.0 = true; }
+    if critical {
+        entry.0 = true;
+    }
     entry.1.push(source);
 }
 
@@ -197,7 +214,10 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
 
     // ── 1. ファイル読み込み ────────────────────────────────────────────
     let content = match std::fs::read_to_string(config_path) {
-        Ok(c) => { println!("[OK]   file readable"); c }
+        Ok(c) => {
+            println!("[OK]   file readable");
+            c
+        }
         Err(e) => {
             println!("[ERR]  file: {} — {}", config_path.display(), e);
             println!("\nResult: 1 error(s)");
@@ -215,7 +235,10 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
 
     // ── 3. Config schema ──────────────────────────────────────────────
     let config: rustyclaw_config::Config = match serde_json::from_str(&content) {
-        Ok(c) => { println!("[OK]   schema valid"); c }
+        Ok(c) => {
+            println!("[OK]   schema valid");
+            c
+        }
         Err(e) => {
             println!("[ERR]  schema: {}", e);
             println!("\nResult: 1 error(s)");
@@ -232,10 +255,16 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
         println!("[ERR]  model_list: empty");
         errors += 1;
     } else if enabled_count == 0 {
-        println!("[ERR]  model_list: {} entries, 0 enabled — no usable model", total);
+        println!(
+            "[ERR]  model_list: {} entries, 0 enabled — no usable model",
+            total
+        );
         errors += 1;
     } else {
-        println!("[OK]   model_list: {} entries, {} enabled", total, enabled_count);
+        println!(
+            "[OK]   model_list: {} entries, {} enabled",
+            total, enabled_count
+        );
     }
 
     let mut seen_names: HashSet<&str> = HashSet::new();
@@ -252,31 +281,48 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
         let is_ref = base.starts_with("$vault:") || base.starts_with("$env:");
         let is_url = base.starts_with("http://") || base.starts_with("https://");
         if !base.is_empty() && !is_ref && !is_url {
-            println!("[ERR]  model_list[{}].api_base: not a URL or $ref: {}", m.model_name, base);
+            println!(
+                "[ERR]  model_list[{}].api_base: not a URL or $ref: {}",
+                m.model_name, base
+            );
             errors += 1;
         }
     }
 
     // ── 5. agents ────────────────────────────────────────────────────
     println!();
-    let all_names: HashSet<&str> = config.model_list.iter()
-        .map(|m| m.model_name.as_str()).collect();
-    let enabled_names: HashSet<&str> = config.model_list.iter()
-        .filter(|m| m.enabled).map(|m| m.model_name.as_str()).collect();
+    let all_names: HashSet<&str> = config
+        .model_list
+        .iter()
+        .map(|m| m.model_name.as_str())
+        .collect();
+    let enabled_names: HashSet<&str> = config
+        .model_list
+        .iter()
+        .filter(|m| m.enabled)
+        .map(|m| m.model_name.as_str())
+        .collect();
 
-    let check_agent_ref = |purpose: &str, model_names: &rustyclaw_config::ModelNames, errors: &mut usize| {
-        for name in model_names.as_chain() {
-            if !all_names.contains(name) {
-                println!("[ERR]  agents.{:<8} → '{}': not found in model_list", purpose, name);
-                *errors += 1;
-            } else if !enabled_names.contains(name) {
-                println!("[ERR]  agents.{:<8} → '{}': model is disabled", purpose, name);
-                *errors += 1;
-            } else {
-                println!("[OK]   agents.{:<8} → '{}' (enabled)", purpose, name);
+    let check_agent_ref =
+        |purpose: &str, model_names: &rustyclaw_config::ModelNames, errors: &mut usize| {
+            for name in model_names.as_chain() {
+                if !all_names.contains(name) {
+                    println!(
+                        "[ERR]  agents.{:<8} → '{}': not found in model_list",
+                        purpose, name
+                    );
+                    *errors += 1;
+                } else if !enabled_names.contains(name) {
+                    println!(
+                        "[ERR]  agents.{:<8} → '{}': model is disabled",
+                        purpose, name
+                    );
+                    *errors += 1;
+                } else {
+                    println!("[OK]   agents.{:<8} → '{}' (enabled)", purpose, name);
+                }
             }
-        }
-    };
+        };
 
     check_agent_ref("default", &config.agents.default, &mut errors);
     if let Some(ref s) = config.agents.summary {
@@ -292,39 +338,79 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
 
     for m in &config.model_list {
         if let Some(k) = m.api_key.strip_prefix("$vault:") {
-            add_vault_ref(&mut vault_map, k, format!("{}.api_key", m.model_name), m.enabled);
+            add_vault_ref(
+                &mut vault_map,
+                k,
+                format!("{}.api_key", m.model_name),
+                m.enabled,
+            );
         }
         if let Some(k) = m.api_base.strip_prefix("$vault:") {
-            add_vault_ref(&mut vault_map, k, format!("{}.api_base", m.model_name), m.enabled);
+            add_vault_ref(
+                &mut vault_map,
+                k,
+                format!("{}.api_base", m.model_name),
+                m.enabled,
+            );
         }
     }
     if let Some(ref d) = config.channels.discord {
         if let Some(k) = d.token.strip_prefix("$vault:") {
-            add_vault_ref(&mut vault_map, k, "channels.discord.token".to_string(), d.enabled);
+            add_vault_ref(
+                &mut vault_map,
+                k,
+                "channels.discord.token".to_string(),
+                d.enabled,
+            );
         }
     }
     if let Some(ref l) = config.channels.line {
         if let Some(k) = l.channel_access_token.strip_prefix("$vault:") {
-            add_vault_ref(&mut vault_map, k, "channels.line.channel_access_token".to_string(), l.enabled);
+            add_vault_ref(
+                &mut vault_map,
+                k,
+                "channels.line.channel_access_token".to_string(),
+                l.enabled,
+            );
         }
         if let Some(k) = l.channel_secret.strip_prefix("$vault:") {
-            add_vault_ref(&mut vault_map, k, "channels.line.channel_secret".to_string(), l.enabled);
+            add_vault_ref(
+                &mut vault_map,
+                k,
+                "channels.line.channel_secret".to_string(),
+                l.enabled,
+            );
         }
     }
     if let Some(ref k) = config.tools.karakeep {
         if let Some(key) = k.api_key.strip_prefix("$vault:") {
-            add_vault_ref(&mut vault_map, key, "tools.karakeep.api_key".to_string(), k.enabled);
+            add_vault_ref(
+                &mut vault_map,
+                key,
+                "tools.karakeep.api_key".to_string(),
+                k.enabled,
+            );
         }
     }
     if let Some(ref o) = config.tools.obsidian {
         if let Some(key) = o.api_key.strip_prefix("$vault:") {
-            add_vault_ref(&mut vault_map, key, "tools.obsidian.api_key".to_string(), o.enabled);
+            add_vault_ref(
+                &mut vault_map,
+                key,
+                "tools.obsidian.api_key".to_string(),
+                o.enabled,
+            );
         }
     }
     for (sname, srv) in &config.mcp {
         for (ekey, eval) in &srv.env {
             if let Some(k) = eval.strip_prefix("$vault:") {
-                add_vault_ref(&mut vault_map, k, format!("mcp.{}.env.{}", sname, ekey), srv.enabled);
+                add_vault_ref(
+                    &mut vault_map,
+                    k,
+                    format!("mcp.{}.env.{}", sname, ekey),
+                    srv.enabled,
+                );
             }
         }
     }
@@ -345,10 +431,18 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
             if loaded.contains_key(key.as_str()) {
                 println!("[OK]   {} ({})", key, sources.join(", "));
             } else if *critical {
-                println!("[ERR]  {} — not found in vault ({})", key, sources.join(", "));
+                println!(
+                    "[ERR]  {} — not found in vault ({})",
+                    key,
+                    sources.join(", ")
+                );
                 errors += 1;
             } else {
-                println!("[WARN] {} — not found in vault; all referencing models disabled ({})", key, sources.join(", "));
+                println!(
+                    "[WARN] {} — not found in vault; all referencing models disabled ({})",
+                    key,
+                    sources.join(", ")
+                );
                 warnings += 1;
             }
         }
@@ -382,7 +476,9 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
         println!("api_base 疎通確認:");
         for m in &enabled_models {
             let base = resolve(&m.api_base);
-            if !seen_bases.insert(base.clone()) { continue; }
+            if !seen_bases.insert(base.clone()) {
+                continue;
+            }
             let url = format!("{}/models", base.trim_end_matches('/'));
             let api_key = resolve(&m.api_key);
             match http.get(&url).bearer_auth(&api_key).send().await {
@@ -417,10 +513,15 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
         Some(k) if k.enabled => {
             let url = resolve(&k.server_addr);
             match http.get(&url).send().await {
-                Ok(resp) if resp.status().as_u16() < 500 =>
-                    println!("[OK]   karakeep: {} → {}", url, resp.status().as_u16()),
+                Ok(resp) if resp.status().as_u16() < 500 => {
+                    println!("[OK]   karakeep: {} → {}", url, resp.status().as_u16())
+                }
                 Ok(resp) => {
-                    println!("[WARN] karakeep: {} → {} (server error)", url, resp.status().as_u16());
+                    println!(
+                        "[WARN] karakeep: {} → {} (server error)",
+                        url,
+                        resp.status().as_u16()
+                    );
                     warnings += 1;
                 }
                 Err(e) if e.is_timeout() => {
@@ -434,7 +535,7 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
             }
         }
         Some(_) => println!("[SKIP] karakeep: disabled"),
-        None    => println!("[SKIP] karakeep: not configured"),
+        None => println!("[SKIP] karakeep: not configured"),
     }
 
     // obsidian
@@ -442,10 +543,15 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
         Some(o) if o.enabled => {
             let url = format!("http://{}:27123", resolve(&o.host));
             match http.get(&url).send().await {
-                Ok(resp) if resp.status().as_u16() < 500 =>
-                    println!("[OK]   obsidian: {} → {}", url, resp.status().as_u16()),
+                Ok(resp) if resp.status().as_u16() < 500 => {
+                    println!("[OK]   obsidian: {} → {}", url, resp.status().as_u16())
+                }
                 Ok(resp) => {
-                    println!("[WARN] obsidian: {} → {} (server error)", url, resp.status().as_u16());
+                    println!(
+                        "[WARN] obsidian: {} → {} (server error)",
+                        url,
+                        resp.status().as_u16()
+                    );
                     warnings += 1;
                 }
                 Err(e) if e.is_timeout() => {
@@ -459,7 +565,7 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
             }
         }
         Some(_) => println!("[SKIP] obsidian: disabled"),
-        None    => println!("[SKIP] obsidian: not configured"),
+        None => println!("[SKIP] obsidian: not configured"),
     }
 
     // google-workspace: gws コマンドの存在確認
@@ -475,8 +581,14 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
                 println!("[OK]   google-workspace: gws command found ({})", gws_path);
             } else {
                 // デフォルト探索パスも試す
-                let default_paths = ["/home/pi/.local/bin/gws", "/home/kazuaki/.local/bin/gws", "/usr/local/bin/gws"];
-                let found = default_paths.iter().any(|p| std::path::Path::new(p).exists());
+                let default_paths = [
+                    "/home/pi/.local/bin/gws",
+                    "/home/kazuaki/.local/bin/gws",
+                    "/usr/local/bin/gws",
+                ];
+                let found = default_paths
+                    .iter()
+                    .any(|p| std::path::Path::new(p).exists());
                 if found {
                     println!("[OK]   google-workspace: gws command found (default path)");
                 } else {
@@ -486,7 +598,7 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
             }
         }
         Some(_) => println!("[SKIP] google-workspace: disabled"),
-        None    => println!("[SKIP] google-workspace: not configured"),
+        None => println!("[SKIP] google-workspace: not configured"),
     }
 
     // MCP stdio サーバー（enabled なものがあれば command 確認）
@@ -502,7 +614,10 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
             if cmd_exists {
                 println!("[OK]   {}: command '{}' found", name, srv.command);
             } else {
-                println!("[ERR]  {}: command '{}' not found in PATH", name, srv.command);
+                println!(
+                    "[ERR]  {}: command '{}' not found in PATH",
+                    name, srv.command
+                );
                 errors += 1;
             }
         }
@@ -529,12 +644,24 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
                 "stream": false
             });
             let start = std::time::Instant::now();
-            match http_api.post(&url).bearer_auth(&api_key).json(&body).send().await {
+            match http_api
+                .post(&url)
+                .bearer_auth(&api_key)
+                .json(&body)
+                .send()
+                .await
+            {
                 Ok(resp) => {
                     let elapsed = start.elapsed().as_millis();
                     let status = resp.status();
                     if status.is_success() {
-                        println!("[OK]   {} ({}) → {} ({}ms)", m.model_name, m.model, status.as_u16(), elapsed);
+                        println!(
+                            "[OK]   {} ({}) → {} ({}ms)",
+                            m.model_name,
+                            m.model,
+                            status.as_u16(),
+                            elapsed
+                        );
                     } else {
                         let body_text = resp.text().await.unwrap_or_default();
                         let hint = if status.as_u16() == 401 || status.as_u16() == 403 {
@@ -546,7 +673,14 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
                         } else {
                             "API error"
                         };
-                        println!("[ERR]  {} ({}) → {} {} — {}", m.model_name, m.model, status.as_u16(), hint, body_text.chars().take(120).collect::<String>());
+                        println!(
+                            "[ERR]  {} ({}) → {} {} — {}",
+                            m.model_name,
+                            m.model,
+                            status.as_u16(),
+                            hint,
+                            body_text.chars().take(120).collect::<String>()
+                        );
                         errors += 1;
                     }
                 }
@@ -583,14 +717,20 @@ fn run_debug(cmd: DebugCommands, workspace: &PathBuf) -> Result<()> {
         DebugCommands::Request { full } => {
             let path = debug_dir.join("last_request.json");
             if !path.exists() {
-                anyhow::bail!("No debug dump found at {}. Enable debug_dump in config.json.", path.display());
+                anyhow::bail!(
+                    "No debug dump found at {}. Enable debug_dump in config.json.",
+                    path.display()
+                );
             }
             let content = std::fs::read_to_string(&path)?;
             let messages: Vec<serde_json::Value> = serde_json::from_str(&content)?;
             let meta = std::fs::metadata(&path)?;
             let modified: chrono::DateTime<chrono::Local> = meta.modified()?.into();
 
-            println!("=== Last Request ({}) ===", modified.format("%Y-%m-%dT%H:%M:%S%z"));
+            println!(
+                "=== Last Request ({}) ===",
+                modified.format("%Y-%m-%dT%H:%M:%S%z")
+            );
             println!("Messages: {}", messages.len());
             println!();
 
@@ -604,7 +744,11 @@ fn run_debug(cmd: DebugCommands, workspace: &PathBuf) -> Result<()> {
                     println!("{}", content);
                 } else {
                     let preview: String = content.chars().take(300).collect();
-                    let ellipsis = if char_count > 300 { format!("… (+{} chars)", char_count - 300) } else { String::new() };
+                    let ellipsis = if char_count > 300 {
+                        format!("… (+{} chars)", char_count - 300)
+                    } else {
+                        String::new()
+                    };
                     println!("[{}] {} ({} chars)", i, role.to_uppercase(), char_count);
                     println!("{}{}", preview, ellipsis);
                 }
@@ -615,14 +759,20 @@ fn run_debug(cmd: DebugCommands, workspace: &PathBuf) -> Result<()> {
         DebugCommands::Response => {
             let path = debug_dir.join("last_response.json");
             if !path.exists() {
-                anyhow::bail!("No debug dump found at {}. Enable debug_dump in config.json.", path.display());
+                anyhow::bail!(
+                    "No debug dump found at {}. Enable debug_dump in config.json.",
+                    path.display()
+                );
             }
             let content = std::fs::read_to_string(&path)?;
             let json: serde_json::Value = serde_json::from_str(&content)?;
             let meta = std::fs::metadata(&path)?;
             let modified: chrono::DateTime<chrono::Local> = meta.modified()?.into();
 
-            println!("=== Last Response ({}) ===", modified.format("%Y-%m-%dT%H:%M:%S%z"));
+            println!(
+                "=== Last Response ({}) ===",
+                modified.format("%Y-%m-%dT%H:%M:%S%z")
+            );
             if let Some(role) = json.get("role").and_then(|v| v.as_str()) {
                 println!("Role: {}", role);
             }
@@ -663,10 +813,17 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
             let value = read_secret()?;
             secrets.insert(key.clone(), value);
             vault::save_vault(&secrets, &passphrase)?;
-            println!("Secret '{}' stored in {}.", key, vault::get_vault_path().display());
+            println!(
+                "Secret '{}' stored in {}.",
+                key,
+                vault::get_vault_path().display()
+            );
         }
 
-        VaultCommands::Get { key, skip_passphrase } => {
+        VaultCommands::Get {
+            key,
+            skip_passphrase,
+        } => {
             let passphrase = if skip_passphrase {
                 String::new()
             } else {
@@ -738,7 +895,10 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
             }
         }
 
-        VaultCommands::Migrate { config_key, vault_key } => {
+        VaultCommands::Migrate {
+            config_key,
+            vault_key,
+        } => {
             let content = std::fs::read_to_string(config_path)
                 .with_context(|| format!("Failed to read {:?}", config_path))?;
             let mut json: serde_json::Value = serde_json::from_str(&content)?;
@@ -750,7 +910,10 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
                 let mut found = None;
                 for (i, part) in parts.iter().enumerate() {
                     if i == parts.len() - 1 {
-                        found = cur.get(part).and_then(|v| v.as_str()).map(|s| s.to_string());
+                        found = cur
+                            .get(part)
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
                     } else {
                         match cur.get(part) {
                             Some(next) => cur = next,
@@ -767,7 +930,10 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
                     return Ok(());
                 }
                 Some(v) => v,
-                None => anyhow::bail!("Key '{}' not found in config.json or is not a string", config_key),
+                None => anyhow::bail!(
+                    "Key '{}' not found in config.json or is not a string",
+                    config_key
+                ),
             };
 
             let passphrase = prompt_passphrase()?;
@@ -788,7 +954,10 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
             }
             let serialized = serde_json::to_string_pretty(&json)?;
             std::fs::write(config_path, serialized)?;
-            println!("Migrated '{}' → vault key '{}' and updated config.json.", config_key, vault_key);
+            println!(
+                "Migrated '{}' → vault key '{}' and updated config.json.",
+                config_key, vault_key
+            );
         }
 
         VaultCommands::ImportJson { path } => {
@@ -798,8 +967,16 @@ fn run_vault(cmd: VaultCommands, config_path: &PathBuf) -> Result<()> {
             }
             let passphrase = prompt_passphrase()?;
             let count = vault::import_from_json(&json_path, &passphrase)?;
-            println!("Imported {} secret(s) from {} → {}.", count, json_path.display(), vault::get_vault_path().display());
-            println!("You can now remove the plaintext file: rm {}", json_path.display());
+            println!(
+                "Imported {} secret(s) from {} → {}.",
+                count,
+                json_path.display(),
+                vault::get_vault_path().display()
+            );
+            println!(
+                "You can now remove the plaintext file: rm {}",
+                json_path.display()
+            );
         }
     }
     Ok(())
@@ -822,7 +999,9 @@ async fn main() -> Result<()> {
 
     // --no-agent フラグを環境変数に伝播（Gateway 内の create_provider にも届く）
     if cli.no_agent {
-        unsafe { std::env::set_var("RUSTYCLAW_NO_AGENT", "1"); }
+        unsafe {
+            std::env::set_var("RUSTYCLAW_NO_AGENT", "1");
+        }
         eprintln!("[NO-AGENT] Debug mode enabled — API calls suppressed");
     }
 
@@ -836,13 +1015,19 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("Failed to load configuration from {:?}", cli.config))?;
             {
                 let m = config.get_model("default");
-                tracing::info!("Configuration loaded successfully: provider={}, model={}", m.model_provider, m.model_name);
+                tracing::info!(
+                    "Configuration loaded successfully: provider={}, model={}",
+                    m.model_provider,
+                    m.model_name
+                );
             }
 
             let flush_sem = Arc::new(Semaphore::new(1));
             let pipeline = Pipeline::new(config, flush_sem);
             tracing::info!("Starting agent interaction in streaming mode...");
-            let stream = pipeline.execute_stream(&cli.workspace, "cli-session", &message).await?;
+            let stream = pipeline
+                .execute_stream(&cli.workspace, "cli-session", &message)
+                .await?;
             let mut pin_stream = stream;
 
             let mut stdout = std::io::stdout();

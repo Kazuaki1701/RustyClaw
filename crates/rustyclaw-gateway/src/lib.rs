@@ -1,21 +1,19 @@
 use anyhow::{Context, Result};
-use rustyclaw_config::Config;
-use rustyclaw_channels::{Channel, DiscordConnector};
 use rustyclaw_agent::{Pipeline, UnifiedRagEngine};
+use rustyclaw_channels::{Channel, DiscordConnector};
+use rustyclaw_config::Config;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex, Semaphore};
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::{Mutex as TokioMutex, Semaphore, broadcast, mpsc};
 
-pub mod health;
-pub mod watchdog;
 pub mod cron;
+pub mod health;
 pub mod heartbeat;
 pub(crate) mod skills;
-
-
+pub mod watchdog;
 
 // ==============================================================================
 // 待ち行列キューの追跡用データ構造
@@ -26,10 +24,10 @@ use std::sync::Mutex;
 #[derive(Debug, Clone, Serialize)]
 pub struct QueueItem {
     pub session_id: String,
-    pub status: String,            // "Waiting" | "Executing" | "Cooldown"
-    pub enqueued_at_ms: u64,       // Unix Epoch Milliseconds
-    pub cooldown_left_secs: f64,   // クールダウン中の残り時間
-    pub description: String,       // 要約やプロンプト内容のプレビュー
+    pub status: String,          // "Waiting" | "Executing" | "Cooldown"
+    pub enqueued_at_ms: u64,     // Unix Epoch Milliseconds
+    pub cooldown_left_secs: f64, // クールダウン中の残り時間
+    pub description: String,     // 要約やプロンプト内容のプレビュー
 }
 
 #[derive(Debug, Clone, Default)]
@@ -39,10 +37,15 @@ pub struct QueueState {
 
 pub static QUEUE_STATE: Mutex<QueueState> = Mutex::new(QueueState { items: Vec::new() });
 
-pub fn queue_update_or_insert(session_id: &str, status: &str, cooldown_left_secs: f64, description: &str) {
+pub fn queue_update_or_insert(
+    session_id: &str,
+    status: &str,
+    cooldown_left_secs: f64,
+    description: &str,
+) {
     let mut state = QUEUE_STATE.lock().unwrap();
     let now_ms = chrono::Utc::now().timestamp_millis() as u64;
-    
+
     if let Some(item) = state.items.iter_mut().find(|i| i.session_id == session_id) {
         item.status = status.to_string();
         item.cooldown_left_secs = cooldown_left_secs;
@@ -177,7 +180,7 @@ impl LaneRegistry {
         };
 
         let mut lanes = self.lanes.lock().await;
-        
+
         if let Some(tx) = lanes.get(&session_id) {
             if tx.send(event.clone()).await.is_err() {
                 // 送信失敗した場合はワーカースレッドが消滅しているため、削除して再作成
@@ -202,11 +205,22 @@ impl LaneRegistry {
         tokio::spawn(async move {
             let mut rx = rx;
             while let Some(evt) = rx.recv().await {
-                if let SystemEvent::IncomingMessage { session_id, channel_id, mut content, priority, .. } = evt {
+                if let SystemEvent::IncomingMessage {
+                    session_id,
+                    channel_id,
+                    mut content,
+                    priority,
+                    ..
+                } = evt
+                {
                     // Backgroundレーンのキュー制限(容量1): 古いキューを全て読み捨てる
                     if priority == Priority::Background {
                         while let Ok(next_evt) = rx.try_recv() {
-                            if let SystemEvent::IncomingMessage { content: next_content, .. } = next_evt {
+                            if let SystemEvent::IncomingMessage {
+                                content: next_content,
+                                ..
+                            } = next_evt
+                            {
                                 content = next_content;
                             }
                         }
@@ -222,13 +236,21 @@ impl LaneRegistry {
 
                     // 1. Heartbeat 実行処理
                     if session_id == "cron:heartbeat" {
-                        let heartbeat_svc = crate::heartbeat::HeartbeatService::new(active_config.clone(), workspace_path.clone(), bus.clone());
-                        
+                        let heartbeat_svc = crate::heartbeat::HeartbeatService::new(
+                            active_config.clone(),
+                            workspace_path.clone(),
+                            bus.clone(),
+                        );
+
                         let setup_res = async {
                             if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
                                 if let Ok(digest) = heartbeat_svc.generate_digest(&db_path).await {
-                                    let is_step5_allowed = heartbeat_svc.is_step5_allowed(&db).unwrap_or(false);
-                                    let weather_alert = heartbeat_svc.run_weather_patrol(&db_path).await.unwrap_or(None);
+                                    let is_step5_allowed =
+                                        heartbeat_svc.is_step5_allowed(&db).unwrap_or(false);
+                                    let weather_alert = heartbeat_svc
+                                        .run_weather_patrol(&db_path)
+                                        .await
+                                        .unwrap_or(None);
                                     Some((digest, is_step5_allowed, weather_alert))
                                 } else {
                                     None
@@ -236,7 +258,8 @@ impl LaneRegistry {
                             } else {
                                 None
                             }
-                        }.await;
+                        }
+                        .await;
 
                         if let Some((digest, is_step5_allowed, weather_alert)) = setup_res {
                             let mut prompt_parts = Vec::new();
@@ -260,21 +283,58 @@ impl LaneRegistry {
                             let desc = "Heartbeat Patrol / Activity Scan";
                             loop {
                                 crate::queue_update_or_insert(&session_id, "Waiting", 0.0, desc);
-                                tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
-                                let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
+                                tracing::debug!(
+                                    "Session {} attempting to acquire gmn_sem (Attempt {})...",
+                                    session_id,
+                                    attempt + 1
+                                );
+                                let permit_res = tokio::time::timeout(
+                                    Duration::from_secs(60),
+                                    gmn_sem.acquire(),
+                                )
+                                .await;
                                 match permit_res {
                                     Ok(Ok(permit)) => {
-                                        crate::queue_update_or_insert(&session_id, "Executing", 0.0, desc);
-                                        tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
-                                        let mut pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
-                                        if let Some(rag) = init_rag_engine(&active_config, &workspace_path) {
+                                        crate::queue_update_or_insert(
+                                            &session_id,
+                                            "Executing",
+                                            0.0,
+                                            desc,
+                                        );
+                                        tracing::info!(
+                                            "Session {} acquired permit slot. Executing agent...",
+                                            session_id
+                                        );
+                                        let mut pipeline =
+                                            Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                        if let Some(rag) =
+                                            init_rag_engine(&active_config, &workspace_path)
+                                        {
                                             pipeline.rag = Some(rag);
                                         }
-                                        match pipeline.execute_heartbeat(&workspace_path, &session_id, &heartbeat_prompt, &tool_registry, &db_path).await {
+                                        match pipeline
+                                            .execute_heartbeat(
+                                                &workspace_path,
+                                                &session_id,
+                                                &heartbeat_prompt,
+                                                &tool_registry,
+                                                &db_path,
+                                            )
+                                            .await
+                                        {
                                             Ok(response) => {
-                                                tracing::info!("Heartbeat LLM execution successful. Processing response...");
-                                                if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
-                                                    let _ = heartbeat_svc.process_heartbeat_response(&response.content, &db_path).await;
+                                                tracing::info!(
+                                                    "Heartbeat LLM execution successful. Processing response..."
+                                                );
+                                                if let Ok(db) =
+                                                    rustyclaw_storage::DbManager::new(&db_path)
+                                                {
+                                                    let _ = heartbeat_svc
+                                                        .process_heartbeat_response(
+                                                            &response.content,
+                                                            &db_path,
+                                                        )
+                                                        .await;
                                                 }
                                                 crate::queue_remove(&session_id);
                                                 break; // Exit the retry loop!
@@ -301,19 +361,28 @@ impl LaneRegistry {
                                                     }
                                                 }
                                                 // Non-rate-limit error or max retries exceeded
-                                                tracing::error!("Heartbeat LLM execution failed: {:#}", e);
+                                                tracing::error!(
+                                                    "Heartbeat LLM execution failed: {:#}",
+                                                    e
+                                                );
                                                 crate::queue_remove(&session_id);
                                                 break;
                                             }
                                         }
                                     }
                                     Ok(Err(_)) => {
-                                        tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                        tracing::error!(
+                                            "Failed to acquire permit for Session {}: Semaphore closed",
+                                            session_id
+                                        );
                                         crate::queue_remove(&session_id);
                                         break;
                                     }
                                     Err(_) => {
-                                        tracing::error!("Session {} timed out (60s) waiting for permit slot. Execution skipped.", session_id);
+                                        tracing::error!(
+                                            "Session {} timed out (60s) waiting for permit slot. Execution skipped.",
+                                            session_id
+                                        );
                                         let _ = bus.publish(SystemEvent::SystemError {
                                             message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
                                         });
@@ -327,8 +396,11 @@ impl LaneRegistry {
                     // 2. Daily Summary 実行処理
                     else if session_id == "cron:daily-summary" {
                         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                        let prompt = format!("Compile the daily summary of activities and conversation for date: {}. Please output a concise markdown summary containing a 'TL;DR' section and a list of key topics.", today);
-                        
+                        let prompt = format!(
+                            "Compile the daily summary of activities and conversation for date: {}. Please output a concise markdown summary containing a 'TL;DR' section and a list of key topics.",
+                            today
+                        );
+
                         let mut attempt = 0;
                         let max_attempts = 3;
                         let base_delay = Duration::from_secs(5);
@@ -336,36 +408,80 @@ impl LaneRegistry {
                         let desc = "Daily Activity Summary";
                         loop {
                             crate::queue_update_or_insert(&session_id, "Waiting", 0.0, desc);
-                            tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
-                            let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
+                            tracing::debug!(
+                                "Session {} attempting to acquire gmn_sem (Attempt {})...",
+                                session_id,
+                                attempt + 1
+                            );
+                            let permit_res =
+                                tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire())
+                                    .await;
                             match permit_res {
                                 Ok(Ok(permit)) => {
-                                    crate::queue_update_or_insert(&session_id, "Executing", 0.0, desc);
-                                    tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
-                                    let mut pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
-                                    if let Some(rag) = init_rag_engine(&active_config, &workspace_path) {
+                                    crate::queue_update_or_insert(
+                                        &session_id,
+                                        "Executing",
+                                        0.0,
+                                        desc,
+                                    );
+                                    tracing::info!(
+                                        "Session {} acquired permit slot. Executing agent...",
+                                        session_id
+                                    );
+                                    let mut pipeline =
+                                        Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                    if let Some(rag) =
+                                        init_rag_engine(&active_config, &workspace_path)
+                                    {
                                         pipeline.rag = Some(rag);
                                     }
-                                    match pipeline.execute(&workspace_path, &session_id, &prompt).await {
+                                    match pipeline
+                                        .execute(&workspace_path, &session_id, &prompt)
+                                        .await
+                                    {
                                         Ok(response) => {
                                             tracing::info!("Daily Summary generated successfully.");
-                                            let summaries_dir = workspace_path.join("memory").join("summaries");
+                                            let summaries_dir =
+                                                workspace_path.join("memory").join("summaries");
                                             let _ = std::fs::create_dir_all(&summaries_dir);
-                                            let file_path = summaries_dir.join(format!("{}-daily-summary.md", today));
-                                            
-                                            let _ = rustyclaw_storage::atomic_write(&file_path, response.content.as_bytes()).await;
+                                            let file_path = summaries_dir
+                                                .join(format!("{}-daily-summary.md", today));
+
+                                            let _ = rustyclaw_storage::atomic_write(
+                                                &file_path,
+                                                response.content.as_bytes(),
+                                            )
+                                            .await;
 
                                             // Index matching summary in Tantivy
-                                            let index_dir = workspace_path.join("memory").join("index");
-                                            if let Ok(search_mgr) = rustyclaw_storage::SearchIndexManager::new(&index_dir) {
-                                                let _ = search_mgr.index_file(&file_path, &response.content, &today);
+                                            let index_dir =
+                                                workspace_path.join("memory").join("index");
+                                            if let Ok(search_mgr) =
+                                                rustyclaw_storage::SearchIndexManager::new(
+                                                    &index_dir,
+                                                )
+                                            {
+                                                let _ = search_mgr.index_file(
+                                                    &file_path,
+                                                    &response.content,
+                                                    &today,
+                                                );
                                             }
-                                            if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
-                                                let trigger = if session_id.starts_with("cron:heartbeat") { "heartbeat" }
-                                                    else if session_id.starts_with("cron:") { "cron" }
-                                                    else if session_id.starts_with("discord-") { "discord" }
-                                                    else if session_id.starts_with("cli-") { "cli" }
-                                                    else { "unknown" };
+                                            if let Ok(db) =
+                                                rustyclaw_storage::DbManager::new(&db_path)
+                                            {
+                                                let trigger =
+                                                    if session_id.starts_with("cron:heartbeat") {
+                                                        "heartbeat"
+                                                    } else if session_id.starts_with("cron:") {
+                                                        "cron"
+                                                    } else if session_id.starts_with("discord-") {
+                                                        "discord"
+                                                    } else if session_id.starts_with("cli-") {
+                                                        "cli"
+                                                    } else {
+                                                        "unknown"
+                                                    };
                                                 let _ = db.record_usage(
                                                     &session_id,
                                                     response.prompt_tokens.unwrap_or(0),
@@ -382,7 +498,10 @@ impl LaneRegistry {
                                         }
                                         Err(e) => {
                                             drop(permit); // Release permit immediately so other lanes aren't blocked!
-                                            if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
+                                            if let Some(err) = e
+                                                .downcast_ref::<rustyclaw_providers::ProviderError>(
+                                                )
+                                            {
                                                 if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
                                                     if attempt < max_attempts {
                                                         let parsed_reset = err.reset_after();
@@ -402,19 +521,28 @@ impl LaneRegistry {
                                                 }
                                             }
                                             // Non-rate-limit error or max retries exceeded
-                                            tracing::error!("Failed to generate Daily Summary: {:#}", e);
+                                            tracing::error!(
+                                                "Failed to generate Daily Summary: {:#}",
+                                                e
+                                            );
                                             crate::queue_remove(&session_id);
                                             break;
                                         }
                                     }
                                 }
                                 Ok(Err(_)) => {
-                                    tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                    tracing::error!(
+                                        "Failed to acquire permit for Session {}: Semaphore closed",
+                                        session_id
+                                    );
                                     crate::queue_remove(&session_id);
                                     break;
                                 }
                                 Err(_) => {
-                                    tracing::error!("Session {} timed out (60s) waiting for permit slot. Execution skipped.", session_id);
+                                    tracing::error!(
+                                        "Session {} timed out (60s) waiting for permit slot. Execution skipped.",
+                                        session_id
+                                    );
                                     let _ = bus.publish(SystemEvent::SystemError {
                                         message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
                                     });
@@ -427,13 +555,17 @@ impl LaneRegistry {
                     // 3. 通常ユーザーセッション実行処理
                     else {
                         let desc = if session_id.starts_with("cron:session-summary:") {
-                            format!("Auto-Summary for Session '{}'", &session_id["cron:session-summary:".len()..])
+                            format!(
+                                "Auto-Summary for Session '{}'",
+                                &session_id["cron:session-summary:".len()..]
+                            )
                         } else if session_id.starts_with("cron:") {
                             // cron sessions pre-register display name in CronService; keep it
                             String::new()
                         } else {
                             let char_limit = 80;
-                            let mut truncated = content.chars().take(char_limit).collect::<String>();
+                            let mut truncated =
+                                content.chars().take(char_limit).collect::<String>();
                             if content.chars().count() > char_limit {
                                 truncated.push_str("...");
                             }
@@ -445,26 +577,49 @@ impl LaneRegistry {
 
                         loop {
                             crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &desc);
-                            tracing::debug!("Session {} attempting to acquire gmn_sem (Attempt {})...", session_id, attempt + 1);
-                            let permit_res = tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire()).await;
+                            tracing::debug!(
+                                "Session {} attempting to acquire gmn_sem (Attempt {})...",
+                                session_id,
+                                attempt + 1
+                            );
+                            let permit_res =
+                                tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire())
+                                    .await;
                             match permit_res {
                                 Ok(Ok(permit)) => {
-                                    crate::queue_update_or_insert(&session_id, "Executing", 0.0, &desc);
-                                    tracing::info!("Session {} acquired permit slot. Executing agent...", session_id);
-                                    let mut pipeline = Pipeline::new(active_config.clone(), gmn_sem.clone());
-                                    if let Some(rag) = init_rag_engine(&active_config, &workspace_path) {
+                                    crate::queue_update_or_insert(
+                                        &session_id,
+                                        "Executing",
+                                        0.0,
+                                        &desc,
+                                    );
+                                    tracing::info!(
+                                        "Session {} acquired permit slot. Executing agent...",
+                                        session_id
+                                    );
+                                    let mut pipeline =
+                                        Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                    if let Some(rag) =
+                                        init_rag_engine(&active_config, &workspace_path)
+                                    {
                                         pipeline.rag = Some(rag);
                                     }
                                     // ProgressReporter（進捗表示とタイピング）のセットアップ
-                                    let is_user_channel = !session_id.starts_with("cron") && channel_id.parse::<u64>().is_ok();
+                                    let is_user_channel = !session_id.starts_with("cron")
+                                        && channel_id.parse::<u64>().is_ok();
                                     let progress_reporter = if is_user_channel {
-                                        match discord_connector.create_progress_reporter(&channel_id) {
+                                        match discord_connector
+                                            .create_progress_reporter(&channel_id)
+                                        {
                                             Ok(rep) => {
                                                 let _ = rep.start().await;
                                                 Some(rep)
                                             }
                                             Err(e) => {
-                                                tracing::warn!("Failed to create DiscordProgressReporter: {:?}", e);
+                                                tracing::warn!(
+                                                    "Failed to create DiscordProgressReporter: {:?}",
+                                                    e
+                                                );
                                                 None
                                             }
                                         }
@@ -472,8 +627,13 @@ impl LaneRegistry {
                                         None
                                     };
 
-                                    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<String>(10);
-                                    let progress_tx_opt = if progress_reporter.is_some() { Some(progress_tx) } else { None };
+                                    let (progress_tx, mut progress_rx) =
+                                        tokio::sync::mpsc::channel::<String>(10);
+                                    let progress_tx_opt = if progress_reporter.is_some() {
+                                        Some(progress_tx)
+                                    } else {
+                                        None
+                                    };
 
                                     let progress_reporter_clone = progress_reporter.clone();
                                     let middle_task = tokio::spawn(async move {
@@ -485,25 +645,48 @@ impl LaneRegistry {
                                     });
 
                                     // スキルファイル注入（workspace/skills/<name>.md が存在すれば前置）
-                                    let injected_content = crate::skills::inject_skill_content(&workspace_path, &content);
-                                    let exec_res = if session_id.starts_with("cron:session-summary:") {
-                                        let target_session_id = &session_id["cron:session-summary:".len()..];
-                                        pipeline.generate_session_summary(&workspace_path, target_session_id)
-                                            .await
-                                            .map(|summary| rustyclaw_providers::LlmResponse {
-                                                role: "assistant".to_string(),
-                                                content: summary,
-                                                tool_calls: None,
-                                                prompt_tokens: None,
-                                                completion_tokens: None,
-                                                total_tokens: None,
-                                                model_used: None,
-                                                provider_id: None,
-                                            })
-                                    } else {
-                                        let run_purpose = if session_id == "cron:topic-patrol" { "patrol" } else { "discord" };
-                                        pipeline.execute_with_rig_agent(&workspace_path, &session_id, &content, &injected_content, tool_server_handle.clone(), run_purpose, progress_tx_opt).await
-                                    };
+                                    let injected_content = crate::skills::inject_skill_content(
+                                        &workspace_path,
+                                        &content,
+                                    );
+                                    let exec_res =
+                                        if session_id.starts_with("cron:session-summary:") {
+                                            let target_session_id =
+                                                &session_id["cron:session-summary:".len()..];
+                                            pipeline
+                                                .generate_session_summary(
+                                                    &workspace_path,
+                                                    target_session_id,
+                                                )
+                                                .await
+                                                .map(|summary| rustyclaw_providers::LlmResponse {
+                                                    role: "assistant".to_string(),
+                                                    content: summary,
+                                                    tool_calls: None,
+                                                    prompt_tokens: None,
+                                                    completion_tokens: None,
+                                                    total_tokens: None,
+                                                    model_used: None,
+                                                    provider_id: None,
+                                                })
+                                        } else {
+                                            let run_purpose = if session_id == "cron:topic-patrol" {
+                                                "patrol"
+                                            } else {
+                                                "discord"
+                                            };
+                                            pipeline
+                                                .execute_with_rig_agent(
+                                                    &workspace_path,
+                                                    &session_id,
+                                                    &content,
+                                                    &injected_content,
+                                                    tool_server_handle.clone(),
+                                                    run_purpose,
+                                                    progress_tx_opt,
+                                                )
+                                                .await
+                                        };
 
                                     // 進捗表示の終了とクリーンアップ
                                     if let Some(ref rep) = progress_reporter {
@@ -512,7 +695,10 @@ impl LaneRegistry {
                                     middle_task.abort();
                                     match exec_res {
                                         Ok(response) => {
-                                            tracing::info!("Agent response generated successfully for Session {}", session_id);
+                                            tracing::info!(
+                                                "Agent response generated successfully for Session {}",
+                                                session_id
+                                            );
                                             let _ = bus.publish(SystemEvent::AgentResponse {
                                                 session_id: session_id.clone(),
                                                 channel_id: channel_id.clone(),
@@ -520,11 +706,15 @@ impl LaneRegistry {
                                             });
 
                                             // lastUserContact を更新 (SQLite & heartbeat-state.json)
-                                            if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                            if let Ok(db) =
+                                                rustyclaw_storage::DbManager::new(&db_path)
+                                            {
                                                 let now = chrono::Local::now().to_rfc3339();
                                                 let _ = db.set_state_value("lastUserContact", &now);
 
-                                                let state_path = workspace_path.join("memory").join("heartbeat-state.json");
+                                                let state_path = workspace_path
+                                                    .join("memory")
+                                                    .join("heartbeat-state.json");
                                                 let mut current_state = serde_json::json!({
                                                     "lastChecks": {
                                                         "activityReview": "1970-01-01T00:00:00Z",
@@ -535,21 +725,40 @@ impl LaneRegistry {
                                                         "lastUserContact": now
                                                     }
                                                 });
-                                                if let Ok(c) = std::fs::read_to_string(&state_path) {
-                                                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&c) {
+                                                if let Ok(c) = std::fs::read_to_string(&state_path)
+                                                {
+                                                    if let Ok(parsed) =
+                                                        serde_json::from_str::<serde_json::Value>(
+                                                            &c,
+                                                        )
+                                                    {
                                                         current_state = parsed;
-                                                        current_state["lastChecks"]["lastUserContact"] = serde_json::json!(now);
+                                                        current_state["lastChecks"]["lastUserContact"] =
+                                                            serde_json::json!(now);
                                                     }
                                                 }
-                                                if let Ok(serialized) = serde_json::to_string_pretty(&current_state) {
-                                                    let _ = rustyclaw_storage::atomic_write(&state_path, serialized.as_bytes()).await;
+                                                if let Ok(serialized) =
+                                                    serde_json::to_string_pretty(&current_state)
+                                                {
+                                                    let _ = rustyclaw_storage::atomic_write(
+                                                        &state_path,
+                                                        serialized.as_bytes(),
+                                                    )
+                                                    .await;
                                                 }
 
-                                                let trigger = if session_id.starts_with("cron:heartbeat") { "heartbeat" }
-                                                    else if session_id.starts_with("cron:") { "cron" }
-                                                    else if session_id.starts_with("discord-") { "discord" }
-                                                    else if session_id.starts_with("cli-") { "cli" }
-                                                    else { "unknown" };
+                                                let trigger =
+                                                    if session_id.starts_with("cron:heartbeat") {
+                                                        "heartbeat"
+                                                    } else if session_id.starts_with("cron:") {
+                                                        "cron"
+                                                    } else if session_id.starts_with("discord-") {
+                                                        "discord"
+                                                    } else if session_id.starts_with("cli-") {
+                                                        "cli"
+                                                    } else {
+                                                        "unknown"
+                                                    };
                                                 let _ = db.record_usage(
                                                     &session_id,
                                                     response.prompt_tokens.unwrap_or(0),
@@ -566,7 +775,10 @@ impl LaneRegistry {
                                         }
                                         Err(e) => {
                                             drop(permit); // Release permit immediately so other lanes aren't blocked!
-                                            if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
+                                            if let Some(err) = e
+                                                .downcast_ref::<rustyclaw_providers::ProviderError>(
+                                                )
+                                            {
                                                 if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
                                                     if attempt < max_attempts {
                                                         let parsed_reset = err.reset_after();
@@ -586,9 +798,16 @@ impl LaneRegistry {
                                                 }
                                             }
                                             // Non-rate-limit error or max retries exceeded
-                                            tracing::error!("Error in Agent execution for Session {}: {:#}", session_id, e);
+                                            tracing::error!(
+                                                "Error in Agent execution for Session {}: {:#}",
+                                                session_id,
+                                                e
+                                            );
                                             let _ = bus.publish(SystemEvent::SystemError {
-                                                message: format!("Agent execution failed for session {}: {}", session_id, e),
+                                                message: format!(
+                                                    "Agent execution failed for session {}: {}",
+                                                    session_id, e
+                                                ),
                                             });
                                             crate::queue_remove(&session_id);
                                             break;
@@ -596,12 +815,18 @@ impl LaneRegistry {
                                     }
                                 }
                                 Ok(Err(_)) => {
-                                    tracing::error!("Failed to acquire permit for Session {}: Semaphore closed", session_id);
+                                    tracing::error!(
+                                        "Failed to acquire permit for Session {}: Semaphore closed",
+                                        session_id
+                                    );
                                     crate::queue_remove(&session_id);
                                     break;
                                 }
                                 Err(_) => {
-                                    tracing::error!("Session {} timed out (60s) waiting for permit slot. Execution skipped.", session_id);
+                                    tracing::error!(
+                                        "Session {} timed out (60s) waiting for permit slot. Execution skipped.",
+                                        session_id
+                                    );
                                     let _ = bus.publish(SystemEvent::SystemError {
                                         message: format!("Timeout (60s) waiting for execution slot in session {}", session_id),
                                     });
@@ -615,7 +840,9 @@ impl LaneRegistry {
             }
         });
 
-        tx.send(event).await.context("Failed to queue initial message to new lane worker")?;
+        tx.send(event)
+            .await
+            .context("Failed to queue initial message to new lane worker")?;
         Ok(())
     }
 }
@@ -645,7 +872,11 @@ impl Gateway {
             .context("Failed to load initial configuration for Gateway")?;
         {
             let m = config.get_model("default");
-            tracing::info!("Gateway loaded configuration: provider={}, model={}", m.model_provider, m.model_name);
+            tracing::info!(
+                "Gateway loaded configuration: provider={}, model={}",
+                m.model_provider,
+                m.model_name
+            );
         }
 
         // 2. ToolServer (rig エージェント用) と ToolRegistry (heartbeat 用) の初期化
@@ -661,12 +892,14 @@ impl Gateway {
                 );
                 let mut cmd = tokio::process::Command::new(&conf.command);
                 cmd.args(&conf.args)
-                   .envs(&conf.env)
-                   .stdin(std::process::Stdio::piped())
-                   .stdout(std::process::Stdio::piped());
+                    .envs(&conf.env)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped());
                 match cmd.spawn() {
                     Ok(mut child) => {
-                        if let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) {
+                        if let (Some(stdin), Some(stdout)) =
+                            (child.stdin.take(), child.stdout.take())
+                        {
                             match handler.connect((stdout, stdin)).await {
                                 Ok(service) => {
                                     let n = name.clone();
@@ -675,10 +908,14 @@ impl Gateway {
                                             tracing::warn!("MCP service {} ended: {e}", n);
                                         }
                                     }));
-                                    tokio::spawn(async move { child.wait().await.ok(); });
+                                    tokio::spawn(async move {
+                                        child.wait().await.ok();
+                                    });
                                     tracing::info!("Connected to MCP server: {}", name);
                                 }
-                                Err(e) => tracing::error!("Failed to connect MCP server {}: {e}", name),
+                                Err(e) => {
+                                    tracing::error!("Failed to connect MCP server {}: {e}", name)
+                                }
                             }
                         }
                     }
@@ -745,7 +982,10 @@ impl Gateway {
         tracing::info!("Registered native CronScheduleTool.");
 
         let tool_registry = Arc::new(tool_registry);
-        tracing::info!("Tool registry initialized with {} tools.", tool_registry.tool_count());
+        tracing::info!(
+            "Tool registry initialized with {} tools.",
+            tool_registry.tool_count()
+        );
 
         // 3. MessageBus および DiscordConnector の初期化
         let bus = Arc::new(MessageBus::new());
@@ -792,7 +1032,10 @@ impl Gateway {
         ));
 
         if discord_enabled {
-            discord_client.start().await.context("Failed to start DiscordConnector")?;
+            discord_client
+                .start()
+                .await
+                .context("Failed to start DiscordConnector")?;
         } else {
             tracing::info!("Discord channel disabled — skipping connector startup.");
         }
@@ -816,7 +1059,11 @@ impl Gateway {
             tokio::spawn(async move {
                 loop {
                     match wait_rx.recv().await {
-                        Ok(SystemEvent::IncomingMessage { session_id, content, .. }) => {
+                        Ok(SystemEvent::IncomingMessage {
+                            session_id,
+                            content,
+                            ..
+                        }) => {
                             // cron sessions pre-register their display name in CronService; skip override
                             let desc = if session_id.starts_with("cron:") {
                                 String::new()
@@ -839,11 +1086,20 @@ impl Gateway {
         let discord_sender = discord_client.clone();
         tokio::spawn(async move {
             while let Ok(event) = rx_responses.recv().await {
-                if let SystemEvent::AgentResponse { channel_id, content, .. } = event {
+                if let SystemEvent::AgentResponse {
+                    channel_id,
+                    content,
+                    ..
+                } = event
+                {
                     // 数字以外の channel_id（"http" など）は Discord チャンネルではないのでスキップ
                     if channel_id.chars().all(|c| c.is_ascii_digit()) {
                         if let Err(e) = discord_sender.send_message(&channel_id, &content).await {
-                            tracing::error!("Failed to send agent response to channel {}: {:#}", channel_id, e);
+                            tracing::error!(
+                                "Failed to send agent response to channel {}: {:#}",
+                                channel_id,
+                                e
+                            );
                         }
                     }
                 }
@@ -851,7 +1107,7 @@ impl Gateway {
         });
 
         // 7. 各種バックグラウンドサービスの初期化・起動
-        
+
         // ① Systemd Watchdog の起動
         watchdog::WatchdogService::start();
 
@@ -880,17 +1136,22 @@ impl Gateway {
             gmn_sem.clone(),
             4, // gmn_sem capacity = 4
         );
-        health_server.start().await.context("Failed to start HealthServer")?;
+        health_server
+            .start()
+            .await
+            .context("Failed to start HealthServer")?;
 
         // 8. シグナルおよび HTTP リロードハンドリングループ
-        let mut sig_hup = signal(SignalKind::hangup())
-            .context("Failed to register SIGHUP listener")?;
-        let mut sig_int = signal(SignalKind::interrupt())
-            .context("Failed to register SIGINT listener")?;
-        let mut sig_term = signal(SignalKind::terminate())
-            .context("Failed to register SIGTERM listener")?;
+        let mut sig_hup =
+            signal(SignalKind::hangup()).context("Failed to register SIGHUP listener")?;
+        let mut sig_int =
+            signal(SignalKind::interrupt()).context("Failed to register SIGINT listener")?;
+        let mut sig_term =
+            signal(SignalKind::terminate()).context("Failed to register SIGTERM listener")?;
 
-        tracing::info!("RustyClaw Gateway is now running. Monitoring signals (SIGHUP, SIGINT, SIGTERM) and HTTP reload...");
+        tracing::info!(
+            "RustyClaw Gateway is now running. Monitoring signals (SIGHUP, SIGINT, SIGTERM) and HTTP reload..."
+        );
 
         loop {
             tokio::select! {
@@ -980,12 +1241,10 @@ fn init_rag_engine(
     let engine = UnifiedRagEngine::new(model);
     let db_path = workspace_path.join("memory.db");
     match rustyclaw_storage::DbManager::new(&db_path) {
-        Ok(db) => {
-            match engine.rebuild_from_db(&db) {
-                Ok(()) => tracing::info!("init_rag_engine: loaded {} embeddings", engine.len()),
-                Err(e) => tracing::warn!("init_rag_engine: rebuild failed: {}", e),
-            }
-        }
+        Ok(db) => match engine.rebuild_from_db(&db) {
+            Ok(()) => tracing::info!("init_rag_engine: loaded {} embeddings", engine.len()),
+            Err(e) => tracing::warn!("init_rag_engine: rebuild failed: {}", e),
+        },
         Err(e) => tracing::warn!("init_rag_engine: db open failed: {}", e),
     }
     Some(Arc::new(engine))
@@ -1037,16 +1296,26 @@ mod tests {
         let tool_server_handle = rig_core::tool::server::ToolServer::new().run();
         let test_gmn_sem = Arc::new(Semaphore::new(1));
         let mock_discord = Arc::new(DiscordConnector::new("mock"));
-        let registry = LaneRegistry::new(config, ws_dir.path().to_path_buf(), bus.clone(), tool_registry, tool_server_handle, test_gmn_sem, mock_discord);
+        let registry = LaneRegistry::new(
+            config,
+            ws_dir.path().to_path_buf(),
+            bus.clone(),
+            tool_registry,
+            tool_server_handle,
+            test_gmn_sem,
+            mock_discord,
+        );
 
         // メッセージを投入
-        registry.dispatch(SystemEvent::IncomingMessage {
-            session_id: "session-abc".to_string(),
-            user_id: "user-123".to_string(),
-            channel_id: "channel-456".to_string(),
-            content: "Hello".to_string(),
-            priority: Priority::Normal,
-        }).await?;
+        registry
+            .dispatch(SystemEvent::IncomingMessage {
+                session_id: "session-abc".to_string(),
+                user_id: "user-123".to_string(),
+                channel_id: "channel-456".to_string(),
+                content: "Hello".to_string(),
+                priority: Priority::Normal,
+            })
+            .await?;
 
         // テスト環境で gmn CLI プロバイダを実行するとエラーになる（gmn がないため）か、
         // または mock プロバイダとして動く。
@@ -1058,6 +1327,4 @@ mod tests {
 
         Ok(())
     }
-
-
 }

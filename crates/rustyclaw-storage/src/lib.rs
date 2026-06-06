@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
 use rusqlite::Connection;
 use rustyclaw_providers::Message;
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
-use std::collections::HashMap;
-use once_cell::sync::Lazy;
-use tokio::sync::{RwLock, OwnedRwLockReadGuard, OwnedRwLockWriteGuard};
+use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 
 pub mod search;
 pub use search::SearchIndexManager;
@@ -16,9 +16,8 @@ pub use search::SearchIndexManager;
 // 0. パスロック管理 (Path Lock Manager)
 // ==============================================================================
 
-static PATH_LOCKS: Lazy<StdMutex<HashMap<PathBuf, Arc<RwLock<()>>>>> = Lazy::new(|| {
-    StdMutex::new(HashMap::new())
-});
+static PATH_LOCKS: Lazy<StdMutex<HashMap<PathBuf, Arc<RwLock<()>>>>> =
+    Lazy::new(|| StdMutex::new(HashMap::new()));
 
 fn canonicalize_path(path: &Path) -> PathBuf {
     match std::fs::canonicalize(path) {
@@ -32,7 +31,10 @@ pub async fn acquire_read_lock(path: &Path) -> OwnedRwLockReadGuard<()> {
     let normalized = canonicalize_path(path);
     let lock = {
         let mut locks = PATH_LOCKS.lock().unwrap();
-        locks.entry(normalized).or_insert_with(|| Arc::new(RwLock::new(()))).clone()
+        locks
+            .entry(normalized)
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .clone()
     };
     lock.read_owned().await
 }
@@ -42,11 +44,13 @@ pub async fn acquire_write_lock(path: &Path) -> OwnedRwLockWriteGuard<()> {
     let normalized = canonicalize_path(path);
     let lock = {
         let mut locks = PATH_LOCKS.lock().unwrap();
-        locks.entry(normalized).or_insert_with(|| Arc::new(RwLock::new(()))).clone()
+        locks
+            .entry(normalized)
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .clone()
     };
     lock.write_owned().await
 }
-
 
 // ==============================================================================
 // 1. SQLite データベース管理 (DbManager)
@@ -59,16 +63,17 @@ pub struct DbManager {
 impl DbManager {
     /// データベースファイルを接続し、初期化する
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
-        let conn = Connection::open(db_path.as_ref())
-            .context("Failed to open SQLite database")?;
+        let conn = Connection::open(db_path.as_ref()).context("Failed to open SQLite database")?;
 
         // データベースパフォーマンスと信頼性のための PRAGMA 設定 (WALモード等)
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
             PRAGMA cache_size=-32000;
             PRAGMA temp_store=MEMORY;
-        ")
+        ",
+        )
         .context("Failed to apply SQLite PRAGMA settings")?;
 
         let manager = Self { conn };
@@ -78,7 +83,9 @@ impl DbManager {
 
     /// 初期テーブル作成（マイグレーション）
     fn create_tables(&self) -> Result<()> {
-        self.conn.execute_batch("
+        self.conn
+            .execute_batch(
+                "
             CREATE TABLE IF NOT EXISTS usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
@@ -117,8 +124,9 @@ impl DbManager {
                 last_hash TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-        ")
-        .context("Failed to create SQLite tables")?;
+        ",
+            )
+            .context("Failed to create SQLite tables")?;
 
         // Migration: add columns for DBs created before the schema extension.
         // Each ALTER is run independently; errors (column already exists) are ignored.
@@ -142,7 +150,8 @@ impl DbManager {
     }
 
     pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
-        bytes.chunks_exact(4)
+        bytes
+            .chunks_exact(4)
             .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
             .collect()
     }
@@ -157,24 +166,29 @@ impl DbManager {
     ) -> Result<()> {
         let blob = Self::serialize_embedding(embedding);
         let now = chrono::Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT OR REPLACE INTO memory_embeddings
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO memory_embeddings
              (id, source, session_id, text_content, embedding, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![id, source, session_id, text_content, blob, now],
-        ).context("Failed to upsert embedding")?;
+                rusqlite::params![id, source, session_id, text_content, blob, now],
+            )
+            .context("Failed to upsert embedding")?;
         Ok(())
     }
 
     pub fn load_all_embeddings(&self) -> Result<Vec<(String, Vec<f32>)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT text_content, embedding FROM memory_embeddings"
-        ).context("Failed to prepare load_all_embeddings")?;
-        let rows = stmt.query_map([], |row| {
-            let text: String = row.get(0)?;
-            let blob: Vec<u8> = row.get(1)?;
-            Ok((text, blob))
-        }).context("Failed to query embeddings")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT text_content, embedding FROM memory_embeddings")
+            .context("Failed to prepare load_all_embeddings")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let text: String = row.get(0)?;
+                let blob: Vec<u8> = row.get(1)?;
+                Ok((text, blob))
+            })
+            .context("Failed to query embeddings")?;
         let mut out = Vec::new();
         for row in rows {
             let (text, blob) = row.context("Failed to read embedding row")?;
@@ -185,16 +199,19 @@ impl DbManager {
 
     /// (id, source, text_content, embedding) の全行を返す。UnifiedRagEngine の rebuild に使用。
     pub fn load_all_embeddings_with_ids(&self) -> Result<Vec<(String, String, String, Vec<f32>)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, source, text_content, embedding FROM memory_embeddings"
-        ).context("Failed to prepare load_all_embeddings_with_ids")?;
-        let rows = stmt.query_map([], |row| {
-            let id:     String  = row.get(0)?;
-            let source: String  = row.get(1)?;
-            let text:   String  = row.get(2)?;
-            let blob:   Vec<u8> = row.get(3)?;
-            Ok((id, source, text, blob))
-        }).context("Failed to query embeddings")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, source, text_content, embedding FROM memory_embeddings")
+            .context("Failed to prepare load_all_embeddings_with_ids")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let source: String = row.get(1)?;
+                let text: String = row.get(2)?;
+                let blob: Vec<u8> = row.get(3)?;
+                Ok((id, source, text, blob))
+            })
+            .context("Failed to query embeddings")?;
         let mut out = Vec::new();
         for row in rows {
             let (id, source, text, blob) = row.context("Failed to read row")?;
@@ -204,21 +221,25 @@ impl DbManager {
     }
 
     pub fn delete_embeddings_by_source(&self, source: &str) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM memory_embeddings WHERE source = ?1",
-            rusqlite::params![source],
-        ).context("Failed to delete embeddings by source")?;
+        self.conn
+            .execute(
+                "DELETE FROM memory_embeddings WHERE source = ?1",
+                rusqlite::params![source],
+            )
+            .context("Failed to delete embeddings by source")?;
         Ok(())
     }
 
     /// source="session" の embedding のうち keep_days 日より古いものを削除する。
     pub fn delete_old_session_embeddings(&self, keep_days: u32) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM memory_embeddings
+        self.conn
+            .execute(
+                "DELETE FROM memory_embeddings
              WHERE source = 'session'
                AND created_at < datetime('now', ?1)",
-            rusqlite::params![format!("-{} days", keep_days)],
-        ).context("Failed to delete old session embeddings")?;
+                rusqlite::params![format!("-{} days", keep_days)],
+            )
+            .context("Failed to delete old session embeddings")?;
         Ok(())
     }
 
@@ -228,9 +249,9 @@ impl DbManager {
     pub fn check_and_update_doc_state(&self, file_path: &str, current_hash: &str) -> Result<bool> {
         // Use a closure to allow early-return with ? while catching all errors at the outer level.
         let inner = || -> Result<bool> {
-            let mut stmt = self.conn.prepare(
-                "SELECT last_hash FROM document_states WHERE file_path = ?1"
-            )?;
+            let mut stmt = self
+                .conn
+                .prepare("SELECT last_hash FROM document_states WHERE file_path = ?1")?;
             let mut rows = stmt.query([file_path])?;
 
             if let Some(row) = rows.next()? {
@@ -249,9 +270,85 @@ impl DbManager {
         };
 
         Ok(inner().unwrap_or_else(|e| {
-            tracing::warn!("check_and_update_doc_state: DB error for '{}', forcing re-ingest: {}", file_path, e);
+            tracing::warn!(
+                "check_and_update_doc_state: DB error for '{}', forcing re-ingest: {}",
+                file_path,
+                e
+            );
             true
         }))
+    }
+
+    /// memory_embeddings テーブルに保存されているベクトルの次元数を検出する。
+    /// テーブルが空の場合は None を返す（BLOB サイズ / 4 = f32 の個数）。
+    pub fn detect_stored_embedding_dims(&self) -> Option<usize> {
+        self.conn
+            .query_row(
+                "SELECT LENGTH(embedding) FROM memory_embeddings LIMIT 1",
+                [],
+                |row| row.get::<_, usize>(0),
+            )
+            .ok()
+            .map(|bytes| bytes / 4)
+    }
+
+    /// 保存済みベクトルの次元数が expected_dims と異なる場合、
+    /// memory_embeddings と document_states を全削除する。
+    /// 削除が発生した場合 true、不要だった場合 false を返す。
+    pub fn migrate_embedding_dims_if_needed(&self, expected_dims: usize) -> Result<bool> {
+        match self.detect_stored_embedding_dims() {
+            Some(stored_dims) if stored_dims != expected_dims => {
+                self.conn
+                    .execute("DELETE FROM memory_embeddings", [])
+                    .context("migrate: failed to clear memory_embeddings")?;
+                self.conn
+                    .execute("DELETE FROM document_states", [])
+                    .context("migrate: failed to clear document_states")?;
+                tracing::info!(
+                    "migrate_embedding_dims: cleared DB ({}→{} dims)",
+                    stored_dims,
+                    expected_dims
+                );
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// クエリベクトルに近い記憶を (source, text_content, score) 形式で返す。
+    /// 既存の search_similar_memories と異なり source 列も含む。
+    pub fn search_similar_with_source(
+        &self,
+        query_vec: &[f32],
+        top_k: usize,
+        threshold: f32,
+    ) -> Result<Vec<(String, String, f64)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT source, text_content, embedding FROM memory_embeddings")
+            .context("search_similar_with_source: prepare failed")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let source: String = row.get(0)?;
+                let text: String = row.get(1)?;
+                let blob: Vec<u8> = row.get(2)?;
+                Ok((source, text, blob))
+            })
+            .context("search_similar_with_source: query failed")?;
+
+        let mut scored: Vec<(String, String, f64)> = rows
+            .filter_map(|r| r.ok())
+            .map(|(source, text, blob)| {
+                let emb = Self::deserialize_embedding(&blob);
+                let score = Self::cosine_similarity(query_vec, &emb) as f64;
+                (source, text, score)
+            })
+            .filter(|(_, _, score)| *score >= threshold as f64)
+            .collect();
+
+        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        Ok(scored)
     }
 
     /// コサイン類似度を計算する
@@ -313,7 +410,11 @@ impl DbManager {
     }
 
     pub fn get_usage_summary(&self, since: Option<&str>) -> serde_json::Value {
-        let where_clause = if since.is_some() { "WHERE created_at >= ?1" } else { "" };
+        let where_clause = if since.is_some() {
+            "WHERE created_at >= ?1"
+        } else {
+            ""
+        };
         let since_owned = since.map(|s| s.to_string());
         let params: Vec<&dyn rusqlite::ToSql> = match since_owned.as_ref() {
             Some(s) => vec![s],
@@ -343,14 +444,23 @@ impl DbManager {
         {
             let prov_sql = format!(
                 "SELECT provider_id, COUNT(*), COALESCE(SUM(total_tokens),0) FROM usage WHERE provider_id IS NOT NULL {} GROUP BY provider_id ORDER BY SUM(total_tokens) DESC",
-                if since.is_some() { "AND created_at >= ?1" } else { "" }
+                if since.is_some() {
+                    "AND created_at >= ?1"
+                } else {
+                    ""
+                }
             );
             if let Ok(mut stmt) = self.conn.prepare(&prov_sql) {
                 if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
                 }) {
                     for row in rows.flatten() {
-                        by_provider.insert(row.0, serde_json::json!({ "runs": row.1, "tokens": row.2 }));
+                        by_provider
+                            .insert(row.0, serde_json::json!({ "runs": row.1, "tokens": row.2 }));
                     }
                 }
             }
@@ -376,7 +486,8 @@ impl DbManager {
         use chrono::TimeZone;
         let g = (granularity_secs.max(1)) as i64;
         let since_rfc = since_epoch.map(|s| {
-            chrono::Utc.timestamp_opt(s, 0)
+            chrono::Utc
+                .timestamp_opt(s, 0)
                 .earliest()
                 .map(|dt| dt.to_rfc3339())
                 .unwrap_or_default()
@@ -405,7 +516,11 @@ impl DbManager {
             .query_map(params.as_slice(), |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
-                    (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?),
+                    (
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ),
                 ))
             })
             .map(|rows| rows.flatten().collect())
@@ -447,7 +562,11 @@ impl DbManager {
     }
 
     pub fn get_usage_by_trigger(&self, since: Option<&str>) -> Vec<serde_json::Value> {
-        let where_clause = if since.is_some() { "WHERE created_at >= ?1" } else { "" };
+        let where_clause = if since.is_some() {
+            "WHERE created_at >= ?1"
+        } else {
+            ""
+        };
         let since_owned = since.map(|s| s.to_string());
         let params: Vec<&dyn rusqlite::ToSql> = match since_owned.as_ref() {
             Some(s) => vec![s],
@@ -466,7 +585,9 @@ impl DbManager {
                 "runs": row.get::<_, i64>(1)?,
                 "tokens": row.get::<_, i64>(2)?,
             }))
-        }).map(|rows| rows.flatten().collect()).unwrap_or_default()
+        })
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
     }
 
     // --- Patrol State (Heartbeatパトロール実行時刻) 操作 ---
@@ -476,16 +597,19 @@ impl DbManager {
     }
 
     pub fn set_state_value(&self, key: &str, value: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO patrol_state (patrol_name, last_run_at) VALUES (?1, ?2)",
-            (key, value),
-        )
-        .context("Failed to update patrol state value in SQLite")?;
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO patrol_state (patrol_name, last_run_at) VALUES (?1, ?2)",
+                (key, value),
+            )
+            .context("Failed to update patrol state value in SQLite")?;
         Ok(())
     }
 
     pub fn get_last_patrol_run(&self, patrol_name: &str) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare("SELECT last_run_at FROM patrol_state WHERE patrol_name = ?1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT last_run_at FROM patrol_state WHERE patrol_name = ?1")?;
         let mut rows = stmt.query((patrol_name,))?;
         if let Some(row) = rows.next()? {
             let last_run: String = row.get(0)?;
@@ -507,8 +631,11 @@ impl DbManager {
     }
 
     pub fn is_item_seen(&self, item_id: &str) -> Result<bool> {
-        let mut stmt = self.conn.prepare("SELECT 1 FROM seen_items WHERE item_id = ?1")?;
-        let exists = stmt.exists((item_id,))
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM seen_items WHERE item_id = ?1")?;
+        let exists = stmt
+            .exists((item_id,))
             .context("Failed to query seen items in SQLite")?;
         Ok(exists)
     }
@@ -525,10 +652,11 @@ pub async fn atomic_write<P: AsRef<Path>>(path: P, data: &[u8]) -> Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut tmp = tempfile::NamedTempFile::new_in(dir)
         .context("Failed to create temporary file for atomic write")?;
-    
+
     tmp.write_all(data)
         .context("Failed to write data to temporary file")?;
-    tmp.as_file().sync_all()
+    tmp.as_file()
+        .sync_all()
         .context("Failed to sync temporary file content to disk")?;
     tmp.persist(path)
         .context("Failed to persist temporary file to target path")?;
@@ -556,14 +684,14 @@ impl SessionLogger {
 
         let safe_session_id = session_id.replace(':', "-");
         let file_path = self.sessions_dir.join(format!("{}.jsonl", safe_session_id));
-        
+
         let mut logged_msg = message.clone();
         if logged_msg.timestamp.is_none() {
             logged_msg.timestamp = Some(chrono::Local::now().to_rfc3339());
         }
 
-        let json_line = serde_json::to_string(&logged_msg)
-            .context("Failed to serialize message to JSON")?;
+        let json_line =
+            serde_json::to_string(&logged_msg).context("Failed to serialize message to JSON")?;
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -588,8 +716,12 @@ impl SessionLogger {
             return Ok(Vec::new());
         }
 
-        let file = File::open(&file_path)
-            .with_context(|| format!("Failed to open session log file for reading {:?}", file_path))?;
+        let file = File::open(&file_path).with_context(|| {
+            format!(
+                "Failed to open session log file for reading {:?}",
+                file_path
+            )
+        })?;
         let reader = BufReader::new(file);
         let mut messages = Vec::new();
 
@@ -700,7 +832,11 @@ impl ConversationHistory {
     /// system プロンプト＋ツール定義などの固定オーバーヘッド（推定トークン）を考慮して圧縮する。
     /// 実効上限を `limit - overhead_tokens` に下げてから既存の圧縮判定を行うことで、
     /// 履歴＋システム＋ツールの合計がモデル上限を超えて 413 になるのを防ぐ。
-    pub fn compact_if_needed_with_overhead(&mut self, limit: usize, overhead_tokens: usize) -> bool {
+    pub fn compact_if_needed_with_overhead(
+        &mut self,
+        limit: usize,
+        overhead_tokens: usize,
+    ) -> bool {
         let effective = limit.saturating_sub(overhead_tokens);
         self.compact_if_needed(effective)
     }
@@ -715,7 +851,9 @@ impl ConversationHistory {
         let trimmed = self.messages.len() - max_messages;
         tracing::info!(
             "Hard-trimming history: {} → {} messages ({} removed for TPM compliance)",
-            self.messages.len(), max_messages, trimmed
+            self.messages.len(),
+            max_messages,
+            trimmed
         );
         self.messages = self.messages[trimmed..].to_vec();
     }
@@ -733,7 +871,12 @@ mod tests {
     fn overhead_lowers_effective_limit_and_triggers_compaction() {
         // 10 件 × 100 文字 ≒ 1,500 推定トークン
         let msgs: Vec<Message> = (0..10)
-            .map(|_| Message { role: "user".into(), content: "a".repeat(100), name: None, ..Default::default() })
+            .map(|_| Message {
+                role: "user".into(),
+                content: "a".repeat(100),
+                name: None,
+                ..Default::default()
+            })
             .collect();
         // overhead=0・大きな上限 → 圧縮されない
         let mut h0 = ConversationHistory::new(msgs.clone());
@@ -747,12 +890,12 @@ mod tests {
     fn test_db_manager_creation_and_basic_ops() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let db_path = tmp_dir.path().join("test_memory.db");
-        
+
         let db = DbManager::new(&db_path)?;
-        
+
         // Usage テスト
         db.record_usage("session-1", 100, 50, 150, "test-model", "cli", None, 0)?;
-        
+
         // Patrol State テスト
         assert!(db.get_last_patrol_run("patrol-1")?.is_none());
         db.update_patrol_state("patrol-1")?;
@@ -803,8 +946,26 @@ mod tests {
     fn test_usage_aggregation() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let db = DbManager::new(&tmp_dir.path().join("agg.db"))?;
-        db.record_usage("cron:heartbeat", 100, 50, 150, "model-a", "heartbeat", Some("groq"), 0)?;
-        db.record_usage("discord-1",      200, 80, 280, "model-a", "discord",   Some("groq"), 0)?;
+        db.record_usage(
+            "cron:heartbeat",
+            100,
+            50,
+            150,
+            "model-a",
+            "heartbeat",
+            Some("groq"),
+            0,
+        )?;
+        db.record_usage(
+            "discord-1",
+            200,
+            80,
+            280,
+            "model-a",
+            "discord",
+            Some("groq"),
+            0,
+        )?;
 
         let summary = db.get_usage_summary(None);
         assert_eq!(summary["total_runs"], 2);
@@ -814,7 +975,10 @@ mod tests {
         let now = chrono::Utc::now().timestamp();
         let timeline = db.get_usage_timeline(None, now, 86400);
         assert!(!timeline.is_empty());
-        let day_total: i64 = timeline.iter().map(|r| r["tokens"].as_i64().unwrap_or(0)).sum();
+        let day_total: i64 = timeline
+            .iter()
+            .map(|r| r["tokens"].as_i64().unwrap_or(0))
+            .sum();
         assert_eq!(day_total, 430);
 
         let triggers = db.get_usage_by_trigger(None);
@@ -847,7 +1011,7 @@ mod tests {
         let rows = db.get_usage_timeline(Some(since), until, 3600);
         assert_eq!(rows.len(), 3, "01/02/03 時の3バケット（0埋め含む）");
         assert_eq!(rows[0]["tokens"], 150);
-        assert_eq!(rows[1]["tokens"], 0);   // 02時は0埋め
+        assert_eq!(rows[1]["tokens"], 0); // 02時は0埋め
         assert_eq!(rows[2]["tokens"], 15);
         assert_eq!(rows[0]["bucket_epoch"], since);
         Ok(())
@@ -859,7 +1023,11 @@ mod tests {
         // 10メッセージ、各100文字 (合計1000文字相当)
         for i in 0..10 {
             messages.push(Message {
-                role: if i % 2 == 0 { "user".to_string() } else { "assistant".to_string() },
+                role: if i % 2 == 0 {
+                    "user".to_string()
+                } else {
+                    "assistant".to_string()
+                },
                 content: "A".repeat(100),
                 name: None,
                 ..Default::default()
@@ -867,7 +1035,7 @@ mod tests {
         }
 
         let mut history = ConversationHistory::new(messages);
-        
+
         // 限界値 1000 とすると、推定 1000 文字は 800 (80%) を超えるので圧縮がトリガーされるはず
         let triggered = history.compact_if_needed(1000);
 
@@ -882,10 +1050,19 @@ mod tests {
     fn test_by_provider_aggregation() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let db = DbManager::new(&tmp_dir.path().join("prov.db"))?;
-        db.record_usage("s1", 100, 50, 150, "model-cf", "heartbeat", Some("cloudflare"), 0)?;
-        db.record_usage("s2", 200, 80, 280, "model-gr", "discord",   Some("groq"),       0)?;
-        db.record_usage("s3",  50, 20,  70, "model-gr", "cli",       Some("groq"),       0)?;
-        db.record_usage("s4",  30, 10,  40, "model-old","unknown",   None,               0)?;
+        db.record_usage(
+            "s1",
+            100,
+            50,
+            150,
+            "model-cf",
+            "heartbeat",
+            Some("cloudflare"),
+            0,
+        )?;
+        db.record_usage("s2", 200, 80, 280, "model-gr", "discord", Some("groq"), 0)?;
+        db.record_usage("s3", 50, 20, 70, "model-gr", "cli", Some("groq"), 0)?;
+        db.record_usage("s4", 30, 10, 40, "model-old", "unknown", None, 0)?;
 
         let summary = db.get_usage_summary(None);
         let by_provider = &summary["by_provider"];
@@ -914,7 +1091,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = DbManager::new(tmp.path().join("test.db")).unwrap();
         let emb: Vec<f32> = vec![0.1, 0.2, 0.3];
-        db.upsert_embedding("id1", "memory", None, "hello world", &emb).unwrap();
+        db.upsert_embedding("id1", "memory", None, "hello world", &emb)
+            .unwrap();
         let rows = db.load_all_embeddings().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, "hello world");
@@ -974,12 +1152,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = DbManager::new(tmp.path().join("test.db")).unwrap();
         // (1, 0, 0) = "hello" に近いベクトル
-        db.upsert_embedding("a", "memory", None, "hello", &[1.0, 0.0, 0.0]).unwrap();
+        db.upsert_embedding("a", "memory", None, "hello", &[1.0, 0.0, 0.0])
+            .unwrap();
         // (0, 1, 0) = "world" は直交
-        db.upsert_embedding("b", "memory", None, "world", &[0.0, 1.0, 0.0]).unwrap();
+        db.upsert_embedding("b", "memory", None, "world", &[0.0, 1.0, 0.0])
+            .unwrap();
 
         // クエリ (1, 0, 0) → threshold 0.9 → "hello" のみヒット
-        let results = db.search_similar_memories(&[1.0, 0.0, 0.0], 5, 0.9).unwrap();
+        let results = db
+            .search_similar_memories(&[1.0, 0.0, 0.0], 5, 0.9)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "hello");
         assert!((results[0].1 - 1.0).abs() < 1e-6);
@@ -989,8 +1171,10 @@ mod tests {
     fn test_load_all_embeddings_with_ids() {
         let dir = tempfile::tempdir().unwrap();
         let db = DbManager::new(dir.path().join("t.db").to_str().unwrap()).unwrap();
-        db.upsert_embedding("m0", "memory",  None,          "text A", &[1.0f32, 0.0]).unwrap();
-        db.upsert_embedding("s0", "session", Some("ses-1"), "text B", &[0.0f32, 1.0]).unwrap();
+        db.upsert_embedding("m0", "memory", None, "text A", &[1.0f32, 0.0])
+            .unwrap();
+        db.upsert_embedding("s0", "session", Some("ses-1"), "text B", &[0.0f32, 1.0])
+            .unwrap();
 
         let rows = db.load_all_embeddings_with_ids().unwrap();
         assert_eq!(rows.len(), 2);
@@ -1010,19 +1194,31 @@ mod tests {
              VALUES('old','session','s-old','old',X'00000000','2020-01-01T00:00:00Z')",
             [],
         ).unwrap();
-        db.upsert_embedding("new", "session", Some("s-new"), "new", &[0.0f32]).unwrap();
-        db.upsert_embedding("mem", "memory",  None,          "keep", &[0.0f32]).unwrap();
+        db.upsert_embedding("new", "session", Some("s-new"), "new", &[0.0f32])
+            .unwrap();
+        db.upsert_embedding("mem", "memory", None, "keep", &[0.0f32])
+            .unwrap();
 
         db.delete_old_session_embeddings(30).unwrap();
 
-        let n_session: i64 = db.conn.query_row(
-            "SELECT count(*) FROM memory_embeddings WHERE source='session'", [], |r| r.get(0)
-        ).unwrap();
-        let n_memory: i64 = db.conn.query_row(
-            "SELECT count(*) FROM memory_embeddings WHERE source='memory'", [], |r| r.get(0)
-        ).unwrap();
+        let n_session: i64 = db
+            .conn
+            .query_row(
+                "SELECT count(*) FROM memory_embeddings WHERE source='session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let n_memory: i64 = db
+            .conn
+            .query_row(
+                "SELECT count(*) FROM memory_embeddings WHERE source='memory'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(n_session, 1);
-        assert_eq!(n_memory,  1);
+        assert_eq!(n_memory, 1);
     }
 
     #[test]
@@ -1032,12 +1228,139 @@ mod tests {
         let db = DbManager::new(&db_path).unwrap();
 
         // 新規ファイル → 変更あり (true)
-        assert!(db.check_and_update_doc_state("AGENTS.md", "hash_v1").unwrap());
+        assert!(
+            db.check_and_update_doc_state("AGENTS.md", "hash_v1")
+                .unwrap()
+        );
         // 同じハッシュ → 変更なし (false)
-        assert!(!db.check_and_update_doc_state("AGENTS.md", "hash_v1").unwrap());
+        assert!(
+            !db.check_and_update_doc_state("AGENTS.md", "hash_v1")
+                .unwrap()
+        );
         // ハッシュ変更 → 変更あり (true)
-        assert!(db.check_and_update_doc_state("AGENTS.md", "hash_v2").unwrap());
+        assert!(
+            db.check_and_update_doc_state("AGENTS.md", "hash_v2")
+                .unwrap()
+        );
         // 別ファイル → 変更あり (true)
-        assert!(db.check_and_update_doc_state("skills/test.md", "hash_v1").unwrap());
+        assert!(
+            db.check_and_update_doc_state("skills/test.md", "hash_v1")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_detect_stored_embedding_dims_empty_returns_none() {
+        let db = DbManager::new(":memory:").unwrap();
+        assert_eq!(db.detect_stored_embedding_dims(), None);
+    }
+
+    #[test]
+    fn test_detect_stored_embedding_dims_1024() {
+        let db = DbManager::new(":memory:").unwrap();
+        let fake = vec![0.0f32; 1024];
+        db.upsert_embedding("id1", "test", None, "hello", &fake)
+            .unwrap();
+        assert_eq!(db.detect_stored_embedding_dims(), Some(1024));
+    }
+
+    #[test]
+    fn test_detect_stored_embedding_dims_384() {
+        let db = DbManager::new(":memory:").unwrap();
+        let fake = vec![0.0f32; 384];
+        db.upsert_embedding("id1", "test", None, "hello", &fake)
+            .unwrap();
+        assert_eq!(db.detect_stored_embedding_dims(), Some(384));
+    }
+
+    #[test]
+    fn test_migrate_embedding_dims_not_needed() {
+        let db = DbManager::new(":memory:").unwrap();
+        let fake = vec![0.0f32; 384];
+        db.upsert_embedding("id1", "test", None, "text", &fake)
+            .unwrap();
+        // 既に 384 次元 → マイグレーション不要
+        let migrated = db.migrate_embedding_dims_if_needed(384).unwrap();
+        assert!(!migrated);
+        assert_eq!(db.detect_stored_embedding_dims(), Some(384));
+    }
+
+    #[test]
+    fn test_migrate_embedding_dims_clears_on_mismatch() {
+        let db = DbManager::new(":memory:").unwrap();
+        // 1024 次元のダミーデータを投入
+        let fake_1024 = vec![0.0f32; 1024];
+        db.upsert_embedding("id1", "test", None, "text", &fake_1024)
+            .unwrap();
+        db.check_and_update_doc_state("AGENTS.md", "abc123")
+            .unwrap();
+
+        // 384 次元へのマイグレーション実行
+        let migrated = db.migrate_embedding_dims_if_needed(384).unwrap();
+        assert!(migrated, "should return true when dims changed");
+        assert_eq!(
+            db.detect_stored_embedding_dims(),
+            None,
+            "embeddings should be cleared"
+        );
+
+        // document_states もクリアされているか確認
+        let is_changed = db
+            .check_and_update_doc_state("AGENTS.md", "abc123")
+            .unwrap();
+        assert!(
+            is_changed,
+            "doc state should be cleared (forcing re-ingest)"
+        );
+    }
+
+    #[test]
+    fn test_migrate_embedding_dims_empty_db_no_op() {
+        let db = DbManager::new(":memory:").unwrap();
+        // 空 DB では次元数が None → マイグレーション不要
+        let migrated = db.migrate_embedding_dims_if_needed(384).unwrap();
+        assert!(!migrated);
+    }
+
+    #[test]
+    fn test_search_similar_with_source_returns_source() {
+        let db = DbManager::new(":memory:").unwrap();
+        // 単位ベクトルを 3 件投入
+        let v1 = vec![1.0f32, 0.0, 0.0]; // source="doc:AGENTS.md"
+        let v2 = vec![0.0f32, 1.0, 0.0]; // source="memory"
+        let v3 = vec![0.9f32, 0.1, 0.0]; // source="doc:SKILL.md" (v1 に近い)
+        db.upsert_embedding("id1", "doc:AGENTS.md", None, "agents text", &v1)
+            .unwrap();
+        db.upsert_embedding("id2", "memory", None, "memory text", &v2)
+            .unwrap();
+        db.upsert_embedding("id3", "doc:SKILL.md", None, "skill text", &v3)
+            .unwrap();
+
+        // クエリ = v1 方向 → v1, v3 が近い
+        let query = vec![1.0f32, 0.0, 0.0];
+        let results = db.search_similar_with_source(&query, 2, 0.5).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(results[0].2 >= results[1].2, "sorted by score desc");
+        // 上位 2 件の source に "doc:AGENTS.md" が含まれる
+        let sources: Vec<&str> = results.iter().map(|(s, _, _)| s.as_str()).collect();
+        assert!(sources.contains(&"doc:AGENTS.md"));
+    }
+
+    #[test]
+    fn test_search_similar_with_source_threshold_filter() {
+        let db = DbManager::new(":memory:").unwrap();
+        let v1 = vec![1.0f32, 0.0];
+        let v2 = vec![0.0f32, 1.0]; // 直交 → score = 0.0
+        db.upsert_embedding("id1", "doc:A", None, "text A", &v1)
+            .unwrap();
+        db.upsert_embedding("id2", "doc:B", None, "text B", &v2)
+            .unwrap();
+
+        let query = vec![1.0f32, 0.0];
+        let results = db.search_similar_with_source(&query, 5, 0.5).unwrap();
+        // v2 は直交 (score=0) なので threshold 0.5 未満 → 除外
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "doc:A");
     }
 }

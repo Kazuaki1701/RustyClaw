@@ -23,7 +23,9 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self { tools: std::collections::HashMap::new() }
+        Self {
+            tools: std::collections::HashMap::new(),
+        }
     }
 
     /// Registers a tool. tool.name() is used as the key.
@@ -48,10 +50,7 @@ impl ToolRegistry {
         defs.sort_by(|a, b| a.name.cmp(&b.name));
         defs
     }
-
 }
-
-
 
 #[derive(serde::Deserialize)]
 pub struct CronScheduleArgs {}
@@ -82,7 +81,9 @@ impl rig_core::tool::Tool for CronScheduleTool {
     async fn definition(&self, _prompt: String) -> rig_core::completion::ToolDefinition {
         rig_core::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Get the upcoming scheduled cron tasks and their calculated next execution times.".to_string(),
+            description:
+                "Get the upcoming scheduled cron tasks and their calculated next execution times."
+                    .to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }
     }
@@ -196,13 +197,17 @@ impl rig_core::tool::Tool for WorkspaceWriteTool {
         }
         let result = if args.mode.as_deref() == Some("append") {
             use std::io::Write;
-            std::fs::OpenOptions::new().append(true).create(true).open(&full)
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&full)
                 .and_then(|mut f| f.write_all(args.content.as_bytes()))
         } else {
             std::fs::write(&full, args.content.as_bytes())
         };
-        result.map(|_| format!("OK: wrote to {}", rel))
-              .map_err(|e| ToolCallError(format!("Write failed {}: {}", rel, e)))
+        result
+            .map(|_| format!("OK: wrote to {}", rel))
+            .map_err(|e| ToolCallError(format!("Write failed {}: {}", rel, e)))
     }
 }
 
@@ -249,13 +254,17 @@ impl rig_core::tool::Tool for MemorySearchTool {
         match rustyclaw_storage::SearchIndexManager::new(&index_dir) {
             Ok(mgr) => match mgr.search(&args.query) {
                 Ok(paths) if paths.is_empty() => Ok("No results found.".into()),
-                Ok(paths) => Ok(paths.iter()
+                Ok(paths) => Ok(paths
+                    .iter()
                     .map(|p| p.display().to_string())
                     .collect::<Vec<_>>()
                     .join("\n")),
                 Err(e) => Err(ToolCallError(format!("Search failed: {}", e))),
             },
-            Err(e) => Err(ToolCallError(format!("Memory index not available (may not have summaries yet): {}", e))),
+            Err(e) => Err(ToolCallError(format!(
+                "Memory index not available (may not have summaries yet): {}",
+                e
+            ))),
         }
     }
 }
@@ -269,7 +278,9 @@ pub struct WebSearchArgs {
     pub count: u64,
 }
 
-fn web_search_default_count() -> u64 { 5 }
+fn web_search_default_count() -> u64 {
+    5
+}
 
 #[derive(Clone)]
 pub struct WebSearchTool {
@@ -310,29 +321,40 @@ impl rig_core::tool::Tool for WebSearchTool {
             .get("https://api.search.brave.com/res/v1/web/search")
             .header("X-Subscription-Token", &self.api_key)
             .header("Accept", "application/json")
-            .query(&[("q", args.query.as_str()), ("count", count.to_string().as_str())])
+            .query(&[
+                ("q", args.query.as_str()),
+                ("count", count.to_string().as_str()),
+            ])
             .send()
             .await
         {
-            Ok(resp) if resp.status().is_success() => {
-                resp.json::<serde_json::Value>().await
-                    .map_err(|e| ToolCallError(format!("JSON parse error: {}", e)))
-                    .map(|json| {
-                        json["web"]["results"]
-                            .as_array()
-                            .map(|arr| arr.iter().map(|r| {
-                                let title = r["title"].as_str().unwrap_or("(no title)");
-                                let url   = r["url"].as_str().unwrap_or("");
-                                let desc  = r["description"].as_str().unwrap_or("");
-                                format!("**{}**\n{}\n{}", title, url, desc)
-                            }).collect::<Vec<_>>().join("\n\n"))
-                            .unwrap_or_else(|| "No results".to_string())
-                    })
-            }
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| ToolCallError(format!("JSON parse error: {}", e)))
+                .map(|json| {
+                    json["web"]["results"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|r| {
+                                    let title = r["title"].as_str().unwrap_or("(no title)");
+                                    let url = r["url"].as_str().unwrap_or("");
+                                    let desc = r["description"].as_str().unwrap_or("");
+                                    format!("**{}**\n{}\n{}", title, url, desc)
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n\n")
+                        })
+                        .unwrap_or_else(|| "No results".to_string())
+                }),
             Ok(resp) => {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                Err(ToolCallError(format!("Brave Search error {}: {}", status, body)))
+                Err(ToolCallError(format!(
+                    "Brave Search error {}: {}",
+                    status, body
+                )))
             }
             Err(e) => Err(ToolCallError(format!("Request failed: {}", e))),
         }
@@ -344,9 +366,9 @@ impl rig_core::tool::Tool for WebSearchTool {
 /// HTML タグ・script・style ブロックを除去してプレーンテキストを返す（新規 crate 依存なし）
 fn strip_html_to_text(html: &str, max_chars: usize) -> String {
     let mut out = String::with_capacity(html.len() / 2);
-    let mut in_tag    = false;
+    let mut in_tag = false;
     let mut skip_body = false;
-    let mut buf       = String::new();
+    let mut buf = String::new();
 
     for c in html.chars() {
         match c {
@@ -379,19 +401,27 @@ fn strip_html_to_text(html: &str, max_chars: usize) -> String {
         }
     }
 
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
-        .chars().take(max_chars).collect()
+    out.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max_chars)
+        .collect()
 }
 
 #[derive(Clone)]
 pub struct WebFetchTool;
 
 impl WebFetchTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for WebFetchTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -401,7 +431,9 @@ pub struct WebFetchArgs {
     pub max_chars: usize,
 }
 
-fn web_fetch_default_max_chars() -> usize { 3000 }
+fn web_fetch_default_max_chars() -> usize {
+    3000
+}
 
 impl rig_core::tool::Tool for WebFetchTool {
     const NAME: &'static str = "web_fetch";
@@ -438,11 +470,11 @@ impl rig_core::tool::Tool for WebFetchTool {
             .build()
             .unwrap_or_default();
         match client.get(&args.url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                resp.text().await
-                    .map(|html| strip_html_to_text(&html, max_chars))
-                    .map_err(|e| ToolCallError(format!("Read error: {}", e)))
-            }
+            Ok(resp) if resp.status().is_success() => resp
+                .text()
+                .await
+                .map(|html| strip_html_to_text(&html, max_chars))
+                .map_err(|e| ToolCallError(format!("Read error: {}", e))),
             Ok(resp) => Err(ToolCallError(format!("HTTP {}", resp.status()))),
             Err(e) => Err(ToolCallError(format!("Fetch failed: {}", e))),
         }
@@ -505,7 +537,8 @@ impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
 
     async fn call(&self, args: WorkspaceExecuteScriptArgs) -> Result<String, ToolCallError> {
         let script_name = &args.script_name;
-        if script_name.contains("..") || script_name.starts_with('/') || script_name.contains('\\') {
+        if script_name.contains("..") || script_name.starts_with('/') || script_name.contains('\\')
+        {
             return Err(ToolCallError("Error: Security violation. Path traversal ('..'), absolute paths, or backward slashes ('\\') are strictly prohibited.".into()));
         }
         let (script_path, scripts_dir) = if script_name.starts_with("skills/") {
@@ -523,13 +556,32 @@ impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
                 script_name, script_path
             )));
         }
-        let ext = script_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext = script_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
         let mut cmd = match ext {
-            "sh" => { let mut c = tokio::process::Command::new("bash"); c.arg(&script_path); c }
-            "py" => { let mut c = tokio::process::Command::new("python3"); c.arg(&script_path); c }
-            "js" => { let mut c = tokio::process::Command::new("node"); c.arg(&script_path); c }
-            "ts" => { let mut c = tokio::process::Command::new("bun"); c.arg("run").arg(&script_path); c }
-            _    => tokio::process::Command::new(&script_path),
+            "sh" => {
+                let mut c = tokio::process::Command::new("bash");
+                c.arg(&script_path);
+                c
+            }
+            "py" => {
+                let mut c = tokio::process::Command::new("python3");
+                c.arg(&script_path);
+                c
+            }
+            "js" => {
+                let mut c = tokio::process::Command::new("node");
+                c.arg(&script_path);
+                c
+            }
+            "ts" => {
+                let mut c = tokio::process::Command::new("bun");
+                c.arg("run").arg(&script_path);
+                c
+            }
+            _ => tokio::process::Command::new(&script_path),
         };
         cmd.args(&args.args);
         for (key, val_str) in &args.env {
@@ -557,12 +609,14 @@ impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
                 }
                 match resolved_opt {
                     Some(val) => val,
-                    None => return Err(ToolCallError(format!(
-                        "Error: Failed to resolve vault reference '$vault:{}'. \n\
+                    None => {
+                        return Err(ToolCallError(format!(
+                            "Error: Failed to resolve vault reference '$vault:{}'. \n\
                          Key '{}' was not found in vault.enc, vault.json, or env var '{}'. \n\
                          To configure: `rustyclaw vault set {} <value>`",
-                        vault_key, vault_key, env_var_name, vault_key
-                    ))),
+                            vault_key, vault_key, env_var_name, vault_key
+                        )));
+                    }
                 }
             } else {
                 val_str.clone()
@@ -585,7 +639,10 @@ impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
                     Err(ToolCallError(content))
                 }
             }
-            Err(e) => Err(ToolCallError(format!("Error: Failed to spawn script process: {:#}", e))),
+            Err(e) => Err(ToolCallError(format!(
+                "Error: Failed to spawn script process: {:#}",
+                e
+            ))),
         }
     }
 }
@@ -618,8 +675,6 @@ mod tests {
         assert_eq!(defs[0].name, "web_fetch");
     }
 
-
-
     #[tokio::test]
     async fn test_cron_schedule_tool() {
         use rig_core::tool::ToolDyn;
@@ -645,13 +700,15 @@ mod tests {
     async fn test_workspace_read_write_roundtrip() {
         use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
-        let read_tool  = WorkspaceReadTool::new(dir.path().to_path_buf());
+        let read_tool = WorkspaceReadTool::new(dir.path().to_path_buf());
         let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
 
         let res = write_tool.call(r#"{"path":"patrol/state.json","content":"{\"lastRun\":null,\"rotationIndex\":0}"}"#.to_string()).await;
         assert!(res.is_ok(), "write failed: {:?}", res);
 
-        let res = read_tool.call(r#"{"path":"patrol/state.json"}"#.to_string()).await;
+        let res = read_tool
+            .call(r#"{"path":"patrol/state.json"}"#.to_string())
+            .await;
         assert!(res.is_ok(), "read failed: {:?}", res);
         assert!(res.unwrap().contains("rotationIndex"));
     }
@@ -662,8 +719,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
 
-        tool.call(r#"{"path":"patrol/findings.md","content":"line1\n"}"#.to_string()).await.unwrap();
-        tool.call(r#"{"path":"patrol/findings.md","content":"line2\n","mode":"append"}"#.to_string()).await.unwrap();
+        tool.call(r#"{"path":"patrol/findings.md","content":"line1\n"}"#.to_string())
+            .await
+            .unwrap();
+        tool.call(
+            r#"{"path":"patrol/findings.md","content":"line2\n","mode":"append"}"#.to_string(),
+        )
+        .await
+        .unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("patrol/findings.md")).unwrap();
         assert!(content.contains("line1"));
@@ -743,7 +806,10 @@ mod tests {
     fn test_strip_html_handles_multibyte() {
         let html = "<p>こんにちは</p><script>秘密</script><p>世界</p>";
         let plain = strip_html_to_text(html, 1000);
-        assert!(plain.contains("こんにちは"), "日本語テキストが保持されること");
+        assert!(
+            plain.contains("こんにちは"),
+            "日本語テキストが保持されること"
+        );
         assert!(plain.contains("世界"), "日本語テキストが保持されること");
         assert!(!plain.contains("秘密"), "script内容が除去されること");
     }
@@ -796,7 +862,9 @@ mod tests {
     async fn test_workspace_execute_script_path_traversal() {
         use rig_core::tool::ToolDyn;
         let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        let res = tool.call(r#"{"script_name":"../etc/passwd"}"#.to_string()).await;
+        let res = tool
+            .call(r#"{"script_name":"../etc/passwd"}"#.to_string())
+            .await;
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("Security violation"));
     }
@@ -805,7 +873,9 @@ mod tests {
     async fn test_workspace_execute_script_absolute_path() {
         use rig_core::tool::ToolDyn;
         let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        let res = tool.call(r#"{"script_name":"/etc/passwd"}"#.to_string()).await;
+        let res = tool
+            .call(r#"{"script_name":"/etc/passwd"}"#.to_string())
+            .await;
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("Security violation"));
     }
@@ -832,7 +902,9 @@ mod tests {
             std::fs::set_permissions(&script_path, perms).unwrap();
         }
 
-        let res = tool.call(r#"{"script_name":"skills/vitals-coach/scripts/test-run.sh"}"#.to_string()).await;
+        let res = tool
+            .call(r#"{"script_name":"skills/vitals-coach/scripts/test-run.sh"}"#.to_string())
+            .await;
 
         assert!(res.is_ok(), "Tool reported error: {:?}", res);
         assert!(res.unwrap().contains("hello vitals"));
@@ -859,11 +931,15 @@ mod tests {
         }
 
         // 環境変数フォールバックが働くように親プロセスにセット
-        unsafe { std::env::set_var("TEST_KEY", "resolved-secret-from-env"); }
+        unsafe {
+            std::env::set_var("TEST_KEY", "resolved-secret-from-env");
+        }
 
         let res = tool.call(r#"{"script_name":"skills/vitals-coach/scripts/test-env.sh","env":{"TEST_VAL":"$vault:test-key"}}"#.to_string()).await;
 
-        unsafe { std::env::remove_var("TEST_KEY"); }
+        unsafe {
+            std::env::remove_var("TEST_KEY");
+        }
 
         assert!(res.is_ok(), "Tool reported error: {:?}", res);
         assert!(res.unwrap().contains("VAL is resolved-secret-from-env"));
@@ -930,9 +1006,11 @@ mod tests {
         use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
-        let read_tool  = WorkspaceReadTool::new(dir.path().to_path_buf());
+        let read_tool = WorkspaceReadTool::new(dir.path().to_path_buf());
 
-        let write_result = write_tool.call(r#"{"path":"notes.txt","content":"hello"}"#.to_string()).await;
+        let write_result = write_tool
+            .call(r#"{"path":"notes.txt","content":"hello"}"#.to_string())
+            .await;
         assert!(write_result.is_ok(), "write failed: {:?}", write_result);
 
         let read_result = read_tool.call(r#"{"path":"notes.txt"}"#.to_string()).await;
@@ -954,8 +1032,12 @@ mod tests {
         use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
-        tool.call(r#"{"path":"log.txt","content":"line1\n"}"#.to_string()).await.unwrap();
-        tool.call(r#"{"path":"log.txt","content":"line2\n","mode":"append"}"#.to_string()).await.unwrap();
+        tool.call(r#"{"path":"log.txt","content":"line1\n"}"#.to_string())
+            .await
+            .unwrap();
+        tool.call(r#"{"path":"log.txt","content":"line2\n","mode":"append"}"#.to_string())
+            .await
+            .unwrap();
         let content = std::fs::read_to_string(dir.path().join("log.txt")).unwrap();
         assert!(content.contains("line1") && content.contains("line2"));
     }
@@ -991,7 +1073,9 @@ mod tests {
     async fn test_workspace_execute_script_rig_core_path_traversal() {
         use rig_core::tool::ToolDyn;
         let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        let result = tool.call(r#"{"script_name":"../etc/passwd"}"#.to_string()).await;
+        let result = tool
+            .call(r#"{"script_name":"../etc/passwd"}"#.to_string())
+            .await;
         assert!(result.is_err());
     }
 

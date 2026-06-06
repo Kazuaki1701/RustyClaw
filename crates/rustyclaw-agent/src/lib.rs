@@ -1,8 +1,15 @@
 use anyhow::{Context, Result};
 use futures_util::{Stream, StreamExt};
+use rig_core::OneOrMany;
+use rig_core::embeddings::Embedding;
+use rig_core::vector_store::VectorStoreIndex;
+use rig_core::vector_store::in_memory_store::InMemoryVectorStore;
+use rig_core::vector_store::request::VectorSearchRequest;
 use rustyclaw_config::Config;
-use rustyclaw_providers::{LlmProvider, Message, StreamChunk, LlmResponse, CompletionOptions, create_provider};
-use rustyclaw_storage::{SessionLogger, ConversationHistory};
+use rustyclaw_providers::{
+    CompletionOptions, LlmProvider, LlmResponse, Message, StreamChunk, create_provider,
+};
+use rustyclaw_storage::{ConversationHistory, SessionLogger};
 use rustyclaw_tools::ToolRegistry;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -10,11 +17,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use rig_core::vector_store::in_memory_store::InMemoryVectorStore;
-use rig_core::embeddings::Embedding;
-use rig_core::OneOrMany;
-use rig_core::vector_store::request::VectorSearchRequest;
-use rig_core::vector_store::VectorStoreIndex;
 
 pub struct Pipeline {
     config: Config,
@@ -28,7 +30,12 @@ pub struct Pipeline {
 impl Pipeline {
     pub fn new(config: Config, flush_sem: Arc<Semaphore>) -> Self {
         let provider = create_provider(config.get_model("default"));
-        Self { config, provider, flush_sem, rag: None }
+        Self {
+            config,
+            provider,
+            flush_sem,
+            rag: None,
+        }
     }
 
     /// モデルチェーンを走査し、最初に成功したレスポンスを返す。
@@ -44,19 +51,24 @@ impl Pipeline {
     ) -> Result<LlmResponse> {
         let chain = self.config.get_model_chain(purpose);
         if chain.is_empty() {
-            return Err(anyhow::anyhow!("no available models for purpose: {}", purpose));
+            return Err(anyhow::anyhow!(
+                "no available models for purpose: {}",
+                purpose
+            ));
         }
 
         let category = resolve_category(session_id);
         let mut last_err: Option<anyhow::Error> = None;
 
         for (idx, model_cfg) in chain.iter().enumerate() {
-            let provider_id = if model_cfg.model_provider == "gmn" || model_cfg.model_provider == "gemini" {
-                "gmn".to_string()
-            } else {
-                rustyclaw_providers::resolve_provider_id(model_cfg)
-            };
-            if let Some(remaining) = rustyclaw_providers::provider_cooldown_remaining(&provider_id) {
+            let provider_id =
+                if model_cfg.model_provider == "gmn" || model_cfg.model_provider == "gemini" {
+                    "gmn".to_string()
+                } else {
+                    rustyclaw_providers::resolve_provider_id(model_cfg)
+                };
+            if let Some(remaining) = rustyclaw_providers::provider_cooldown_remaining(&provider_id)
+            {
                 tracing::info!(
                     model = %model_cfg.model_name,
                     provider = %provider_id,
@@ -110,23 +122,27 @@ impl Pipeline {
     /// 大きいモデルほど多くの履歴を保持できるようにする。
     fn get_history_message_limit(&self, purpose: &str) -> usize {
         let model_cfg = self.config.get_model(purpose);
-        let cw = self.config.model_list.iter()
+        let cw = self
+            .config
+            .model_list
+            .iter()
             .find(|m| m.model == model_cfg.model_name && m.enabled)
             .and_then(|m| m.context_window.as_deref());
         let ctx = parse_context_window(cw);
         match ctx {
-            0..=16_384       => 30,
-            16_385..=32_768  => 50,
-            32_769..=65_536  => 80,
+            0..=16_384 => 30,
+            16_385..=32_768 => 50,
+            32_769..=65_536 => 80,
             65_537..=262_143 => 100,
-            _                => 120,
+            _ => 120,
         }
     }
 
     /// 各種人格定義ファイルを読み込んでシステムプロンプト（Context）を構築する
     /// 行頭が // で始まる行（インデント許容）を除去する
     fn strip_comments(content: &str) -> String {
-        content.lines()
+        content
+            .lines()
             .filter(|line| !line.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n")
@@ -143,23 +159,31 @@ impl Pipeline {
             let content = match fs::read_to_string(&path) {
                 Ok(content) => content,
                 Err(e) => {
-                    tracing::warn!("Failed to read context file {:?}: {}. Using empty content.", path, e);
+                    tracing::warn!(
+                        "Failed to read context file {:?}: {}. Using empty content.",
+                        path,
+                        e
+                    );
                     String::new()
                 }
             };
 
-            context.push_str(&format!("# {}\n\n{}\n\n", filename, Self::strip_comments(&content)));
+            context.push_str(&format!(
+                "# {}\n\n{}\n\n",
+                filename,
+                Self::strip_comments(&content)
+            ));
         }
 
         // proactive-posts.md を注入（最終1件のみ）
         let posts_path = workspace_dir.join("memory").join("proactive-posts.md");
-        if let Ok(posts) = fs::read_to_string(&posts_path) {
-            if let Some(last_entry) = posts.lines().filter(|l| !l.trim().is_empty()).last() {
-                context.push_str(&format!(
-                    "# Recent AI Proactive Posts\n\n{}\n\n",
-                    last_entry
-                ));
-            }
+        if let Ok(posts) = fs::read_to_string(&posts_path)
+            && let Some(last_entry) = posts.lines().rfind(|l| !l.trim().is_empty())
+        {
+            context.push_str(&format!(
+                "# Recent AI Proactive Posts\n\n{}\n\n",
+                last_entry
+            ));
         }
 
         // 動的ブロック（現在時刻）は末尾に配置
@@ -183,9 +207,9 @@ impl Pipeline {
         }
 
         // 1. ユーザーの最終発言のタイムスタンプを特定する
-        let last_user_ts = history_messages.iter()
-            .filter(|m| m.role == "user")
-            .last()
+        let last_user_ts = history_messages
+            .iter()
+            .rfind(|m| m.role == "user")
             .and_then(|m| m.timestamp.as_ref())
             .cloned();
 
@@ -210,7 +234,9 @@ impl Pipeline {
 
         // 2. 自発的発言が存在する場合、system_context に注入ブロックを追加する
         if !proactive_entries.is_empty() {
-            let mut proactive_block = String::from("\n### Your Previous Posts in This Channel\nYou posted these messages (not in your conversation history):\n");
+            let mut proactive_block = String::from(
+                "\n### Your Previous Posts in This Channel\nYou posted these messages (not in your conversation history):\n",
+            );
             let start_idx = proactive_entries.len().saturating_sub(5);
             for entry in &proactive_entries[start_idx..] {
                 let ts = entry.timestamp.as_deref().unwrap_or("unknown");
@@ -245,7 +271,11 @@ impl Pipeline {
     }
 
     /// 前日のセッションからサマリーと履歴を取得し、文脈継続情報を作成する
-    pub fn get_session_continuation_context(&self, workspace_dir: &Path, session_id: &str) -> Option<String> {
+    pub fn get_session_continuation_context(
+        &self,
+        workspace_dir: &Path,
+        session_id: &str,
+    ) -> Option<String> {
         if session_id.starts_with("cron") {
             return None;
         }
@@ -265,10 +295,10 @@ impl Pipeline {
                 if filename.starts_with(&prefix) && filename.ends_with(".jsonl") {
                     let name_without_ext = filename.trim_end_matches(".jsonl");
                     let file_parts: Vec<&str> = name_without_ext.split('-').collect();
-                    if let Some(date_str) = file_parts.last() {
-                        if *date_str < *current_date_str {
-                            previous_sessions.push((date_str.to_string(), filename));
-                        }
+                    if let Some(date_str) = file_parts.last()
+                        && *date_str < *current_date_str
+                    {
+                        previous_sessions.push((date_str.to_string(), filename));
                     }
                 }
             }
@@ -280,15 +310,21 @@ impl Pipeline {
         if prev_date_str.len() != 8 {
             return None;
         }
-        let yyyy_mm_dd = format!("{}-{}-{}", &prev_date_str[0..4], &prev_date_str[4..6], &prev_date_str[6..8]);
+        let yyyy_mm_dd = format!(
+            "{}-{}-{}",
+            &prev_date_str[0..4],
+            &prev_date_str[4..6],
+            &prev_date_str[6..8]
+        );
 
         let prev_session_id = prev_filename.trim_end_matches(".jsonl");
         let safe_prev_session_id = prev_session_id.replace(':', "-");
 
         let summaries_dir = workspace_dir.join("memory").join("summaries");
         let mut summary_content = String::new();
-        
-        let specific_summary_path = summaries_dir.join(format!("{}-{}.md", yyyy_mm_dd, safe_prev_session_id));
+
+        let specific_summary_path =
+            summaries_dir.join(format!("{}-{}.md", yyyy_mm_dd, safe_prev_session_id));
         let daily_summary_path = summaries_dir.join(format!("{}-daily-summary.md", yyyy_mm_dd));
 
         if specific_summary_path.exists() {
@@ -302,15 +338,15 @@ impl Pipeline {
         } else if let Ok(entries) = std::fs::read_dir(&summaries_dir) {
             for entry in entries.flatten() {
                 let filename = entry.file_name().to_string_lossy().to_string();
-                if filename.starts_with(&yyyy_mm_dd) && filename.ends_with(".md") {
-                    if let Ok(c) = std::fs::read_to_string(entry.path()) {
-                        summary_content = c;
-                        break;
-                    }
+                if filename.starts_with(&yyyy_mm_dd)
+                    && filename.ends_with(".md")
+                    && let Ok(c) = std::fs::read_to_string(entry.path())
+                {
+                    summary_content = c;
+                    break;
                 }
             }
         }
-
 
         let logger = SessionLogger::new(workspace_dir);
         let mut prev_history = Vec::new();
@@ -326,7 +362,10 @@ impl Pipeline {
         let mut context = String::new();
         context.push_str("\n# === SESSION CONTINUATION CONTEXT (Yesterday's Context) ===\n");
         if !summary_content.is_empty() {
-            context.push_str(&format!("## Yesterday's Session Summary ({})\n{}\n\n", yyyy_mm_dd, summary_content));
+            context.push_str(&format!(
+                "## Yesterday's Session Summary ({})\n{}\n\n",
+                yyyy_mm_dd, summary_content
+            ));
         }
         if !prev_history.is_empty() {
             context.push_str("## Last 5 turns of Yesterday's Conversation:\n");
@@ -354,7 +393,9 @@ impl Pipeline {
             let _permit = match tokio::time::timeout(
                 Duration::from_secs(60),
                 flush_sem.acquire_owned(),
-            ).await {
+            )
+            .await
+            {
                 Ok(Ok(permit)) => permit,
                 Ok(Err(_)) => {
                     tracing::warn!(session = %session_id, "flush_memory: semaphore closed, skipping");
@@ -399,7 +440,8 @@ impl Pipeline {
             .context("Failed to open SQLite db for memory flush")?;
 
         let logger = SessionLogger::new(workspace_dir);
-        let history = logger.load_history(session_id)
+        let history = logger
+            .load_history(session_id)
             .context("Failed to load history for memory flush")?;
 
         let current_count = history.len();
@@ -412,9 +454,10 @@ impl Pipeline {
         const MIN_INTERVAL_MINS: i64 = 15;
 
         let count_key = format!("flush_count_{}", session_id);
-        let ts_key    = format!("flush_ts_{}", session_id);
+        let ts_key = format!("flush_ts_{}", session_id);
 
-        let last_flushed_count = db.get_last_patrol_run(&count_key)?
+        let last_flushed_count = db
+            .get_last_patrol_run(&count_key)?
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
 
@@ -430,19 +473,19 @@ impl Pipeline {
             }
 
             // ② 時間ゲート
-            if let Ok(Some(ts_str)) = db.get_last_patrol_run(&ts_key) {
-                if let Ok(last_ts) = chrono::DateTime::parse_from_rfc3339(&ts_str) {
-                    let elapsed_mins = chrono::Local::now()
-                        .signed_duration_since(last_ts)
-                        .num_minutes();
-                    if elapsed_mins < MIN_INTERVAL_MINS {
-                        tracing::debug!(
-                            session = %session_id,
-                            elapsed_mins,
-                            "memory flush: skipping (time gate, < {} min)", MIN_INTERVAL_MINS
-                        );
-                        return Ok(());
-                    }
+            if let Ok(Some(ts_str)) = db.get_last_patrol_run(&ts_key)
+                && let Ok(last_ts) = chrono::DateTime::parse_from_rfc3339(&ts_str)
+            {
+                let elapsed_mins = chrono::Local::now()
+                    .signed_duration_since(last_ts)
+                    .num_minutes();
+                if elapsed_mins < MIN_INTERVAL_MINS {
+                    tracing::debug!(
+                        session = %session_id,
+                        elapsed_mins,
+                        "memory flush: skipping (time gate, < {} min)", MIN_INTERVAL_MINS
+                    );
+                    return Ok(());
                 }
             }
         }
@@ -468,7 +511,9 @@ impl Pipeline {
         // コンテキストサイズ安全チェック: flush プロンプトの推定トークン数がモデルの
         // context_window の 80% を超える場合はスキップして 400 エラーを防ぐ。
         let flush_text_tokens = (conversation_text.chars().count() * 3 / 2) + 2_000;
-        let flush_model_cw = config.model_list.iter()
+        let flush_model_cw = config
+            .model_list
+            .iter()
             .find(|m| m.model == memory_model.model_name && m.enabled)
             .and_then(|m| m.context_window.as_deref());
         let flush_ctx_limit = (parse_context_window(flush_model_cw) * 4) / 5;
@@ -514,7 +559,11 @@ Rules:
 
         let user_message = format!(
             "## Current MEMORY.md\n{}\n\n## Recent conversation\n{}",
-            if existing_memory.is_empty() { "(empty)" } else { &existing_memory },
+            if existing_memory.is_empty() {
+                "(empty)"
+            } else {
+                &existing_memory
+            },
             conversation_text,
         );
         let provider = create_provider(memory_model.clone());
@@ -541,7 +590,9 @@ Rules:
             category: Some("memory".to_string()),
         };
 
-        let response = provider.complete(&messages, &[], &opts).await
+        let response = provider
+            .complete(&messages, &[], &opts)
+            .await
             .context("LLM call failed for memory flush")?;
 
         // FU-4: memory flush の LLM 消費を usage テーブルへ計上（Stats 過少計上の解消）
@@ -549,8 +600,10 @@ Rules:
 
         let response_text = response.content;
 
-        let new_memory = extract_delimited_block(&response_text, "---NEW_MEMORY---", "---END_MEMORY---");
-        let daily_log  = extract_delimited_block(&response_text, "---DAILY_LOG---",  "---END_DAILY_LOG---");
+        let new_memory =
+            extract_delimited_block(&response_text, "---NEW_MEMORY---", "---END_MEMORY---");
+        let daily_log =
+            extract_delimited_block(&response_text, "---DAILY_LOG---", "---END_DAILY_LOG---");
 
         // 1. MEMORY.md の全書き換え (fail-open)
         if let Some(content) = new_memory {
@@ -564,7 +617,9 @@ Rules:
             } else {
                 content
             };
-            if let Err(e) = rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()).await {
+            if let Err(e) =
+                rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()).await
+            {
                 tracing::warn!("memory flush: failed to write MEMORY.md: {}", e);
             } else {
                 // MEMORY.md 更新成功時のみ RAG ingestion を実行 (fail-open)
@@ -615,11 +670,19 @@ Rules:
             let content = match fs::read_to_string(&path) {
                 Ok(content) => content,
                 Err(e) => {
-                    tracing::warn!("Failed to read context file {:?}: {}. Using empty content.", path, e);
+                    tracing::warn!(
+                        "Failed to read context file {:?}: {}. Using empty content.",
+                        path,
+                        e
+                    );
                     String::new()
                 }
             };
-            context.push_str(&format!("# {}\n\n{}\n\n", filename, Self::strip_comments(&content)));
+            context.push_str(&format!(
+                "# {}\n\n{}\n\n",
+                filename,
+                Self::strip_comments(&content)
+            ));
         }
         // 動的ブロック（現在時刻）は末尾に配置
         let now = chrono::Local::now();
@@ -646,18 +709,25 @@ Rules:
             ..Default::default()
         };
         let mut messages = vec![
-            Message { role: "system".to_string(), content: system_context, name: None, ..Default::default() },
+            Message {
+                role: "system".to_string(),
+                content: system_context,
+                name: None,
+                ..Default::default()
+            },
             user_msg.clone(),
         ];
 
-        logger.append_message(session_id, &user_msg)
+        logger
+            .append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
 
         // seen_items filter DB (fail-open: skip filtering if DB unavailable)
         let db_opt = rustyclaw_storage::DbManager::new(db_path).ok();
 
         let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
-            .tool_definitions().await
+            .tool_definitions()
+            .await
             .into_iter()
             .map(|d| rustyclaw_providers::ToolDef {
                 name: d.name,
@@ -675,7 +745,15 @@ Rules:
 
             self.dump_request(workspace_dir, &messages);
 
-            let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &provider_tools, Duration::from_secs(900)).await?;
+            let mut response = self
+                .complete_with_fallback(
+                    "heartbeat",
+                    session_id,
+                    &messages,
+                    &provider_tools,
+                    Duration::from_secs(900),
+                )
+                .await?;
             response.content = filter_json_leaks(&response.content);
 
             let assistant_msg = Message {
@@ -686,57 +764,69 @@ Rules:
                 ..Default::default()
             };
             messages.push(assistant_msg.clone());
-            logger.append_message(session_id, &assistant_msg)
+            logger
+                .append_message(session_id, &assistant_msg)
                 .context("Failed to save assistant response in session log (fail-closed)")?;
             self.dump_response(workspace_dir, &response.content, &response.role);
 
-            if let Some(ref calls) = response.tool_calls {
-                if !calls.is_empty() {
-                    for call in calls {
-                        tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
-                        let (mut tool_content, tool_is_error) = if let Some(tool) = tool_registry.get(&call.function.name) {
-                            match tool.call(call.function.arguments.clone()).await {
-                                Ok(content) => (content, false),
-                                Err(e) => (format!("Tool error: {}", e), true),
-                            }
-                        } else {
-                            (format!("Error: Tool '{}' not found in registry", call.function.name), true)
-                        };
-
-                        // Filter already-seen Gmail/Calendar items (fail-open)
-                        if !tool_is_error {
-                            if let Some(ref db) = db_opt {
-                                tool_content = filter_seen_tool_result(
-                                    &call.function.name,
-                                    &call.function.arguments,
-                                    &tool_content,
-                                    db,
-                                );
-                            }
+            if let Some(ref calls) = response.tool_calls
+                && !calls.is_empty()
+            {
+                for call in calls {
+                    tracing::info!(
+                        "Agent executing tool call: {} (id: {})",
+                        call.function.name,
+                        call.id
+                    );
+                    let (mut tool_content, tool_is_error) = if let Some(tool) =
+                        tool_registry.get(&call.function.name)
+                    {
+                        match tool.call(call.function.arguments.clone()).await {
+                            Ok(content) => (content, false),
+                            Err(e) => (format!("Tool error: {}", e), true),
                         }
+                    } else {
+                        (
+                            format!("Error: Tool '{}' not found in registry", call.function.name),
+                            true,
+                        )
+                    };
 
-                        // ツール結果を 3,000 bytes にキャップ（Groq TPM 上限対策）
-                        tool_content = truncate_70_20(&tool_content, 3_000);
-
-                        let tool_msg = Message {
-                            role: "tool".to_string(),
-                            content: tool_content,
-                            tool_call_id: Some(call.id.clone()),
-                            name: Some(call.function.name.clone()),
-                            ..Default::default()
-                        };
-                        messages.push(tool_msg.clone());
-                        logger.append_message(session_id, &tool_msg)
-                            .context("Failed to save tool result message in session log (fail-closed)")?;
+                    // Filter already-seen Gmail/Calendar items (fail-open)
+                    if !tool_is_error && let Some(ref db) = db_opt {
+                        tool_content = filter_seen_tool_result(
+                            &call.function.name,
+                            &call.function.arguments,
+                            &tool_content,
+                            db,
+                        );
                     }
-                    continue;
+
+                    // ツール結果を 3,000 bytes にキャップ（Groq TPM 上限対策）
+                    tool_content = truncate_70_20(&tool_content, 3_000);
+
+                    let tool_msg = Message {
+                        role: "tool".to_string(),
+                        content: tool_content,
+                        tool_call_id: Some(call.id.clone()),
+                        name: Some(call.function.name.clone()),
+                        ..Default::default()
+                    };
+                    messages.push(tool_msg.clone());
+                    logger.append_message(session_id, &tool_msg).context(
+                        "Failed to save tool result message in session log (fail-closed)",
+                    )?;
                 }
+                continue;
             }
 
             return Ok(response);
         }
 
-        Err(anyhow::anyhow!("Heartbeat agent loop exceeded maximum step limit of {}", max_loops))
+        Err(anyhow::anyhow!(
+            "Heartbeat agent loop exceeded maximum step limit of {}",
+            max_loops
+        ))
     }
 
     /// 通常（一括）の対話実行
@@ -747,7 +837,8 @@ Rules:
         user_message: &str,
     ) -> Result<LlmResponse> {
         let mut system_context = self.build_system_context(workspace_dir)?;
-        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id) {
+        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
+        {
             system_context.push_str(&continuation);
         }
 
@@ -756,11 +847,13 @@ Rules:
         let history_messages = if session_id.starts_with("cron:") {
             Vec::new()
         } else {
-            logger.load_history(session_id)
+            logger
+                .load_history(session_id)
                 .context("Failed to load session history messages")?
         };
 
-        let cleaned_history = self.process_proactive_posts(session_id, history_messages, &mut system_context);
+        let cleaned_history =
+            self.process_proactive_posts(session_id, history_messages, &mut system_context);
 
         let mut history = ConversationHistory::new(cleaned_history);
         history.trim_to_last(self.get_history_message_limit("default"));
@@ -798,7 +891,8 @@ Rules:
         response.content = filter_json_leaks(&response.content);
 
         // 4. 会話ログの保存 (fail-closed)
-        logger.append_message(session_id, &user_msg)
+        logger
+            .append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
         let assistant_msg = Message {
             role: response.role.clone(),
@@ -806,7 +900,8 @@ Rules:
             name: None,
             ..Default::default()
         };
-        logger.append_message(session_id, &assistant_msg)
+        logger
+            .append_message(session_id, &assistant_msg)
             .context("Failed to save assistant response in session log (fail-closed)")?;
 
         self.dump_response(workspace_dir, &response.content, &response.role);
@@ -819,17 +914,26 @@ Rules:
     }
 
     /// セッション単位のサマリーを生成または増分更新する
-    pub async fn generate_session_summary(&self, workspace_dir: &Path, target_session_id: &str) -> Result<String> {
+    pub async fn generate_session_summary(
+        &self,
+        workspace_dir: &Path,
+        target_session_id: &str,
+    ) -> Result<String> {
         let logger = SessionLogger::new(workspace_dir);
-        let history = logger.load_history(target_session_id)
+        let history = logger
+            .load_history(target_session_id)
             .context("Failed to load history for session summary")?;
 
         if history.is_empty() {
-            return Err(anyhow::anyhow!("Cannot generate summary for empty session history"));
+            return Err(anyhow::anyhow!(
+                "Cannot generate summary for empty session history"
+            ));
         }
 
         let safe_session_id = target_session_id.replace(':', "-");
-        let session_file = workspace_dir.join("sessions").join(format!("{}.jsonl", safe_session_id));
+        let session_file = workspace_dir
+            .join("sessions")
+            .join(format!("{}.jsonl", safe_session_id));
         let session_date = if let Ok(meta) = std::fs::metadata(&session_file) {
             if let Ok(modified) = meta.modified() {
                 let dt: chrono::DateTime<chrono::Local> = modified.into();
@@ -842,21 +946,22 @@ Rules:
         };
 
         let summaries_dir = workspace_dir.join("memory").join("summaries");
-        let existing_summary_path = summaries_dir.join(format!("{}-{}.md", session_date, safe_session_id));
+        let existing_summary_path =
+            summaries_dir.join(format!("{}-{}.md", session_date, safe_session_id));
 
         let mut existing_content = String::new();
         let mut existing_turns = 0;
 
-        if existing_summary_path.exists() {
-            if let Ok(content) = fs::read_to_string(&existing_summary_path) {
-                existing_content = content;
-                if let Some(idx) = existing_content.rfind("<!-- turns: ") {
-                    let sub = &existing_content[idx + "<!-- turns: ".len()..];
-                    if let Some(end_idx) = sub.find(" -->") {
-                        if let Ok(t) = sub[..end_idx].trim().parse::<usize>() {
-                            existing_turns = t;
-                        }
-                    }
+        if existing_summary_path.exists()
+            && let Ok(content) = fs::read_to_string(&existing_summary_path)
+        {
+            existing_content = content;
+            if let Some(idx) = existing_content.rfind("<!-- turns: ") {
+                let sub = &existing_content[idx + "<!-- turns: ".len()..];
+                if let Some(end_idx) = sub.find(" -->")
+                    && let Ok(t) = sub[..end_idx].trim().parse::<usize>()
+                {
+                    existing_turns = t;
                 }
             }
         }
@@ -883,7 +988,7 @@ Rules:
         };
 
         // FU-4: summary 経路の LLM 消費を計上するため db を開く（fail-open）
-        let usage_db = rustyclaw_storage::DbManager::new(&workspace_dir.join("memory.db")).ok();
+        let usage_db = rustyclaw_storage::DbManager::new(workspace_dir.join("memory.db")).ok();
 
         let summary_content = if existing_turns > 0 && existing_turns < history.len() {
             // Incremental Summary
@@ -906,8 +1011,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
             let user_message = format!(
                 "## Existing Summary:\n{}\n\n## New Conversation Turns:\n{}",
-                existing_content,
-                new_conversation_text
+                existing_content, new_conversation_text
             );
 
             let messages = vec![
@@ -925,7 +1029,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 },
             ];
 
-            let response = provider.complete(&messages, &[], &opts).await
+            let response = provider
+                .complete(&messages, &[], &opts)
+                .await
                 .context("LLM call failed for incremental session summary generation")?;
             if let Some(db) = &usage_db {
                 Self::record_aux_usage(db, target_session_id, &response, "session-summary");
@@ -954,8 +1060,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
             let user_message = format!(
                 "## Session ID: {}\n\n## Conversation History:\n{}",
-                target_session_id,
-                conversation_text
+                target_session_id, conversation_text
             );
 
             let messages = vec![
@@ -973,7 +1078,9 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 },
             ];
 
-            let response = provider.complete(&messages, &[], &opts).await
+            let response = provider
+                .complete(&messages, &[], &opts)
+                .await
                 .context("LLM call failed for full session summary generation")?;
             if let Some(db) = &usage_db {
                 Self::record_aux_usage(db, target_session_id, &response, "session-summary");
@@ -996,12 +1103,18 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         // セッション要約を DB に保存（rag_engine は Pipeline.rag 経由で Task 7 で接続）
         {
             let db_path = workspace_dir.join("memory.db");
-            ingest_session_summary(target_session_id, &final_summary, &self.config, &db_path, None).await;
+            ingest_session_summary(
+                target_session_id,
+                &final_summary,
+                &self.config,
+                &db_path,
+                None,
+            )
+            .await;
         }
 
         Ok(final_summary)
     }
-
 
     /// 対話実行（ツール対応のマルチターンアジェンティックループ）
     pub async fn execute_with_tools(
@@ -1017,25 +1130,45 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         // 1. システムプロンプトとコンテキストの構築
         let mut system_context = self.build_system_context(workspace_dir)?;
-        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id) {
+        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
+        {
             system_context.push_str(&continuation);
         }
 
         // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
-        if let Some(ref rag) = self.rag {
+        if self
+            .config
+            .embedding
+            .as_ref()
+            .map(|e| e.use_local_embedding)
+            .unwrap_or(false)
+        {
+            if let Some(client) = make_embed_client(&self.config) {
+                let db_path = workspace_dir.join("memory.db");
+                let rag_ctx =
+                    retrieve_rag_context_local(user_message, &self.config, &client, &db_path).await;
+                if !rag_ctx.is_empty() {
+                    system_context.push_str(&rag_ctx);
+                }
+            }
+        } else if let Some(ref rag) = self.rag {
             let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
-            if !rag_ctx.is_empty() { system_context.push_str(&rag_ctx); }
+            if !rag_ctx.is_empty() {
+                system_context.push_str(&rag_ctx);
+            }
         }
 
         // 過去履歴のロードとトークン圧縮処理の適用
         let history_messages = if session_id.starts_with("cron:") {
             Vec::new()
         } else {
-            logger.load_history(session_id)
+            logger
+                .load_history(session_id)
                 .context("Failed to load session history messages")?
         };
 
-        let cleaned_history = self.process_proactive_posts(session_id, history_messages, &mut system_context);
+        let cleaned_history =
+            self.process_proactive_posts(session_id, history_messages, &mut system_context);
 
         let mut history = ConversationHistory::new(cleaned_history);
         history.trim_to_last(self.get_history_message_limit(purpose));
@@ -1060,12 +1193,14 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         active_messages.push(user_msg.clone());
 
         // ユーザーメッセージを fail-closed で保存
-        logger.append_message(session_id, &user_msg)
+        logger
+            .append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
 
         // ツール定義の変換 (rig_core::tool::ToolDyn -> rustyclaw-providers::ToolDef)
         let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
-            .tool_definitions().await
+            .tool_definitions()
+            .await
             .into_iter()
             .map(|d| rustyclaw_providers::ToolDef {
                 name: d.name,
@@ -1080,7 +1215,10 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         loop {
             loop_count += 1;
             if loop_count > max_loops {
-                return Err(anyhow::anyhow!("Agent loop exceeded maximum step limit of {}", max_loops));
+                return Err(anyhow::anyhow!(
+                    "Agent loop exceeded maximum step limit of {}",
+                    max_loops
+                ));
             }
 
             self.dump_request(workspace_dir, &active_messages);
@@ -1089,13 +1227,15 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             if let Some(ref tx) = progress_tx {
                 let _ = tx.send("LLMの応答を待っています...".to_string()).await;
             }
-            let mut response = self.complete_with_fallback(
-                purpose,
-                session_id,
-                &active_messages,
-                &provider_tools,
-                Duration::from_secs(300),
-            ).await?;
+            let mut response = self
+                .complete_with_fallback(
+                    purpose,
+                    session_id,
+                    &active_messages,
+                    &provider_tools,
+                    Duration::from_secs(300),
+                )
+                .await?;
             response.content = filter_json_leaks(&response.content);
 
             // アシスタント返答をMessage形式にして active_messages / logger に保存
@@ -1107,48 +1247,64 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 ..Default::default()
             };
             active_messages.push(assistant_msg.clone());
-            logger.append_message(session_id, &assistant_msg)
+            logger
+                .append_message(session_id, &assistant_msg)
                 .context("Failed to save assistant response in session log (fail-closed)")?;
 
             self.dump_response(workspace_dir, &response.content, &response.role);
 
             // 4. ツール要求があるかどうか確認
-            if let Some(ref calls) = response.tool_calls {
-                if !calls.is_empty() {
-                    // LLMがツール実行を要求したため、ツールを実行する
-                    for call in calls {
-                        tracing::info!("Agent executing tool call: {} (id: {})", call.function.name, call.id);
-                        if let Some(ref tx) = progress_tx {
-                            let _ = tx.send(format!("ツール '{}' を実行しています...", call.function.name)).await;
-                        }
-
-                        let (tool_content, _tool_is_error) = if let Some(tool) = tool_registry.get(&call.function.name) {
-                            match tool.call(call.function.arguments.clone()).await {
-                                Ok(content) => (content, false),
-                                Err(e) => (format!("Tool error: {}", e), true),
-                            }
-                        } else {
-                            (format!("Error: Tool '{}' not found in registry", call.function.name), true)
-                        };
-
-                        // ツール実行結果のメッセージ作成
-                        let tool_msg = Message {
-                            role: "tool".to_string(),
-                            content: tool_content,
-                            tool_call_id: Some(call.id.clone()),
-                            name: Some(call.function.name.clone()),
-                            ..Default::default()
-                        };
-
-                        // 会話履歴に追記して保存
-                        active_messages.push(tool_msg.clone());
-                        logger.append_message(session_id, &tool_msg)
-                            .context("Failed to save tool result message in session log (fail-closed)")?;
+            if let Some(ref calls) = response.tool_calls
+                && !calls.is_empty()
+            {
+                // LLMがツール実行を要求したため、ツールを実行する
+                for call in calls {
+                    tracing::info!(
+                        "Agent executing tool call: {} (id: {})",
+                        call.function.name,
+                        call.id
+                    );
+                    if let Some(ref tx) = progress_tx {
+                        let _ = tx
+                            .send(format!(
+                                "ツール '{}' を実行しています...",
+                                call.function.name
+                            ))
+                            .await;
                     }
 
-                    // ツール実行後にループを続行して、LLMに結果を提示する
-                    continue;
+                    let (tool_content, _tool_is_error) = if let Some(tool) =
+                        tool_registry.get(&call.function.name)
+                    {
+                        match tool.call(call.function.arguments.clone()).await {
+                            Ok(content) => (content, false),
+                            Err(e) => (format!("Tool error: {}", e), true),
+                        }
+                    } else {
+                        (
+                            format!("Error: Tool '{}' not found in registry", call.function.name),
+                            true,
+                        )
+                    };
+
+                    // ツール実行結果のメッセージ作成
+                    let tool_msg = Message {
+                        role: "tool".to_string(),
+                        content: tool_content,
+                        tool_call_id: Some(call.id.clone()),
+                        name: Some(call.function.name.clone()),
+                        ..Default::default()
+                    };
+
+                    // 会話履歴に追記して保存
+                    active_messages.push(tool_msg.clone());
+                    logger.append_message(session_id, &tool_msg).context(
+                        "Failed to save tool result message in session log (fail-closed)",
+                    )?;
                 }
+
+                // ツール実行後にループを続行して、LLMに結果を提示する
+                continue;
             }
 
             // ツール要求がなければループ終了
@@ -1164,6 +1320,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
     /// RustyclawCompletionModel を通じてフェイルオーバーチェーンを保ちつつ、
     /// rig の ReAct ループで自動的にツール呼び出しを処理する。
     /// NOTE: ツール呼び出しの中間ステップはセッションログに保存されない（最終結果のみ）。
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute_with_rig_agent(
         &self,
         workspace_dir: &Path,
@@ -1182,10 +1339,27 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         // システムプロンプトと RAG コンテキストの構築
         let mut system_context = self.build_system_context(workspace_dir)?;
-        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id) {
+        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
+        {
             system_context.push_str(&continuation);
         }
-        if let Some(ref rag) = self.rag {
+        if self
+            .config
+            .embedding
+            .as_ref()
+            .map(|e| e.use_local_embedding)
+            .unwrap_or(false)
+        {
+            if let Some(client) = make_embed_client(&self.config) {
+                let db_path = workspace_dir.join("memory.db");
+                let rag_ctx =
+                    retrieve_rag_context_local(raw_user_message, &self.config, &client, &db_path)
+                        .await;
+                if !rag_ctx.is_empty() {
+                    system_context.push_str(&rag_ctx);
+                }
+            }
+        } else if let Some(ref rag) = self.rag {
             let rag_ctx = retrieve_rag_context(raw_user_message, &self.config, rag).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
@@ -1229,8 +1403,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             .build();
 
         // プロバイダーメッセージを rig メッセージ形式に変換
-        let mut rig_history =
-            rustyclaw_providers::provider_messages_to_rig(&history.messages);
+        let mut rig_history = rustyclaw_providers::provider_messages_to_rig(&history.messages);
 
         // rig ReAct ループ実行 (LLMにはインジェクション済みのメッセージを渡す)
         let response_text = agent
@@ -1277,14 +1450,32 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         user_message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let mut system_context = self.build_system_context(workspace_dir)?;
-        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id) {
+        if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
+        {
             system_context.push_str(&continuation);
         }
 
         // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
-        if let Some(ref rag) = self.rag {
+        if self
+            .config
+            .embedding
+            .as_ref()
+            .map(|e| e.use_local_embedding)
+            .unwrap_or(false)
+        {
+            if let Some(client) = make_embed_client(&self.config) {
+                let db_path = workspace_dir.join("memory.db");
+                let rag_ctx =
+                    retrieve_rag_context_local(user_message, &self.config, &client, &db_path).await;
+                if !rag_ctx.is_empty() {
+                    system_context.push_str(&rag_ctx);
+                }
+            }
+        } else if let Some(ref rag) = self.rag {
             let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
-            if !rag_ctx.is_empty() { system_context.push_str(&rag_ctx); }
+            if !rag_ctx.is_empty() {
+                system_context.push_str(&rag_ctx);
+            }
         }
 
         // 1. 過去履歴のロードとトークン圧縮処理の適用
@@ -1292,7 +1483,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let history_messages = if session_id.starts_with("cron:") {
             Vec::new()
         } else {
-            logger.load_history(session_id)
+            logger
+                .load_history(session_id)
                 .context("Failed to load session history messages")?
         };
 
@@ -1336,7 +1528,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let session_id_clone = session_id.to_string();
 
         // ユーザーメッセージを先行して fail-closed で保存
-        logger.append_message(session_id, &user_msg)
+        logger
+            .append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
 
         // 4. ストリームをバッファリングしながら転送するラッパー
@@ -1502,7 +1695,10 @@ impl UnifiedRagEngine {
         };
         let mut store = self.store.lock().unwrap();
         store.add_documents_with_ids([(id.to_string(), text.to_string(), OneOrMany::one(emb))]);
-        self.source_map.lock().unwrap().insert(id.to_string(), source.to_string());
+        self.source_map
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), source.to_string());
     }
 
     /// top_k 件の (source, text, score) を返す。
@@ -1521,26 +1717,32 @@ impl UnifiedRagEngine {
             (store.clone(), self.model.clone())
         };
         let index = store_clone.index(model_clone);
-        let id_scores = index.top_n_ids(req).await
+        let id_scores = index
+            .top_n_ids(req)
+            .await
             .map_err(|e| anyhow::anyhow!("RAG search failed: {}", e))?;
 
         // id → text のマッピングを取得
         let text_map: std::collections::HashMap<String, String> = {
             let store = self.store.lock().unwrap();
-            store.iter()
+            store
+                .iter()
                 .map(|(id, (text, _))| (id.clone(), text.clone()))
                 .collect()
         };
 
         let smap = self.source_map.lock().unwrap();
-        Ok(id_scores.into_iter().filter_map(|(score, id)| {
-            let source = smap.get(&id).cloned().unwrap_or_else(|| {
-                tracing::warn!("UnifiedRagEngine::search: source not found for id={}", id);
-                "unknown".to_string()
-            });
-            let text = text_map.get(&id)?.clone();
-            Some((source, text, score))
-        }).collect())
+        Ok(id_scores
+            .into_iter()
+            .filter_map(|(score, id)| {
+                let source = smap.get(&id).cloned().unwrap_or_else(|| {
+                    tracing::warn!("UnifiedRagEngine::search: source not found for id={}", id);
+                    "unknown".to_string()
+                });
+                let text = text_map.get(&id)?.clone();
+                Some((source, text, score))
+            })
+            .collect())
     }
 
     pub fn len(&self) -> usize {
@@ -1567,12 +1769,10 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
             current = Some(trimmed.to_string());
         } else if !trimmed.is_empty()
             && !trimmed.starts_with('#')
-            && current.is_some()
+            && let Some(ref mut cur) = current
         {
-            if let Some(ref mut cur) = current {
-                cur.push(' ');
-                cur.push_str(trimmed);
-            }
+            cur.push(' ');
+            cur.push_str(trimmed);
         }
     }
     if let Some(last) = current {
@@ -1581,7 +1781,13 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
     chunks
         .into_iter()
         .filter(|s| !s.is_empty())
-        .map(|s| if s.len() > 512 { s.chars().take(512).collect::<String>() } else { s })
+        .map(|s| {
+            if s.len() > 512 {
+                s.chars().take(512).collect::<String>()
+            } else {
+                s
+            }
+        })
         .collect()
 }
 
@@ -1616,6 +1822,42 @@ pub(crate) fn chunk_static_document(file_name: &str, content: &str) -> Vec<Strin
     chunks
 }
 
+pub(crate) enum EmbedClientKind {
+    Remote(rustyclaw_providers::CloudflareEmbeddingClient),
+    Local(rustyclaw_providers::LocalEmbeddingClient),
+}
+
+impl EmbedClientKind {
+    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        match self {
+            Self::Remote(c) => c.embed(texts).await,
+            Self::Local(c) => c.embed(texts).await,
+        }
+    }
+}
+
+fn make_embed_client(config: &Config) -> Option<EmbedClientKind> {
+    if config
+        .embedding
+        .as_ref()
+        .map(|e| e.use_local_embedding)
+        .unwrap_or(false)
+    {
+        let cache_dir = rustyclaw_config::get_app_dir().join("fastembed_cache");
+        match rustyclaw_providers::LocalEmbeddingClient::new(&cache_dir) {
+            Ok(c) => return Some(EmbedClientKind::Local(c)),
+            Err(e) => {
+                tracing::warn!("make_embed_client: LocalEmbeddingClient init failed: {}", e);
+                return None;
+            }
+        }
+    }
+    let (api_endpoint, api_key, _model) = config.get_embedding_client_params()?;
+    Some(EmbedClientKind::Remote(
+        rustyclaw_providers::CloudflareEmbeddingClient::new(&api_endpoint, &api_key),
+    ))
+}
+
 /// workspace_dir 内の AGENTS.md および skills/*.md をチャンク化し、
 /// ハッシュ差分がある場合のみ memory.db に embedding を保存する。Fail-open。
 pub async fn ingest_static_documents(
@@ -1623,15 +1865,27 @@ pub async fn ingest_static_documents(
     config: &Config,
     db_path: &std::path::Path,
 ) {
-    let (api_endpoint, api_key, _model) = match config.get_embedding_client_params() {
-        Some(p) => p,
+    let client = match make_embed_client(config) {
+        Some(c) => c,
         None => return,
     };
-    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(&api_endpoint, &api_key);
     let db = match rustyclaw_storage::DbManager::new(db_path) {
         Ok(d) => d,
-        Err(e) => { tracing::warn!("ingest_static_documents: db open error: {}", e); return; }
+        Err(e) => {
+            tracing::warn!("ingest_static_documents: db open error: {}", e);
+            return;
+        }
     };
+    // ローカルモード時: 次元数が異なる場合 DB をクリアして全再インジェストを促す
+    if config
+        .embedding
+        .as_ref()
+        .map(|e| e.use_local_embedding)
+        .unwrap_or(false)
+        && let Err(e) = db.migrate_embedding_dims_if_needed(384)
+    {
+        tracing::warn!("ingest_static_documents: migration error: {}", e);
+    }
 
     // スキャン対象ファイル: AGENTS.md + skills/*.md
     let mut files = vec![workspace_dir.join("AGENTS.md")];
@@ -1640,39 +1894,53 @@ pub async fn ingest_static_documents(
         let mut skill_files: Vec<_> = entries
             .flatten()
             .map(|e| e.path())
-            .filter(|p| p.is_file() && p.extension().map_or(false, |ext| ext == "md"))
+            .filter(|p| p.is_file() && p.extension().is_some_and(|ext| ext == "md"))
             .collect();
         skill_files.sort();
         files.extend(skill_files);
     }
 
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     for file_path in files {
         let content = match std::fs::read_to_string(&file_path) {
             Ok(c) => c,
             Err(_) => continue,
         };
-        let file_name = file_path.file_name()
+        let file_name = file_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
 
         let hash_str = format!("{:x}", Sha256::digest(content.as_bytes()));
 
-        let is_changed = db.check_and_update_doc_state(file_name, &hash_str)
+        let is_changed = db
+            .check_and_update_doc_state(file_name, &hash_str)
             .unwrap_or(true);
 
         if !is_changed {
-            tracing::debug!("ingest_static_documents: '{}' unchanged, skipping", file_name);
+            tracing::debug!(
+                "ingest_static_documents: '{}' unchanged, skipping",
+                file_name
+            );
             continue;
         }
 
-        tracing::info!("ingest_static_documents: '{}' changed, ingesting...", file_name);
+        tracing::info!(
+            "ingest_static_documents: '{}' changed, ingesting...",
+            file_name
+        );
         let chunks = chunk_static_document(file_name, &content);
-        if chunks.is_empty() { continue; }
+        if chunks.is_empty() {
+            continue;
+        }
 
         let source_id = format!("doc:{}", file_name);
         if let Err(e) = db.delete_embeddings_by_source(&source_id) {
-            tracing::warn!("ingest_static_documents: delete error for '{}': {}", file_name, e);
+            tracing::warn!(
+                "ingest_static_documents: delete error for '{}': {}",
+                file_name,
+                e
+            );
             continue;
         }
 
@@ -1682,7 +1950,9 @@ pub async fn ingest_static_documents(
                 if embeddings.len() != chunks.len() {
                     tracing::warn!(
                         "ingest_static_documents: chunk/embedding count mismatch ({} vs {}) for '{}', proceeding with zip",
-                        chunks.len(), embeddings.len(), file_name
+                        chunks.len(),
+                        embeddings.len(),
+                        file_name
                     );
                 }
                 let saved = embeddings.len().min(chunks.len());
@@ -1692,10 +1962,18 @@ pub async fn ingest_static_documents(
                         tracing::warn!("ingest_static_documents: upsert error: {}", e);
                     }
                 }
-                tracing::info!("ingest_static_documents: ingested {} chunks from '{}'", saved, file_name);
+                tracing::info!(
+                    "ingest_static_documents: ingested {} chunks from '{}'",
+                    saved,
+                    file_name
+                );
             }
             Err(e) => {
-                tracing::warn!("ingest_static_documents: embed API error for '{}': {}", file_name, e);
+                tracing::warn!(
+                    "ingest_static_documents: embed API error for '{}': {}",
+                    file_name,
+                    e
+                );
                 // ハッシュを空にリセットして次回再試行を促す
                 let _ = db.check_and_update_doc_state(file_name, "");
             }
@@ -1711,11 +1989,18 @@ pub(crate) async fn ingest_memory_md(
     db_path: &Path,
     rag_engine: Option<&UnifiedRagEngine>,
 ) {
-    let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
-        Some(p) => p,
+    let client = match make_embed_client(config) {
+        Some(c) => c,
         None => {
-            if config.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
-                tracing::warn!("ingest_memory_md: embedding enabled but no valid model config found");
+            if config
+                .embedding
+                .as_ref()
+                .map(|e| e.enabled)
+                .unwrap_or(false)
+            {
+                tracing::warn!(
+                    "ingest_memory_md: embedding enabled but no valid client (check use_local_embedding or API config)"
+                );
             }
             return;
         }
@@ -1723,7 +2008,10 @@ pub(crate) async fn ingest_memory_md(
     let memory_path = workspace_dir.join("MEMORY.md");
     let content = match std::fs::read_to_string(&memory_path) {
         Ok(c) => c,
-        Err(e) => { tracing::warn!("ingest_memory_md: failed to read MEMORY.md: {}", e); return; }
+        Err(e) => {
+            tracing::warn!("ingest_memory_md: failed to read MEMORY.md: {}", e);
+            return;
+        }
     };
     let chunks = chunk_memory_md(&content);
     if chunks.is_empty() {
@@ -1731,25 +2019,27 @@ pub(crate) async fn ingest_memory_md(
         return;
     }
 
-    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
-        &api_endpoint,
-        &api_key,
-    );
-    let _ = model; // model name is embedded in api_endpoint for Cloudflare Workers AI
     let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
     let embeddings = match client.embed(&text_refs).await {
         Ok(v) => v,
-        Err(e) => { tracing::warn!("ingest_memory_md: embedding API error: {}", e); return; }
+        Err(e) => {
+            tracing::warn!("ingest_memory_md: embedding API error: {}", e);
+            return;
+        }
     };
 
     let db = match rustyclaw_storage::DbManager::new(db_path) {
         Ok(d) => d,
-        Err(e) => { tracing::warn!("ingest_memory_md: db open error: {}", e); return; }
+        Err(e) => {
+            tracing::warn!("ingest_memory_md: db open error: {}", e);
+            return;
+        }
     };
     if embeddings.len() != chunks.len() {
         tracing::warn!(
             "ingest_memory_md: chunk/embedding count mismatch ({} vs {}), proceeding with zip",
-            chunks.len(), embeddings.len()
+            chunks.len(),
+            embeddings.len()
         );
     }
     if let Err(e) = db.delete_embeddings_by_source("memory") {
@@ -1765,7 +2055,10 @@ pub(crate) async fn ingest_memory_md(
             rag.add_one(&id, "memory", None, chunk, emb);
         }
     }
-    tracing::info!("ingest_memory_md: ingested {} chunks from MEMORY.md", chunks.len());
+    tracing::info!(
+        "ingest_memory_md: ingested {} chunks from MEMORY.md",
+        chunks.len()
+    );
 }
 
 /// セッション要約テキストを embedding して SQLite + UnifiedRagEngine に保存する。Fail-open。
@@ -1777,54 +2070,82 @@ pub(crate) async fn ingest_session_summary(
     db_path: &Path,
     rag_engine: Option<&UnifiedRagEngine>,
 ) {
-    let (api_endpoint, api_key, _model) = match config.get_embedding_client_params() {
-        Some(p) => p,
+    let client = match make_embed_client(config) {
+        Some(c) => c,
         None => return,
     };
-    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
-        &api_endpoint, &api_key,
-    );
     let text_short: String = summary_text.chars().take(1024).collect();
     let embeddings = match client.embed(&[text_short.as_str()]).await {
         Ok(v) if !v.is_empty() => v,
-        Ok(_) => { tracing::warn!("ingest_session_summary: empty embedding result"); return; }
-        Err(e) => { tracing::warn!("ingest_session_summary: embed error: {}", e); return; }
+        Ok(_) => {
+            tracing::warn!("ingest_session_summary: empty embedding result");
+            return;
+        }
+        Err(e) => {
+            tracing::warn!("ingest_session_summary: embed error: {}", e);
+            return;
+        }
     };
     let db = match rustyclaw_storage::DbManager::new(db_path) {
         Ok(d) => d,
-        Err(e) => { tracing::warn!("ingest_session_summary: db open error: {}", e); return; }
+        Err(e) => {
+            tracing::warn!("ingest_session_summary: db open error: {}", e);
+            return;
+        }
     };
     let id = format!("session::{}", session_id.replace(':', "-"));
-    if let Err(e) = db.upsert_embedding(&id, "session", Some(session_id), &text_short, &embeddings[0]) {
+    if let Err(e) = db.upsert_embedding(
+        &id,
+        "session",
+        Some(session_id),
+        &text_short,
+        &embeddings[0],
+    ) {
         tracing::warn!("ingest_session_summary: upsert error: {}", e);
         return;
     }
     if let Some(rag) = rag_engine {
-        rag.add_one(&id, "session", Some(session_id), &text_short, &embeddings[0]);
+        rag.add_one(
+            &id,
+            "session",
+            Some(session_id),
+            &text_short,
+            &embeddings[0],
+        );
     }
-    let ttl_days = config.embedding.as_ref()
+    let ttl_days = config
+        .embedding
+        .as_ref()
         .and_then(|e| e.session_summary_ttl_days)
         .unwrap_or(7);
     if let Err(e) = db.delete_old_session_embeddings(ttl_days) {
         tracing::warn!("ingest_session_summary: TTL cleanup error: {}", e);
     }
-    tracing::info!("ingest_session_summary: stored embedding for session '{}'", session_id);
+    tracing::info!(
+        "ingest_session_summary: stored embedding for session '{}'",
+        session_id
+    );
 }
 
 /// RAG 検索結果をシステムプロンプト注入用の Markdown に変換する。
 /// source="doc:*" を最初に、source="memory"、source="session" の順で別セクション表示する。
 pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
-    if items.is_empty() { return String::new(); }
+    if items.is_empty() {
+        return String::new();
+    }
 
-    let doc_items: Vec<&str> = items.iter()
+    let doc_items: Vec<&str> = items
+        .iter()
         .filter(|(src, _, _)| src.starts_with("doc:"))
         .map(|(_, txt, _)| txt.as_str())
         .collect();
-    let memory_items: Vec<&str> = items.iter()
+    let memory_items: Vec<&str> = items
+        .iter()
         .filter(|(src, _, _)| src == "memory")
         .map(|(_, txt, _)| txt.as_str())
         .collect();
-    let session_items: Vec<&str> = items.iter()
+    let session_items: Vec<&str> = items
+        .iter()
         .filter(|(src, _, _)| src == "session")
         .map(|(_, txt, _)| txt.as_str())
         .collect();
@@ -1834,17 +2155,26 @@ pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
     if !doc_items.is_empty() {
         out.push_str("\n\n## Relevant Specifications & Rules\n");
         out.push_str("Use the following guidelines for task execution:\n\n");
-        for text in &doc_items { out.push_str(text); out.push('\n'); }
+        for text in &doc_items {
+            out.push_str(text);
+            out.push('\n');
+        }
     }
     if !memory_items.is_empty() {
         out.push_str("\n\n## Relevant Memory\n");
         out.push_str("The following memories are relevant to the current conversation:\n\n");
-        for text in &memory_items { out.push_str(text); out.push('\n'); }
+        for text in &memory_items {
+            out.push_str(text);
+            out.push('\n');
+        }
     }
     if !session_items.is_empty() {
         out.push_str("\n\n## Relevant Past Sessions\n");
         out.push_str("The following session summaries are relevant:\n\n");
-        for text in &session_items { out.push_str(text); out.push('\n'); }
+        for text in &session_items {
+            out.push_str(text);
+            out.push('\n');
+        }
     }
     out
 }
@@ -1859,19 +2189,76 @@ pub(crate) async fn retrieve_rag_context(
     if rag_engine.is_empty() {
         return String::new();
     }
-    let top_k    = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
-    let threshold = config.embedding.as_ref().map(|e| e.similarity_threshold as f64).unwrap_or(0.60);
+    let top_k = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
+    let threshold = config
+        .embedding
+        .as_ref()
+        .map(|e| e.similarity_threshold as f64)
+        .unwrap_or(0.60);
     let query_short: String = query_text.chars().take(512).collect();
     let results = match rag_engine.search(&query_short, top_k).await {
         Ok(r) => r,
-        Err(e) => { tracing::warn!("retrieve_rag_context: search error: {}", e); return String::new(); }
+        Err(e) => {
+            tracing::warn!("retrieve_rag_context: search error: {}", e);
+            return String::new();
+        }
     };
-    let filtered: Vec<(String, String, f64)> = results.into_iter()
+    let filtered: Vec<(String, String, f64)> = results
+        .into_iter()
         .filter(|(_, _, score)| *score >= threshold)
         .collect();
-    if filtered.is_empty() { return String::new(); }
-    tracing::debug!("retrieve_rag_context: {} hits above threshold {}", filtered.len(), threshold);
+    if filtered.is_empty() {
+        return String::new();
+    }
+    tracing::debug!(
+        "retrieve_rag_context: {} hits above threshold {}",
+        filtered.len(),
+        threshold
+    );
     format_rag_context(&filtered)
+}
+
+/// ローカル embedding モデルを使って query_text に関連する記憶・ドキュメントを SQLite から検索し、
+/// システムプロンプト注入用の文字列を返す。Fail-open。
+pub(crate) async fn retrieve_rag_context_local(
+    query_text: &str,
+    config: &Config,
+    embed_client: &EmbedClientKind,
+    db_path: &Path,
+) -> String {
+    let query_short: String = query_text.chars().take(512).collect();
+    let embeddings = match embed_client.embed(&[query_short.as_str()]).await {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => return String::new(),
+        Err(e) => {
+            tracing::warn!("retrieve_rag_context_local: embed error: {}", e);
+            return String::new();
+        }
+    };
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("retrieve_rag_context_local: db open error: {}", e);
+            return String::new();
+        }
+    };
+    let top_k = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
+    let threshold = config
+        .embedding
+        .as_ref()
+        .map(|e| e.similarity_threshold)
+        .unwrap_or(0.60);
+    match db.search_similar_with_source(&embeddings[0], top_k, threshold) {
+        Ok(results) if !results.is_empty() => {
+            tracing::debug!("retrieve_rag_context_local: {} hits", results.len());
+            format_rag_context(&results)
+        }
+        Ok(_) => String::new(),
+        Err(e) => {
+            tracing::warn!("retrieve_rag_context_local: search error: {}", e);
+            String::new()
+        }
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1886,7 +2273,11 @@ fn extract_delimited_block(text: &str, start_tag: &str, end_tag: &str) -> Option
         .map(|p| content_start + p)
         .unwrap_or(text.len());
     let content = text[content_start..content_end].trim().to_string();
-    if content.is_empty() { None } else { Some(content) }
+    if content.is_empty() {
+        None
+    } else {
+        Some(content)
+    }
 }
 
 /// config.json の context_window 文字列（"8k", "131k", "256k", "1M" 等）をトークン数に変換する。
@@ -1914,9 +2305,7 @@ fn trim_heartbeat_messages(messages: &mut Vec<Message>) {
         return;
     }
     // 末尾から assistant ロールのメッセージを探す
-    let last_assistant_idx = messages
-        .iter()
-        .rposition(|m| m.role == "assistant");
+    let last_assistant_idx = messages.iter().rposition(|m| m.role == "assistant");
     if let Some(idx) = last_assistant_idx {
         // idx >= 2 かつ前にもっと古い世代がある場合のみ削除
         if idx >= 2 && messages[..idx].iter().any(|m| m.role == "assistant") {
@@ -1973,7 +2362,10 @@ fn resolve_category(session_id: &str) -> String {
         "memory".to_string()
     } else if session_id == "summary" || session_id.starts_with("cron:session-summary:") {
         "summary".to_string()
-    } else if session_id == "daily-summary" || session_id == "cron:daily-summary" || session_id.contains("daily-summary") {
+    } else if session_id == "daily-summary"
+        || session_id == "cron:daily-summary"
+        || session_id.contains("daily-summary")
+    {
         "daily".to_string()
     } else if session_id == "cron:heartbeat" || session_id.contains("heartbeat") {
         "heartbeat".to_string()
@@ -2093,26 +2485,38 @@ fn filter_seen_tool_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustyclaw_config::{ModelEntry, AgentsConfig, ModelNames};
+    use rustyclaw_config::{AgentsConfig, ModelEntry, ModelNames};
     use tempfile::tempdir;
-    use tokio::net::TcpListener;
     use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
 
     /// Find the most recent dump file for a given category under llm/<category>/<date>/<time>.json
     fn find_latest_dump(llm_dir: &std::path::Path, category: &str) -> Option<std::path::PathBuf> {
         let cat_dir = llm_dir.join(category);
-        let mut date_dirs: Vec<_> = std::fs::read_dir(&cat_dir).ok()?.flatten()
+        let mut date_dirs: Vec<_> = std::fs::read_dir(&cat_dir)
+            .ok()?
+            .flatten()
             .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
             .map(|e| e.path())
             .collect();
         date_dirs.sort_unstable_by(|a, b| b.cmp(a));
         let date_dir = date_dirs.into_iter().next()?;
-        let mut files: Vec<_> = std::fs::read_dir(&date_dir).ok()?.flatten()
+        let mut files: Vec<_> = std::fs::read_dir(&date_dir)
+            .ok()?
+            .flatten()
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .map(|e| e.path())
             .collect();
         files.sort_unstable_by(|a, b| b.cmp(a));
         files.into_iter().next()
+    }
+
+    #[test]
+    fn test_make_embed_client_returns_none_when_no_config() {
+        use rustyclaw_config::Config;
+        let config = Config::default();
+        // no embedding config → make_embed_client returns None
+        assert!(make_embed_client(&config).is_none());
     }
 
     #[tokio::test]
@@ -2129,7 +2533,10 @@ mod tests {
                     max_tokens: Some(100),
                     temperature: Some(0.5),
                     enabled: false,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: None,
                     cf_aig_gateway_id: None,
                 },
@@ -2142,7 +2549,10 @@ mod tests {
                     max_tokens: Some(100),
                     temperature: Some(0.5),
                     enabled: true,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: None,
                     cf_aig_gateway_id: None,
                 },
@@ -2173,7 +2583,10 @@ mod tests {
                 max_tokens: Some(2048),
                 temperature: Some(0.7),
                 enabled: true,
-                rpm: None, rpd: None, tpm: None, tpd: None,
+                rpm: None,
+                rpd: None,
+                tpm: None,
+                tpd: None,
                 context_window: None,
                 cf_aig_gateway_id: None,
             }],
@@ -2204,7 +2617,10 @@ mod tests {
         assert!(context.contains("# SOUL.md"));
         // フォーマット: [now: YYYY-MM-DDTHH:MM:SS+HH:MM]
         let last_line = context.trim_end().lines().last().unwrap();
-        assert!(last_line.starts_with("[now: "), "datetime line must be last for cache optimization");
+        assert!(
+            last_line.starts_with("[now: "),
+            "datetime line must be last for cache optimization"
+        );
         assert!(last_line.ends_with(']'));
         assert!(last_line.contains('T'), "must be ISO 8601 format");
     }
@@ -2287,7 +2703,9 @@ mod tests {
         unsafe {
             std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
         }
-        let resp = pipeline.execute(ws_dir.path(), "session-test", "hello").await;
+        let resp = pipeline
+            .execute(ws_dir.path(), "session-test", "hello")
+            .await;
         unsafe {
             std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
         }
@@ -2323,18 +2741,24 @@ mod tests {
 
         // 1. Create a dummy session log or mock history.
         let logger = SessionLogger::new(ws_dir.path());
-        logger.append_message("cron:heartbeat", &Message {
-            role: "user".to_string(),
-            content: "old dummy history".to_string(),
-            name: None,
-            ..Default::default()
-        })?;
-        logger.append_message("cron:heartbeat", &Message {
-            role: "assistant".to_string(),
-            content: "old robot reply".to_string(),
-            name: None,
-            ..Default::default()
-        })?;
+        logger.append_message(
+            "cron:heartbeat",
+            &Message {
+                role: "user".to_string(),
+                content: "old dummy history".to_string(),
+                name: None,
+                ..Default::default()
+            },
+        )?;
+        logger.append_message(
+            "cron:heartbeat",
+            &Message {
+                role: "assistant".to_string(),
+                content: "old robot reply".to_string(),
+                name: None,
+                ..Default::default()
+            },
+        )?;
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
@@ -2357,12 +2781,14 @@ mod tests {
 
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        
+
         // 2. Call pipeline.execute("cron:heartbeat") and verify that it skips history.
         unsafe {
             std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
         }
-        let resp = pipeline.execute(ws_dir.path(), "cron:heartbeat", "new message").await;
+        let resp = pipeline
+            .execute(ws_dir.path(), "cron:heartbeat", "new message")
+            .await;
         unsafe {
             std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
         }
@@ -2379,8 +2805,14 @@ mod tests {
 
         // Verify that the old history is NOT present in the sent messages.
         for msg in &sent_messages {
-            assert!(!msg.content.contains("old dummy history"), "History must be ignored!");
-            assert!(!msg.content.contains("old robot reply"), "History must be ignored!");
+            assert!(
+                !msg.content.contains("old dummy history"),
+                "History must be ignored!"
+            );
+            assert!(
+                !msg.content.contains("old robot reply"),
+                "History must be ignored!"
+            );
         }
 
         let _ = server_task.await;
@@ -2393,10 +2825,16 @@ mod tests {
         assert_eq!(filter_json_leaks(input), "Hello, user!\n\nDone.");
 
         let input_no_leak = "Hello, user!\n```json\n{\n  \"name\": \"test\"\n}\n```\nDone.";
-        assert_eq!(filter_json_leaks(input_no_leak), "Hello, user!\n```json\n{\n  \"name\": \"test\"\n}\n```\nDone.");
+        assert_eq!(
+            filter_json_leaks(input_no_leak),
+            "Hello, user!\n```json\n{\n  \"name\": \"test\"\n}\n```\nDone."
+        );
 
         let input_multiple = "Start.\n```json\n{\n  \"name\": \"test\"\n}\n```\nMiddle.\n```json\n{\n  \"action\": \"run_command\"\n}\n```\nEnd.";
-        assert_eq!(filter_json_leaks(input_multiple), "Start.\n```json\n{\n  \"name\": \"test\"\n}\n```\nMiddle.\n\nEnd.");
+        assert_eq!(
+            filter_json_leaks(input_multiple),
+            "Start.\n```json\n{\n  \"name\": \"test\"\n}\n```\nMiddle.\n\nEnd."
+        );
     }
 
     #[tokio::test]
@@ -2440,7 +2878,9 @@ mod tests {
         unsafe {
             std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
         }
-        let mut stream_res = pipeline.execute_stream(ws_dir.path(), "session-stream-test", "hello").await;
+        let mut stream_res = pipeline
+            .execute_stream(ws_dir.path(), "session-stream-test", "hello")
+            .await;
         unsafe {
             std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
         }
@@ -2534,7 +2974,10 @@ mod tests {
                     }),
                 }
             }
-            async fn call(&self, args: serde_json::Value) -> Result<String, rustyclaw_tools::ToolCallError> {
+            async fn call(
+                &self,
+                args: serde_json::Value,
+            ) -> Result<String, rustyclaw_tools::ToolCallError> {
                 let a = args["a"].as_f64().unwrap_or(0.0);
                 let b = args["b"].as_f64().unwrap_or(0.0);
                 Ok(format!("{}", a + b))
@@ -2547,7 +2990,16 @@ mod tests {
         unsafe {
             std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
         }
-        let resp = pipeline.execute_with_tools(ws_dir.path(), "session-tool-test", "calculate 5+10", &registry, "default", None).await;
+        let resp = pipeline
+            .execute_with_tools(
+                ws_dir.path(),
+                "session-tool-test",
+                "calculate 5+10",
+                &registry,
+                "default",
+                None,
+            )
+            .await;
         unsafe {
             std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
         }
@@ -2556,7 +3008,7 @@ mod tests {
 
         let logger = SessionLogger::new(ws_dir.path());
         let history = logger.load_history("session-tool-test")?;
-        
+
         // Let's verify history contains 4 entries:
         // 0: User input
         // 1: Assistant tool call
@@ -2565,16 +3017,16 @@ mod tests {
         assert_eq!(history.len(), 4);
         assert_eq!(history[0].role, "user");
         assert_eq!(history[0].content, "calculate 5+10");
-        
+
         assert_eq!(history[1].role, "assistant");
         assert_eq!(history[1].content, "I need to calculate 5 + 10 first.");
         assert_eq!(history[1].tool_calls.as_ref().unwrap()[0].id, "call_calc");
-        
+
         assert_eq!(history[2].role, "tool");
         assert_eq!(history[2].content, "15");
         assert_eq!(history[2].tool_call_id.as_ref().unwrap(), "call_calc");
         assert_eq!(history[2].name.as_ref().unwrap(), "add");
-        
+
         assert_eq!(history[3].role, "assistant");
         assert_eq!(history[3].content, "The calculation result is 15.");
 
@@ -2591,17 +3043,23 @@ mod tests {
         for f in &["SOUL.md", "AGENTS.md", "MEMORY.md", "USER.md"] {
             std::fs::write(ws.join(f), "").unwrap();
         }
-        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string();
+        let now = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S%:z")
+            .to_string();
         std::fs::write(
             memory_dir.join("proactive-posts.md"),
             format!("[{}] 傘を持ってください。", now),
-        ).unwrap();
+        )
+        .unwrap();
 
         let config = rustyclaw_config::Config::default();
         let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
         let pipeline = Pipeline::new(config, sem);
         let ctx = pipeline.build_system_context(ws).unwrap();
-        assert!(ctx.contains("傘を持ってください"), "proactive-posts が注入されるべき");
+        assert!(
+            ctx.contains("傘を持ってください"),
+            "proactive-posts が注入されるべき"
+        );
     }
 
     #[test]
@@ -2645,28 +3103,43 @@ Keep it short.\n\
         let dir = tempfile::TempDir::new().unwrap();
         let ws = dir.path();
         let logger = SessionLogger::new(ws);
-        
-        logger.append_message("session-proactive", &Message {
-            role: "user".to_string(),
-            content: "Hello".to_string(),
-            timestamp: Some("2026-05-31T10:00:00Z".to_string()),
-            ..Default::default()
-        }).unwrap();
-        
-        logger.append_message("session-proactive", &Message {
-            role: "assistant".to_string(),
-            content: "Hi there!".to_string(),
-            timestamp: Some("2026-05-31T10:01:00Z".to_string()),
-            ..Default::default()
-        }).unwrap();
-        
-        logger.append_message("session-proactive", &Message {
-            role: "assistant".to_string(),
-            content: "It might rain soon, grab an umbrella!".to_string(),
-            trigger: Some("proactive".to_string()),
-            timestamp: Some("2026-05-31T12:00:00Z".to_string()),
-            ..Default::default()
-        }).unwrap();
+
+        logger
+            .append_message(
+                "session-proactive",
+                &Message {
+                    role: "user".to_string(),
+                    content: "Hello".to_string(),
+                    timestamp: Some("2026-05-31T10:00:00Z".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        logger
+            .append_message(
+                "session-proactive",
+                &Message {
+                    role: "assistant".to_string(),
+                    content: "Hi there!".to_string(),
+                    timestamp: Some("2026-05-31T10:01:00Z".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        logger
+            .append_message(
+                "session-proactive",
+                &Message {
+                    role: "assistant".to_string(),
+                    content: "It might rain soon, grab an umbrella!".to_string(),
+                    trigger: Some("proactive".to_string()),
+                    timestamp: Some("2026-05-31T12:00:00Z".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
         let config = rustyclaw_config::Config::default();
         let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
@@ -2674,13 +3147,17 @@ Keep it short.\n\
 
         let history_messages = logger.load_history("session-proactive").unwrap();
         let mut system_context = "Base Prompt Context".to_string();
-        
-        let cleaned = pipeline.process_proactive_posts("session-proactive", history_messages, &mut system_context);
-        
+
+        let cleaned = pipeline.process_proactive_posts(
+            "session-proactive",
+            history_messages,
+            &mut system_context,
+        );
+
         assert_eq!(cleaned.len(), 2);
         assert_eq!(cleaned[0].content, "Hello");
         assert_eq!(cleaned[1].content, "Hi there!");
-        
+
         assert!(system_context.contains("Your Previous Posts in This Channel"));
         assert!(system_context.contains("It might rain soon, grab an umbrella!"));
         assert!(system_context.contains("2026-05-31 12:00:00"));
@@ -2733,7 +3210,7 @@ Keep it short.\n\
 
     #[test]
     fn test_get_history_message_limit_uses_context_window() {
-        use rustyclaw_config::{Config, ModelEntry, AgentsConfig, ModelNames};
+        use rustyclaw_config::{AgentsConfig, Config, ModelEntry, ModelNames};
 
         fn make_config(context_window: &str) -> Config {
             Config {
@@ -2746,7 +3223,10 @@ Keep it short.\n\
                     max_tokens: Some(2048),
                     temperature: Some(0.7),
                     enabled: true,
-                    rpm: None, rpd: None, tpm: None, tpd: None,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
                     context_window: Some(context_window.to_string()),
                     cf_aig_gateway_id: None,
                 }],
@@ -2760,17 +3240,25 @@ Keep it short.\n\
 
         let flush_sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
 
-        let p16k  = Pipeline::new(make_config("16k"),  flush_sem.clone());
-        let p32k  = Pipeline::new(make_config("32k"),  flush_sem.clone());
-        let p64k  = Pipeline::new(make_config("64k"),  flush_sem.clone());
+        let p16k = Pipeline::new(make_config("16k"), flush_sem.clone());
+        let p32k = Pipeline::new(make_config("32k"), flush_sem.clone());
+        let p64k = Pipeline::new(make_config("64k"), flush_sem.clone());
         let p131k = Pipeline::new(make_config("131k"), flush_sem.clone());
         let p256k = Pipeline::new(make_config("256k"), flush_sem.clone());
 
-        assert_eq!(p16k.get_history_message_limit("default"),  30, "16k → 30件");
-        assert_eq!(p32k.get_history_message_limit("default"),  50, "32k → 50件");
-        assert_eq!(p64k.get_history_message_limit("default"),  80, "64k → 80件");
-        assert_eq!(p131k.get_history_message_limit("default"), 100, "131k → 100件");
-        assert_eq!(p256k.get_history_message_limit("default"), 120, "256k → 120件");
+        assert_eq!(p16k.get_history_message_limit("default"), 30, "16k → 30件");
+        assert_eq!(p32k.get_history_message_limit("default"), 50, "32k → 50件");
+        assert_eq!(p64k.get_history_message_limit("default"), 80, "64k → 80件");
+        assert_eq!(
+            p131k.get_history_message_limit("default"),
+            100,
+            "131k → 100件"
+        );
+        assert_eq!(
+            p256k.get_history_message_limit("default"),
+            120,
+            "256k → 120件"
+        );
     }
 
     #[test]
@@ -2783,7 +3271,11 @@ Keep it short.\n\
     fn test_format_rag_context_with_items() {
         let items = vec![
             ("memory".to_string(), "- Rust is fast".to_string(), 0.92_f64),
-            ("memory".to_string(), "- RPi4 has 8GB RAM".to_string(), 0.85_f64),
+            (
+                "memory".to_string(),
+                "- RPi4 has 8GB RAM".to_string(),
+                0.85_f64,
+            ),
         ];
         let result = format_rag_context(&items);
         assert!(result.contains("Rust is fast"));
@@ -2794,19 +3286,46 @@ Keep it short.\n\
     #[test]
     fn test_format_rag_context_with_doc_items() {
         let items = vec![
-            ("doc:AGENTS.md".to_string(), "## Tool Usage\nUse tools carefully.".to_string(), 0.85_f64),
-            ("memory".to_string(), "User prefers brevity".to_string(), 0.80_f64),
-            ("session".to_string(), "Previously discussed weather".to_string(), 0.75_f64),
+            (
+                "doc:AGENTS.md".to_string(),
+                "## Tool Usage\nUse tools carefully.".to_string(),
+                0.85_f64,
+            ),
+            (
+                "memory".to_string(),
+                "User prefers brevity".to_string(),
+                0.80_f64,
+            ),
+            (
+                "session".to_string(),
+                "Previously discussed weather".to_string(),
+                0.75_f64,
+            ),
         ];
         let result = format_rag_context(&items);
-        assert!(result.contains("## Relevant Specifications & Rules"), "doc: セクションが含まれること");
-        assert!(result.contains("Tool Usage"), "doc: チャンク内容が含まれること");
-        assert!(result.contains("## Relevant Memory"), "memory セクションが含まれること");
-        assert!(result.contains("## Relevant Past Sessions"), "session セクションが含まれること");
+        assert!(
+            result.contains("## Relevant Specifications & Rules"),
+            "doc: セクションが含まれること"
+        );
+        assert!(
+            result.contains("Tool Usage"),
+            "doc: チャンク内容が含まれること"
+        );
+        assert!(
+            result.contains("## Relevant Memory"),
+            "memory セクションが含まれること"
+        );
+        assert!(
+            result.contains("## Relevant Past Sessions"),
+            "session セクションが含まれること"
+        );
         // doc セクションが memory セクションより先に来ること
         let doc_pos = result.find("## Relevant Specifications").unwrap();
         let mem_pos = result.find("## Relevant Memory").unwrap();
-        assert!(doc_pos < mem_pos, "doc セクションが memory より先であること");
+        assert!(
+            doc_pos < mem_pos,
+            "doc セクションが memory より先であること"
+        );
     }
 
     #[test]
@@ -2814,12 +3333,19 @@ Keep it short.\n\
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("memory.db");
         let db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
-        db.upsert_embedding("memory::0",   "memory",  None,       "大森駅周辺", &vec![1.0f32; 4]).unwrap();
-        db.upsert_embedding("session::s1", "session", Some("s1"), "RAG 検証完了", &vec![0.5f32; 4]).unwrap();
+        db.upsert_embedding("memory::0", "memory", None, "大森駅周辺", &vec![1.0f32; 4])
+            .unwrap();
+        db.upsert_embedding(
+            "session::s1",
+            "session",
+            Some("s1"),
+            "RAG 検証完了",
+            &vec![0.5f32; 4],
+        )
+        .unwrap();
 
-        let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
-            "http://127.0.0.1:1", "dummy",
-        );
+        let client =
+            rustyclaw_providers::CloudflareEmbeddingClient::new("http://127.0.0.1:1", "dummy");
         let model = rustyclaw_providers::CloudflareEmbeddingModel::new(client, 4);
         let engine = UnifiedRagEngine::new(model);
         engine.rebuild_from_db(&db).unwrap();
@@ -2828,8 +3354,8 @@ Keep it short.\n\
 
     #[test]
     fn test_pipeline_has_rig_agent_builder() {
-        use rustyclaw_providers::RustyclawCompletionModel;
         use rustyclaw_config::Config;
+        use rustyclaw_providers::RustyclawCompletionModel;
 
         let config = Config::default();
         let model = RustyclawCompletionModel::new(config, "default", "test-session");
@@ -2841,8 +3367,8 @@ Keep it short.\n\
 
     #[tokio::test]
     async fn test_execute_with_tools_rig_core_registry() {
+        use rustyclaw_tools::{ToolCallError, ToolRegistry};
         use std::sync::Arc;
-        use rustyclaw_tools::{ToolRegistry, ToolCallError};
 
         struct EchoTool;
         impl rig_core::tool::Tool for EchoTool {
@@ -2883,11 +3409,18 @@ Keep it short.\n\
         let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
 
         let tool_result = "--- STDOUT ---\n[{\"id\":\"msg1\",\"sender\":\"test@example.com\",\"subject\":\"Test\",\"date\":\"Mon\",\"snippet\":\"Hi\"}]\n--- EXIT STATUS ---\n0";
-        let call_args = r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh","args":["is:unread","5"]}"#;
+        let call_args =
+            r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh","args":["is:unread","5"]}"#;
 
         let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
-        assert!(result.contains("msg1"), "First call: item should pass through");
-        assert!(db.is_item_seen("gmail:msg1").unwrap(), "Should be marked as seen after first call");
+        assert!(
+            result.contains("msg1"),
+            "First call: item should pass through"
+        );
+        assert!(
+            db.is_item_seen("gmail:msg1").unwrap(),
+            "Should be marked as seen after first call"
+        );
     }
 
     #[test]
@@ -2900,8 +3433,14 @@ Keep it short.\n\
         let call_args = r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh"}"#;
 
         let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
-        assert!(!result.contains("\"msg1\""), "Already-seen item should be filtered out");
-        assert!(result.contains("already seen"), "Should indicate filtered items");
+        assert!(
+            !result.contains("\"msg1\""),
+            "Already-seen item should be filtered out"
+        );
+        assert!(
+            result.contains("already seen"),
+            "Should indicate filtered items"
+        );
     }
 
     #[test]
@@ -2911,13 +3450,16 @@ Keep it short.\n\
 
         let stdout = r#"[{"event_id":"evt1","title":"Meeting","start":"2026-06-06T10:00:00+09:00","start_wday":"土","end":"2026-06-06T11:00:00+09:00","end_wday":"土"}]"#;
         let tool_result = format!("--- STDOUT ---\n{}\n--- EXIT STATUS ---\n0", stdout);
-        let call_args = r#"{"script_name":"skills/calendar/scripts/calendar-ops.sh","args":["list"]}"#;
+        let call_args =
+            r#"{"script_name":"skills/calendar/scripts/calendar-ops.sh","args":["list"]}"#;
 
-        let result1 = filter_seen_tool_result("run_workspace_script", &call_args, &tool_result, &db);
+        let result1 =
+            filter_seen_tool_result("run_workspace_script", &call_args, &tool_result, &db);
         assert!(result1.contains("evt1"));
         assert!(db.is_item_seen("calendar:evt1").unwrap());
 
-        let result2 = filter_seen_tool_result("run_workspace_script", &call_args, &tool_result, &db);
+        let result2 =
+            filter_seen_tool_result("run_workspace_script", &call_args, &tool_result, &db);
         assert!(!result2.contains("evt1"));
     }
 
@@ -2948,7 +3490,10 @@ Keep it short.\n\
         let call_args = r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh"}"#;
 
         let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
-        assert!(!result.contains("\"msg1\""), "msg1 should be filtered (already seen)");
+        assert!(
+            !result.contains("\"msg1\""),
+            "msg1 should be filtered (already seen)"
+        );
         assert!(result.contains("msg2"), "msg2 should pass through (new)");
         assert!(db.is_item_seen("gmail:msg2").unwrap());
     }
@@ -2964,18 +3509,36 @@ Keep it short.\n\
         let call_args = r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh"}"#;
 
         let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
-        assert!(result.contains("No new gmail items"), "Should indicate no new items: {}", result);
-        assert!(result.contains("already seen"), "Should mention already-seen count: {}", result);
+        assert!(
+            result.contains("No new gmail items"),
+            "Should indicate no new items: {}",
+            result
+        );
+        assert!(
+            result.contains("already seen"),
+            "Should mention already-seen count: {}",
+            result
+        );
     }
 
     #[test]
     fn test_chunk_static_document_splits_by_heading() {
-        let content = "# Doc\n\n## Section A\nContent A line1\nContent A line2\n\n## Section B\nContent B\n";
+        let content =
+            "# Doc\n\n## Section A\nContent A line1\nContent A line2\n\n## Section B\nContent B\n";
         let chunks = chunk_static_document("test.md", content);
         assert_eq!(chunks.len(), 2, "## 見出し単位で 2 チャンクになること");
-        assert!(chunks[0].contains("Section A"), "チャンク0 に Section A を含むこと");
-        assert!(chunks[0].contains("[test.md >"), "ファイル名コンテキストが付くこと");
-        assert!(chunks[1].contains("Section B"), "チャンク1 に Section B を含むこと");
+        assert!(
+            chunks[0].contains("Section A"),
+            "チャンク0 に Section A を含むこと"
+        );
+        assert!(
+            chunks[0].contains("[test.md >"),
+            "ファイル名コンテキストが付くこと"
+        );
+        assert!(
+            chunks[1].contains("Section B"),
+            "チャンク1 に Section B を含むこと"
+        );
     }
 
     #[test]
@@ -2998,8 +3561,16 @@ Keep it short.\n\
     #[test]
     fn test_trim_heartbeat_messages_only_system_user() {
         let mut msgs = vec![
-            Message { role: "system".to_string(), content: "sys".to_string(), ..Default::default() },
-            Message { role: "user".to_string(),   content: "usr".to_string(), ..Default::default() },
+            Message {
+                role: "system".to_string(),
+                content: "sys".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "user".to_string(),
+                content: "usr".to_string(),
+                ..Default::default()
+            },
         ];
         trim_heartbeat_messages(&mut msgs);
         assert_eq!(msgs.len(), 2, "system+user のみなら変化しない");
@@ -3008,12 +3579,32 @@ Keep it short.\n\
     #[test]
     fn test_trim_heartbeat_messages_one_generation() {
         let mut msgs = vec![
-            Message { role: "system".to_string(),    content: "sys".to_string(), ..Default::default() },
-            Message { role: "user".to_string(),      content: "usr".to_string(), ..Default::default() },
-            Message { role: "assistant".to_string(), content: "".to_string(),
-                tool_calls: Some(vec![]), ..Default::default() },
-            Message { role: "tool".to_string(), content: "result_a".to_string(), ..Default::default() },
-            Message { role: "tool".to_string(), content: "result_b".to_string(), ..Default::default() },
+            Message {
+                role: "system".to_string(),
+                content: "sys".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "user".to_string(),
+                content: "usr".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "".to_string(),
+                tool_calls: Some(vec![]),
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: "result_a".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: "result_b".to_string(),
+                ..Default::default()
+            },
         ];
         trim_heartbeat_messages(&mut msgs);
         assert_eq!(msgs.len(), 5, "1世代しかなければ削除しない");
@@ -3022,15 +3613,43 @@ Keep it short.\n\
     #[test]
     fn test_trim_heartbeat_messages_two_generations() {
         let mut msgs = vec![
-            Message { role: "system".to_string(),    content: "sys".to_string(), ..Default::default() },
-            Message { role: "user".to_string(),      content: "usr".to_string(), ..Default::default() },
-            Message { role: "assistant".to_string(), content: "gen1".to_string(), ..Default::default() },
-            Message { role: "tool".to_string(),      content: "old_result".to_string(), ..Default::default() },
-            Message { role: "assistant".to_string(), content: "gen2".to_string(), ..Default::default() },
-            Message { role: "tool".to_string(),      content: "new_result".to_string(), ..Default::default() },
+            Message {
+                role: "system".to_string(),
+                content: "sys".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "user".to_string(),
+                content: "usr".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "gen1".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: "old_result".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "gen2".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: "new_result".to_string(),
+                ..Default::default()
+            },
         ];
         trim_heartbeat_messages(&mut msgs);
-        assert_eq!(msgs.len(), 4, "古い世代が削除され [system, user, gen2_assistant, gen2_tool] になる");
+        assert_eq!(
+            msgs.len(),
+            4,
+            "古い世代が削除され [system, user, gen2_assistant, gen2_tool] になる"
+        );
         assert_eq!(msgs[0].role, "system");
         assert_eq!(msgs[1].role, "user");
         assert_eq!(msgs[2].content, "gen2");
@@ -3040,14 +3659,46 @@ Keep it short.\n\
     #[test]
     fn test_trim_heartbeat_messages_three_generations() {
         let mut msgs = vec![
-            Message { role: "system".to_string(),    content: "sys".to_string(), ..Default::default() },
-            Message { role: "user".to_string(),      content: "usr".to_string(), ..Default::default() },
-            Message { role: "assistant".to_string(), content: "gen1".to_string(), ..Default::default() },
-            Message { role: "tool".to_string(),      content: "r1".to_string(), ..Default::default() },
-            Message { role: "assistant".to_string(), content: "gen2".to_string(), ..Default::default() },
-            Message { role: "tool".to_string(),      content: "r2".to_string(), ..Default::default() },
-            Message { role: "assistant".to_string(), content: "gen3".to_string(), ..Default::default() },
-            Message { role: "tool".to_string(),      content: "r3".to_string(), ..Default::default() },
+            Message {
+                role: "system".to_string(),
+                content: "sys".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "user".to_string(),
+                content: "usr".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "gen1".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: "r1".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "gen2".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: "r2".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "gen3".to_string(),
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: "r3".to_string(),
+                ..Default::default()
+            },
         ];
         trim_heartbeat_messages(&mut msgs);
         assert_eq!(msgs.len(), 4);
