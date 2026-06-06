@@ -1,7 +1,7 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
-use rustyclaw_config::{get_app_dir, Config, LlmModelConfig};
+use rustyclaw_config::{Config, LlmModelConfig, get_app_dir};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -23,9 +23,11 @@ impl ProviderError {
         match self {
             ProviderError::RateLimit(msg) => {
                 let lower = msg.to_lowercase();
-                
+
                 // Cloudflare 10,000 neurons daily limit check
-                if lower.contains("used up your daily free allocation") || lower.contains("10,000 neurons") {
+                if lower.contains("used up your daily free allocation")
+                    || lower.contains("10,000 neurons")
+                {
                     let now = chrono::Local::now();
                     let mut next_reset = chrono::Local::now()
                         .date_naive()
@@ -48,7 +50,9 @@ impl ProviderError {
 
                     // リセット時間文の直後の区切り（ピリオド、改行、ダブルクォーテーション等）で切り出し、
                     // メッセージ後半に含まれる "model" 等の 'm' に誤反応するのを防ぐ
-                    let limit_part = if let Some(end_pos) = sub.find(|c| c == '.' || c == '\n' || c == '"' || c == '\\') {
+                    let limit_part = if let Some(end_pos) =
+                        sub.find(|c| c == '.' || c == '\n' || c == '"' || c == '\\')
+                    {
                         &sub[..end_pos]
                     } else {
                         sub
@@ -60,7 +64,8 @@ impl ProviderError {
                     if let Some(m_pos) = limit_part.find('m') {
                         // 'm' の前の数字をパース (分)
                         let m_str = limit_part[..m_pos].trim();
-                        let m_num_str: String = m_str.chars().rev().take_while(|c| c.is_numeric()).collect();
+                        let m_num_str: String =
+                            m_str.chars().rev().take_while(|c| c.is_numeric()).collect();
                         let m_num_str: String = m_num_str.chars().rev().collect();
                         if let Ok(mins) = m_num_str.parse::<u64>() {
                             total_secs += mins * 60;
@@ -71,7 +76,8 @@ impl ProviderError {
                         let remaining = &limit_part[m_pos + 1..];
                         if let Some(s_pos) = remaining.find('s') {
                             let s_str = remaining[..s_pos].trim();
-                            let s_num_str: String = s_str.chars().take_while(|c| c.is_numeric()).collect();
+                            let s_num_str: String =
+                                s_str.chars().take_while(|c| c.is_numeric()).collect();
                             if let Ok(secs) = s_num_str.parse::<u64>() {
                                 total_secs += secs;
                             }
@@ -79,7 +85,8 @@ impl ProviderError {
                     } else if let Some(s_pos) = limit_part.find('s') {
                         // 's' の前の数字をパース (秒のみ)
                         let s_str = limit_part[..s_pos].trim();
-                        let s_num_str: String = s_str.chars().rev().take_while(|c| c.is_numeric()).collect();
+                        let s_num_str: String =
+                            s_str.chars().rev().take_while(|c| c.is_numeric()).collect();
                         let s_num_str: String = s_num_str.chars().rev().collect();
                         if let Ok(secs) = s_num_str.parse::<u64>() {
                             total_secs += secs;
@@ -133,7 +140,8 @@ pub fn resolve_provider_id(model: &LlmModelConfig) -> String {
         "openai".to_string()
     } else if base.contains("huggingface.co") {
         "huggingface".to_string()
-    } else if base.contains("192.168.") || base.contains("localhost") || base.contains("127.0.0.1") {
+    } else if base.contains("192.168.") || base.contains("localhost") || base.contains("127.0.0.1")
+    {
         "local".to_string()
     } else {
         model.model_provider.clone()
@@ -142,13 +150,17 @@ pub fn resolve_provider_id(model: &LlmModelConfig) -> String {
 
 /// RateLimit エラーからプロバイダごとのクールダウンを設定する共通ヘルパー。
 pub fn set_provider_cooldown_from_error(provider: &str, err: &ProviderError) {
-    let dur = err.reset_after().unwrap_or(std::time::Duration::from_secs(60));
+    let dur = err
+        .reset_after()
+        .unwrap_or(std::time::Duration::from_secs(60));
     set_provider_cooldown(provider, dur);
 }
 
 /// 後方互換性のためのグローバルクールダウン設定ヘルパー。
 pub fn set_global_cooldown_from_error(err: &ProviderError) {
-    let dur = err.reset_after().unwrap_or(std::time::Duration::from_secs(60));
+    let dur = err
+        .reset_after()
+        .unwrap_or(std::time::Duration::from_secs(60));
     set_provider_cooldown("global", dur);
 }
 
@@ -165,12 +177,7 @@ fn get_workspace_dir() -> std::path::PathBuf {
     }
 }
 
-fn dump_llm_io(
-    category: &str,
-    model: &str,
-    messages: &[Message],
-    response: &LlmResponse,
-) {
+fn dump_llm_io(category: &str, model: &str, messages: &[Message], response: &LlmResponse) {
     use chrono::Local;
 
     let ws_dir = get_workspace_dir();
@@ -178,7 +185,11 @@ fn dump_llm_io(
     let date_str = now.format("%Y-%m-%d").to_string();
     let time_str = now.format("%H-%M-%S").to_string();
 
-    let category_dir = ws_dir.join("memory").join("debug").join("llm").join(category);
+    let category_dir = ws_dir
+        .join("memory")
+        .join("debug")
+        .join("llm")
+        .join(category);
     let date_dir = category_dir.join(&date_str);
 
     if let Err(e) = std::fs::create_dir_all(&date_dir) {
@@ -306,7 +317,10 @@ pub trait LlmProvider: Send + Sync {
         messages: &[Message],
         tools: &[ToolDef],
         opts: &CompletionOptions,
-    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError>;
+    ) -> std::result::Result<
+        Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>,
+        ProviderError,
+    >;
 }
 
 pub struct OpenAiCompatProvider {
@@ -428,7 +442,7 @@ impl LlmProvider for OpenAiCompatProvider {
         opts: &CompletionOptions,
     ) -> std::result::Result<LlmResponse, ProviderError> {
         let url = format!("{}/chat/completions", self.model.api_base_url);
-        
+
         let openai_messages: Vec<OpenAiMessage> = messages
             .iter()
             .map(|msg| OpenAiMessage {
@@ -473,19 +487,28 @@ impl LlmProvider for OpenAiCompatProvider {
         };
 
         tracing::info!("Sending LLM request to OpenAI compat API at {}", url);
-        
-        let mut req = self.client.post(&url)
+
+        let mut req = self
+            .client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.model.api_key));
         if let Some(gateway_id) = &self.model.cf_aig_gateway_id {
             req = req.header("cf-aig-gateway-id", gateway_id);
             if url.contains("gateway.ai.cloudflare.com") {
-                req = req.header("cf-aig-authorization", format!("Bearer {}", self.model.api_key));
+                req = req.header(
+                    "cf-aig-authorization",
+                    format!("Bearer {}", self.model.api_key),
+                );
             }
         } else if url.contains("gateway.ai.cloudflare.com") {
-            req = req.header("cf-aig-authorization", format!("Bearer {}", self.model.api_key));
+            req = req.header(
+                "cf-aig-authorization",
+                format!("Bearer {}", self.model.api_key),
+            );
         }
 
-        let response = req.json(&request_body)
+        let response = req
+            .json(&request_body)
             .send()
             .await
             .context("HTTP POST request failed during LLM call")?;
@@ -493,16 +516,23 @@ impl LlmProvider for OpenAiCompatProvider {
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS || error_text.contains("insufficient_quota") {
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || error_text.contains("insufficient_quota")
+            {
                 let err = ProviderError::RateLimit(error_text);
                 let provider_id = resolve_provider_id(&self.model);
                 set_provider_cooldown_from_error(&provider_id, &err);
                 return Err(err);
             }
-            return Err(ProviderError::ExecutionFailed(format!("LLM API returned error status {}: {}", status, error_text)));
+            return Err(ProviderError::ExecutionFailed(format!(
+                "LLM API returned error status {}: {}",
+                status, error_text
+            )));
         }
 
-        let neurons_from_header = response.headers().get("cf-ai-neurons")
+        let neurons_from_header = response
+            .headers()
+            .get("cf-ai-neurons")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<f64>().ok());
         if let Some(neurons) = neurons_from_header {
@@ -510,7 +540,8 @@ impl LlmProvider for OpenAiCompatProvider {
             record_neuron_usage(neurons);
         }
 
-        let resp_data: OpenAiResponse = response.json()
+        let resp_data: OpenAiResponse = response
+            .json()
             .await
             .context("Failed to parse LLM JSON response")?;
 
@@ -518,17 +549,23 @@ impl LlmProvider for OpenAiCompatProvider {
             if let Some(usage) = &resp_data.usage {
                 if usage.prompt_tokens > 0 || usage.completion_tokens > 0 {
                     let model_name = resp_data.model.as_deref().unwrap_or(&resolved_model);
-                    let neurons = calc_cf_neurons(model_name, usage.prompt_tokens, usage.completion_tokens);
+                    let neurons =
+                        calc_cf_neurons(model_name, usage.prompt_tokens, usage.completion_tokens);
                     tracing::info!(
                         "CF Neurons calculated: {:.2} (prompt={}, completion={}, model={})",
-                        neurons, usage.prompt_tokens, usage.completion_tokens, model_name
+                        neurons,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        model_name
                     );
                     record_neuron_usage(neurons);
                 }
             }
         }
 
-        let choice = resp_data.choices.first()
+        let choice = resp_data
+            .choices
+            .first()
             .context("LLM returned empty choices in response")?;
 
         let res = LlmResponse {
@@ -542,7 +579,10 @@ impl LlmProvider for OpenAiCompatProvider {
             provider_id: Some(resolve_provider_id(&self.model)),
         };
 
-        let mut resolved_category = opts.category.clone().unwrap_or_else(|| "discord".to_string());
+        let mut resolved_category = opts
+            .category
+            .clone()
+            .unwrap_or_else(|| "discord".to_string());
         if res.tool_calls.as_ref().map_or(false, |tc| !tc.is_empty()) {
             resolved_category = "tools".to_string();
         }
@@ -556,9 +596,12 @@ impl LlmProvider for OpenAiCompatProvider {
         messages: &[Message],
         _tools: &[ToolDef],
         opts: &CompletionOptions,
-    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
+    ) -> std::result::Result<
+        Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>,
+        ProviderError,
+    > {
         let url = format!("{}/chat/completions", self.model.api_base_url);
-        
+
         let openai_messages: Vec<OpenAiMessage> = messages
             .iter()
             .map(|msg| OpenAiMessage {
@@ -584,20 +627,32 @@ impl LlmProvider for OpenAiCompatProvider {
             tools: None,
         };
 
-        tracing::info!("Sending streaming LLM request to OpenAI compat API at {}", url);
+        tracing::info!(
+            "Sending streaming LLM request to OpenAI compat API at {}",
+            url
+        );
 
-        let mut req = self.client.post(&url)
+        let mut req = self
+            .client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.model.api_key));
         if let Some(gateway_id) = &self.model.cf_aig_gateway_id {
             req = req.header("cf-aig-gateway-id", gateway_id);
             if url.contains("gateway.ai.cloudflare.com") {
-                req = req.header("cf-aig-authorization", format!("Bearer {}", self.model.api_key));
+                req = req.header(
+                    "cf-aig-authorization",
+                    format!("Bearer {}", self.model.api_key),
+                );
             }
         } else if url.contains("gateway.ai.cloudflare.com") {
-            req = req.header("cf-aig-authorization", format!("Bearer {}", self.model.api_key));
+            req = req.header(
+                "cf-aig-authorization",
+                format!("Bearer {}", self.model.api_key),
+            );
         }
 
-        let response = req.json(&request_body)
+        let response = req
+            .json(&request_body)
             .send()
             .await
             .context("HTTP POST stream request failed during LLM call")?;
@@ -605,13 +660,18 @@ impl LlmProvider for OpenAiCompatProvider {
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS || error_text.contains("insufficient_quota") {
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || error_text.contains("insufficient_quota")
+            {
                 let err = ProviderError::RateLimit(error_text);
                 let provider_id = resolve_provider_id(&self.model);
                 set_provider_cooldown_from_error(&provider_id, &err);
                 return Err(err);
             }
-            return Err(ProviderError::ExecutionFailed(format!("LLM Stream API returned error status {}: {}", status, error_text)));
+            return Err(ProviderError::ExecutionFailed(format!(
+                "LLM Stream API returned error status {}: {}",
+                status, error_text
+            )));
         }
 
         if let Some(neurons_header) = response.headers().get("cf-ai-neurons") {
@@ -622,13 +682,18 @@ impl LlmProvider for OpenAiCompatProvider {
                 }
             }
         } else if url.contains("cloudflare.com") {
-            tracing::debug!("CF stream call completed but cf-ai-neurons header not present in response");
+            tracing::debug!(
+                "CF stream call completed but cf-ai-neurons header not present in response"
+            );
         }
 
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let resolved_model_clone = resolved_model.clone();
-        let resolved_category = opts.category.clone().unwrap_or_else(|| "discord".to_string());
+        let resolved_category = opts
+            .category
+            .clone()
+            .unwrap_or_else(|| "discord".to_string());
         let messages_vec = messages.to_vec();
         let provider_id_clone = resolve_provider_id(&self.model);
 
@@ -638,7 +703,7 @@ impl LlmProvider for OpenAiCompatProvider {
                 let chunk = chunk_res.context("Error reading byte chunk from stream")?;
                 let chunk_str = std::str::from_utf8(&chunk)
                     .context("Failed to parse SSE bytes as UTF-8 string")?;
-                
+
                 buffer.push_str(chunk_str);
 
                 while let Some(pos) = buffer.find('\n') {
@@ -747,7 +812,8 @@ impl CloudflareEmbeddingClient {
         }
         let is_openai_compat = self.api_endpoint.ends_with("/embeddings");
         let body = self.build_embed_body(texts);
-        let resp = self.client
+        let resp = self
+            .client
             .post(&self.api_endpoint)
             .bearer_auth(&self.api_key)
             .json(&body)
@@ -756,10 +822,17 @@ impl CloudflareEmbeddingClient {
             .context("CF embedding: HTTP request failed")?;
 
         let status = resp.status();
-        let text = resp.text().await.context("CF embedding: failed to read response body")?;
+        let text = resp
+            .text()
+            .await
+            .context("CF embedding: failed to read response body")?;
 
         if !status.is_success() {
-            anyhow::bail!("CF embedding: HTTP {} — {}", status, &text[..text.len().min(200)]);
+            anyhow::bail!(
+                "CF embedding: HTTP {} — {}",
+                status,
+                &text[..text.len().min(200)]
+            );
         }
 
         if is_openai_compat {
@@ -772,7 +845,8 @@ impl CloudflareEmbeddingClient {
             if !parsed.success {
                 anyhow::bail!("CF embedding: API error — {:?}", parsed.errors);
             }
-            parsed.result
+            parsed
+                .result
                 .map(|r| r.data)
                 .ok_or_else(|| anyhow::anyhow!("CF embedding: result field is null"))
         }
@@ -855,20 +929,28 @@ impl rig_core::embeddings::EmbeddingModel for CloudflareEmbeddingModel {
     ) -> Result<Vec<rig_core::embeddings::Embedding>, rig_core::embeddings::EmbeddingError> {
         let texts: Vec<String> = texts.into_iter().collect();
         let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-        let vecs = self.client.embed(&text_refs).await
+        let vecs = self
+            .client
+            .embed(&text_refs)
+            .await
             .map_err(|e| rig_core::embeddings::EmbeddingError::ProviderError(e.to_string()))?;
-        Ok(texts.into_iter().zip(vecs).map(|(doc, vec)| {
-            rig_core::embeddings::Embedding {
+        Ok(texts
+            .into_iter()
+            .zip(vecs)
+            .map(|(doc, vec)| rig_core::embeddings::Embedding {
                 document: doc,
                 vec: vec.iter().map(|&x| x as f64).collect(),
-            }
-        }).collect())
+            })
+            .collect())
     }
 }
 
-static PROVIDER_COOLDOWNS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> = std::sync::OnceLock::new();
+static PROVIDER_COOLDOWNS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+> = std::sync::OnceLock::new();
 
-fn get_cooldowns_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
+fn get_cooldowns_map()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
     PROVIDER_COOLDOWNS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -887,7 +969,10 @@ pub fn provider_cooldown_remaining(provider: &str) -> Option<std::time::Duration
 /// プロバイダごとのクールダウンを設定する。
 pub fn set_provider_cooldown(provider: &str, dur: std::time::Duration) {
     let mut lock = get_cooldowns_map().lock().unwrap();
-    lock.insert(provider.to_string(), std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
+    lock.insert(
+        provider.to_string(),
+        std::time::Instant::now() + dur + std::time::Duration::from_secs(2),
+    );
 }
 
 /// グローバルなクールダウンの残り時間を取得する（全プロバイダ中の最大残り時間）。
@@ -942,10 +1027,12 @@ impl LlmProvider for GmnCliProvider {
         opts: &CompletionOptions,
     ) -> std::result::Result<LlmResponse, ProviderError> {
         if !tools.is_empty() {
-            return Err(ProviderError::ExecutionFailed("GmnCliProvider does not support tool calling".to_string()));
+            return Err(ProviderError::ExecutionFailed(
+                "GmnCliProvider does not support tool calling".to_string(),
+            ));
         }
         let prompt = self.build_prompt(messages);
-        
+
         tracing::debug!(
             model = %opts.model,
             timeout_secs = opts.timeout.as_secs(),
@@ -966,17 +1053,24 @@ impl LlmProvider for GmnCliProvider {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to spawn gmn CLI process: {}", e)))?;
+            .map_err(|e| {
+                ProviderError::ExecutionFailed(format!("Failed to spawn gmn CLI process: {}", e))
+            })?;
 
         if let Some(mut stdin) = child.stdin.take() {
             use tokio::io::AsyncWriteExt;
-            stdin.write_all(prompt.as_bytes()).await
-                .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to write prompt to gmn CLI stdin: {}", e)))?;
+            stdin.write_all(prompt.as_bytes()).await.map_err(|e| {
+                ProviderError::ExecutionFailed(format!(
+                    "Failed to write prompt to gmn CLI stdin: {}",
+                    e
+                ))
+            })?;
             drop(stdin);
         }
 
-        let output = child.wait_with_output().await
-            .map_err(|e| ProviderError::ExecutionFailed(format!("Error waiting for gmn CLI execution: {}", e)))?;
+        let output = child.wait_with_output().await.map_err(|e| {
+            ProviderError::ExecutionFailed(format!("Error waiting for gmn CLI execution: {}", e))
+        })?;
 
         let stdout_str = String::from_utf8_lossy(&output.stdout);
         let stderr_str = String::from_utf8_lossy(&output.stderr);
@@ -992,8 +1086,17 @@ impl LlmProvider for GmnCliProvider {
 
         let combined_err = format!("{}\n{}", stdout_str, stderr_str);
 
-        if !output.status.success() || combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
-            if combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
+        if !output.status.success()
+            || combined_err.contains("quota")
+            || combined_err.contains("RESOURCE_EXHAUSTED")
+            || combined_err.contains("429")
+            || combined_err.contains("rate limited")
+        {
+            if combined_err.contains("quota")
+                || combined_err.contains("RESOURCE_EXHAUSTED")
+                || combined_err.contains("429")
+                || combined_err.contains("rate limited")
+            {
                 let err = ProviderError::RateLimit(combined_err);
                 set_provider_cooldown_from_error("gmn", &err);
                 return Err(err);
@@ -1003,8 +1106,12 @@ impl LlmProvider for GmnCliProvider {
             }
         }
 
-        let content = String::from_utf8(output.stdout)
-            .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to parse gmn CLI output as UTF-8: {}", e)))?;
+        let content = String::from_utf8(output.stdout).map_err(|e| {
+            ProviderError::ExecutionFailed(format!(
+                "Failed to parse gmn CLI output as UTF-8: {}",
+                e
+            ))
+        })?;
 
         let mut final_content = String::new();
         let mut raw_lines = Vec::new();
@@ -1047,7 +1154,10 @@ impl LlmProvider for GmnCliProvider {
         messages: &[Message],
         _tools: &[ToolDef],
         opts: &CompletionOptions,
-    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
+    ) -> std::result::Result<
+        Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>,
+        ProviderError,
+    > {
         let prompt = self.build_prompt(messages);
         let model = opts.model.clone();
         let timeout_secs = opts.timeout.as_secs();
@@ -1102,7 +1212,7 @@ impl LlmProvider for GmnCliProvider {
                 }
                 let text = std::str::from_utf8(&buffer[..n])
                     .map_err(|e| ProviderError::ExecutionFailed(format!("Failed to decode gmn CLI stdout as UTF-8: {}", e)))?;
-                
+
                 line_buffer.push_str(text);
 
                 while let Some(pos) = line_buffer.find('\n') {
@@ -1217,9 +1327,14 @@ impl LlmProvider for NoopProvider {
         messages: &[Message],
         tools: &[ToolDef],
         _opts: &CompletionOptions,
-    ) -> std::result::Result<Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>, ProviderError> {
+    ) -> std::result::Result<
+        Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>,
+        ProviderError,
+    > {
         Self::dump(messages, tools);
-        let chunk = StreamChunk { content: "[NO-AGENT] Debug mode. No API call made.".to_string() };
+        let chunk = StreamChunk {
+            content: "[NO-AGENT] Debug mode. No API call made.".to_string(),
+        };
         let stream = futures_util::stream::once(async move { Ok(chunk) });
         Ok(Box::pin(stream))
     }
@@ -1227,11 +1342,21 @@ impl LlmProvider for NoopProvider {
 
 impl NoopProvider {
     fn dump(messages: &[Message], tools: &[ToolDef]) {
-        tracing::info!("[NO-AGENT] Would send {} message(s), {} tool(s)", messages.len(), tools.len());
+        tracing::info!(
+            "[NO-AGENT] Would send {} message(s), {} tool(s)",
+            messages.len(),
+            tools.len()
+        );
         for (i, m) in messages.iter().enumerate() {
             let preview = m.content.chars().take(200).collect::<String>();
             let ellipsis = if m.content.len() > 200 { "…" } else { "" };
-            tracing::info!("[NO-AGENT] messages[{}] role={} | {}{}", i, m.role, preview, ellipsis);
+            tracing::info!(
+                "[NO-AGENT] messages[{}] role={} | {}{}",
+                i,
+                m.role,
+                preview,
+                ellipsis
+            );
         }
         if !tools.is_empty() {
             let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
@@ -1350,9 +1475,11 @@ pub fn rig_messages_to_provider<'a>(
 pub fn llm_response_to_rig(
     resp: LlmResponse,
 ) -> rig_core::completion::CompletionResponse<LlmResponse> {
-    use rig_core::completion::{CompletionResponse, Usage};
-    use rig_core::completion::message::{AssistantContent, Text, ToolCall as RigToolCall, ToolFunction};
     use rig_core::OneOrMany;
+    use rig_core::completion::message::{
+        AssistantContent, Text, ToolCall as RigToolCall, ToolFunction,
+    };
+    use rig_core::completion::{CompletionResponse, Usage};
 
     let choice = if resp
         .tool_calls
@@ -1404,11 +1531,12 @@ pub fn llm_response_to_rig(
 
 /// Converts RustyClaw provider `Message` list to rig-core `Message` format.
 /// Inverse of `rig_messages_to_provider`.
-pub fn provider_messages_to_rig(
-    messages: &[Message],
-) -> Vec<rig_core::completion::Message> {
-    use rig_core::completion::message::{AssistantContent, Text, ToolCall as RigToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent};
+pub fn provider_messages_to_rig(messages: &[Message]) -> Vec<rig_core::completion::Message> {
     use rig_core::OneOrMany;
+    use rig_core::completion::message::{
+        AssistantContent, Text, ToolCall as RigToolCall, ToolFunction, ToolResult,
+        ToolResultContent, UserContent,
+    };
 
     let mut out = Vec::new();
     for msg in messages {
@@ -1582,22 +1710,20 @@ impl RustyclawCompletionModel {
     ) -> Result<LlmResponse, rig_core::completion::CompletionError> {
         let chain = self.config.get_model_chain(&self.purpose);
         if chain.is_empty() {
-            return Err(rig_core::completion::CompletionError::ProviderError(format!(
-                "no models configured for purpose '{}'",
-                self.purpose
-            )));
+            return Err(rig_core::completion::CompletionError::ProviderError(
+                format!("no models configured for purpose '{}'", self.purpose),
+            ));
         }
 
         let category = session_id_to_category(&self.session_id);
 
         for (idx, model_cfg) in chain.iter().enumerate() {
-            let provider_id = if model_cfg.model_provider == "gmn"
-                || model_cfg.model_provider == "gemini"
-            {
-                "gmn".to_string()
-            } else {
-                resolve_provider_id(model_cfg)
-            };
+            let provider_id =
+                if model_cfg.model_provider == "gmn" || model_cfg.model_provider == "gemini" {
+                    "gmn".to_string()
+                } else {
+                    resolve_provider_id(model_cfg)
+                };
             if provider_cooldown_remaining(&provider_id).is_some() {
                 continue;
             }
@@ -1632,10 +1758,9 @@ impl RustyclawCompletionModel {
             }
         }
 
-        Err(rig_core::completion::CompletionError::ProviderError(format!(
-            "all models failed for purpose '{}'",
-            self.purpose
-        )))
+        Err(rig_core::completion::CompletionError::ProviderError(
+            format!("all models failed for purpose '{}'", self.purpose),
+        ))
     }
 }
 
@@ -1645,7 +1770,11 @@ impl rig_core::completion::CompletionModel for RustyclawCompletionModel {
     type Client = RustyclawProviderClient;
 
     fn make(client: &Self::Client, _model: impl Into<String>) -> Self {
-        Self::new(client.config.clone(), client.purpose.clone(), client.session_id.clone())
+        Self::new(
+            client.config.clone(),
+            client.purpose.clone(),
+            client.session_id.clone(),
+        )
     }
 
     async fn completion(
@@ -1698,14 +1827,14 @@ impl rig_core::completion::CompletionModel for RustyclawCompletionModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::net::TcpListener;
     use tokio::io::{AsyncWriteExt, BufWriter};
+    use tokio::net::TcpListener;
 
     #[tokio::test]
     async fn test_openai_compat_complete() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        
+
         let server_task = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
@@ -1752,7 +1881,7 @@ mod tests {
     async fn test_openai_compat_complete_stream() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        
+
         let server_task = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let mut writer = BufWriter::new(&mut socket);
@@ -1833,7 +1962,10 @@ mod tests {
         // Prepend temp_dir to PATH
         let old_path = std::env::var("PATH").unwrap_or_default();
         unsafe {
-            std::env::set_var("PATH", format!("{}:{}", temp_dir.path().to_string_lossy(), old_path));
+            std::env::set_var(
+                "PATH",
+                format!("{}:{}", temp_dir.path().to_string_lossy(), old_path),
+            );
         }
 
         let provider = GmnCliProvider::new(Config::default());
@@ -1853,7 +1985,10 @@ mod tests {
         }
 
         let resp = result?;
-        assert_eq!(resp.content, "{\"type\": \"tool_use\", \"name\": \"do_something\"}");
+        assert_eq!(
+            resp.content,
+            "{\"type\": \"tool_use\", \"name\": \"do_something\"}"
+        );
         assert_eq!(resp.role, "assistant");
 
         Ok(())
@@ -1863,7 +1998,7 @@ mod tests {
     async fn test_openai_compat_complete_with_tools() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        
+
         let server_task = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
@@ -1921,7 +2056,7 @@ mod tests {
         let resp = provider.complete(&[], &[tool], &opts).await?;
         assert_eq!(resp.content, "Hello, using tool now.");
         assert_eq!(resp.role, "assistant");
-        
+
         let calls = resp.tool_calls.expect("Should contain tool calls");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_xyz");
@@ -1963,19 +2098,25 @@ mod tests {
 
     #[test]
     fn dump_llm_io_writes_dated_file_and_cleans_old_dirs() {
+        use chrono::{Duration, Local};
         use std::fs;
-        use chrono::{Local, Duration};
 
         let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", tmp.path().to_str().unwrap()); }
+        unsafe {
+            std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", tmp.path().to_str().unwrap());
+        }
 
         // Create a dummy folder 6 days old (should be deleted)
-        let old_date = (Local::now() - Duration::days(6)).format("%Y-%m-%d").to_string();
+        let old_date = (Local::now() - Duration::days(6))
+            .format("%Y-%m-%d")
+            .to_string();
         let old_dir = tmp.path().join("memory/debug/llm/tools").join(&old_date);
         fs::create_dir_all(&old_dir).unwrap();
 
         // 4-day-old folder — must be retained
-        let recent_date = (Local::now() - Duration::days(4)).format("%Y-%m-%d").to_string();
+        let recent_date = (Local::now() - Duration::days(4))
+            .format("%Y-%m-%d")
+            .to_string();
         let recent_dir = tmp.path().join("memory/debug/llm/tools").join(&recent_date);
         fs::create_dir_all(&recent_dir).unwrap();
 
@@ -2006,7 +2147,9 @@ mod tests {
         // 4-day-old folder must still exist
         assert!(recent_dir.exists(), "4-day-old dir must be retained");
 
-        unsafe { std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR"); }
+        unsafe {
+            std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
+        }
     }
 
     #[test]
@@ -2085,13 +2228,17 @@ mod tests {
 
     #[test]
     fn test_embed_body_uses_input_for_openai_compat_endpoint() {
-        let client = CloudflareEmbeddingClient::new(
-            "http://192.168.1.110:1234/v1/embeddings",
-            "lm-studio",
-        );
+        let client =
+            CloudflareEmbeddingClient::new("http://192.168.1.110:1234/v1/embeddings", "lm-studio");
         let body = client.build_embed_body(&["hello", "world"]);
-        assert!(body.get("input").is_some(), "OpenAI-compat endpoint must use 'input' field");
-        assert!(body.get("text").is_none(), "OpenAI-compat endpoint must NOT use 'text' field");
+        assert!(
+            body.get("input").is_some(),
+            "OpenAI-compat endpoint must use 'input' field"
+        );
+        assert!(
+            body.get("text").is_none(),
+            "OpenAI-compat endpoint must NOT use 'text' field"
+        );
     }
 
     #[test]
@@ -2101,8 +2248,14 @@ mod tests {
             "cf-key",
         );
         let body = client.build_embed_body(&["hello"]);
-        assert!(body.get("text").is_some(), "CF native endpoint must use 'text' field");
-        assert!(body.get("input").is_none(), "CF native endpoint must NOT use 'input' field");
+        assert!(
+            body.get("text").is_some(),
+            "CF native endpoint must use 'text' field"
+        );
+        assert!(
+            body.get("input").is_none(),
+            "CF native endpoint must NOT use 'input' field"
+        );
     }
 
     #[test]
@@ -2124,46 +2277,73 @@ mod tests {
 
     #[test]
     fn test_provider_error_reset_after() {
-        let err = ProviderError::RateLimit("Error: Your Quota will reset after 56s. Please try again.".to_string());
+        let err = ProviderError::RateLimit(
+            "Error: Your Quota will reset after 56s. Please try again.".to_string(),
+        );
         assert_eq!(err.reset_after(), Some(std::time::Duration::from_secs(56)));
 
         let err2 = ProviderError::RateLimit("Your Quota will reset after 5s".to_string());
         assert_eq!(err2.reset_after(), Some(std::time::Duration::from_secs(5)));
 
         // 小文字 "quota" パターン (実際のログで検出されたもの)
-        let err_real = ProviderError::RateLimit("You have exhausted your capacity on this model. Your quota will reset after 2s.".to_string());
-        assert_eq!(err_real.reset_after(), Some(std::time::Duration::from_secs(2)));
+        let err_real = ProviderError::RateLimit(
+            "You have exhausted your capacity on this model. Your quota will reset after 2s."
+                .to_string(),
+        );
+        assert_eq!(
+            err_real.reset_after(),
+            Some(std::time::Duration::from_secs(2))
+        );
 
         // メッセージ後半に "model" や "gemini-3-flash-preview" 等の 'm' が含まれるが、
         // 秒数のみ表記であるため誤認識せずに正確に 48 秒とパースできるか検証するテストケース
         let err_with_model_word = ProviderError::RateLimit("You have exhausted your capacity on this model. Your quota will reset after 48s. details: model: gemini-3-flash-preview".to_string());
-        assert_eq!(err_with_model_word.reset_after(), Some(std::time::Duration::from_secs(48)));
+        assert_eq!(
+            err_with_model_word.reset_after(),
+            Some(std::time::Duration::from_secs(48))
+        );
 
         let err3 = ProviderError::RateLimit("Your Quota will reset after 1m 30s.".to_string());
         assert_eq!(err3.reset_after(), Some(std::time::Duration::from_secs(90)));
 
         let err4 = ProviderError::RateLimit("Your Quota will reset after 2m".to_string());
-        assert_eq!(err4.reset_after(), Some(std::time::Duration::from_secs(120)));
+        assert_eq!(
+            err4.reset_after(),
+            Some(std::time::Duration::from_secs(120))
+        );
 
         let err5 = ProviderError::RateLimit("Your Quota will reset after 3m 5s".to_string());
-        assert_eq!(err5.reset_after(), Some(std::time::Duration::from_secs(185)));
+        assert_eq!(
+            err5.reset_after(),
+            Some(std::time::Duration::from_secs(185))
+        );
 
-        let err_none = ProviderError::RateLimit("Some other quota error without reset time".to_string());
+        let err_none =
+            ProviderError::RateLimit("Some other quota error without reset time".to_string());
         assert_eq!(err_none.reset_after(), None);
 
-        let err_exec = ProviderError::ExecutionFailed("Your Quota will reset after 10s".to_string());
+        let err_exec =
+            ProviderError::ExecutionFailed("Your Quota will reset after 10s".to_string());
         assert_eq!(err_exec.reset_after(), None);
 
         // Cloudflare daily limit parsing test (簡易文字列)
-        let err_cf = ProviderError::RateLimit("you have used up your daily free allocation of 10,000 neurons".to_string());
+        let err_cf = ProviderError::RateLimit(
+            "you have used up your daily free allocation of 10,000 neurons".to_string(),
+        );
         assert!(err_cf.reset_after().is_some());
         assert!(err_cf.reset_after().unwrap().as_secs() > 0);
 
         // Cloudflare 実際の HTTP レスポンスボディ (internalCode: 4006 の JSON 全文)
         let err_cf_real = ProviderError::RateLimit(r#"{"name":"AiError","internalCode":4006,"httpCode":429,"message":"AiError: AiError: you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage. (35c8551a-c0e6-4dd5-8f67-2ce2f9a112d6)","description":"you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage.","requestId":"35c8551a-c0e6-4dd5-8f67-2ce2f9a112d6"}"#.to_string());
-        assert!(err_cf_real.reset_after().is_some(), "CF JSON body must be parseable");
+        assert!(
+            err_cf_real.reset_after().is_some(),
+            "CF JSON body must be parseable"
+        );
         // 翌 9:00 JST リセット想定なので最低 1 秒以上の待機時間が返ること
-        assert!(err_cf_real.reset_after().unwrap().as_secs() >= 1, "CF daily limit must return meaningful wait duration");
+        assert!(
+            err_cf_real.reset_after().unwrap().as_secs() >= 1,
+            "CF daily limit must return meaningful wait duration"
+        );
 
         // set_global_cooldown_from_error がクールダウンをセットする
         {
@@ -2172,28 +2352,39 @@ mod tests {
         }
         assert!(global_cooldown_remaining().is_none());
         set_global_cooldown_from_error(&ProviderError::RateLimit("Too Many Requests".to_string()));
-        assert!(global_cooldown_remaining().is_some(), "global_cooldown_remaining must be set after rate limit");
+        assert!(
+            global_cooldown_remaining().is_some(),
+            "global_cooldown_remaining must be set after rate limit"
+        );
 
         // Cloudflare RPM 429 (JSON body, no reset time) → default 60s
-        let err_cf_rpm = ProviderError::RateLimit(r#"{"errors":[{"code":10014,"message":"Too Many Requests"}]}"#.to_string());
-        assert_eq!(err_cf_rpm.reset_after(), Some(std::time::Duration::from_secs(60)));
+        let err_cf_rpm = ProviderError::RateLimit(
+            r#"{"errors":[{"code":10014,"message":"Too Many Requests"}]}"#.to_string(),
+        );
+        assert_eq!(
+            err_cf_rpm.reset_after(),
+            Some(std::time::Duration::from_secs(60))
+        );
 
         // Cloudflare RPM 429 (plain string)
         let err_cf_rpm2 = ProviderError::RateLimit("Too Many Requests".to_string());
-        assert_eq!(err_cf_rpm2.reset_after(), Some(std::time::Duration::from_secs(60)));
+        assert_eq!(
+            err_cf_rpm2.reset_after(),
+            Some(std::time::Duration::from_secs(60))
+        );
 
         // Cloudflare RPM 429 (lowercase)
         let err_cf_rpm3 = ProviderError::RateLimit("too many requests".to_string());
-        assert_eq!(err_cf_rpm3.reset_after(), Some(std::time::Duration::from_secs(60)));
+        assert_eq!(
+            err_cf_rpm3.reset_after(),
+            Some(std::time::Duration::from_secs(60))
+        );
     }
 
     #[tokio::test]
     async fn test_cloudflare_embedding_model_implements_embedding_model() {
         use rig_core::embeddings::EmbeddingModel;
-        let client = CloudflareEmbeddingClient::new(
-            "http://127.0.0.1:1",
-            "dummy",
-        );
+        let client = CloudflareEmbeddingClient::new("http://127.0.0.1:1", "dummy");
         let model = CloudflareEmbeddingModel::new(client, 1024);
         assert_eq!(model.ndims(), 1024);
 
@@ -2204,23 +2395,35 @@ mod tests {
 
     #[test]
     fn test_rig_messages_from_completion_request() {
-        use rig_core::completion::Message as RigMsg;
-        use rig_core::completion::message::{AssistantContent, UserContent, Text, ToolResult, ToolResultContent, ToolCall, ToolFunction};
         use rig_core::OneOrMany;
+        use rig_core::completion::Message as RigMsg;
+        use rig_core::completion::message::{
+            AssistantContent, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
+            UserContent,
+        };
 
         let history = vec![
             RigMsg::User {
-                content: OneOrMany::one(UserContent::Text(Text { text: "hello".to_string(), additional_params: None })),
+                content: OneOrMany::one(UserContent::Text(Text {
+                    text: "hello".to_string(),
+                    additional_params: None,
+                })),
             },
             RigMsg::Assistant {
                 id: None,
-                content: OneOrMany::one(AssistantContent::Text(Text { text: "hi".to_string(), additional_params: None })),
+                content: OneOrMany::one(AssistantContent::Text(Text {
+                    text: "hi".to_string(),
+                    additional_params: None,
+                })),
             },
             RigMsg::User {
                 content: OneOrMany::one(UserContent::ToolResult(ToolResult {
                     id: "call-1".to_string(),
                     call_id: None,
-                    content: OneOrMany::one(ToolResultContent::Text(Text { text: "tool output".to_string(), additional_params: None })),
+                    content: OneOrMany::one(ToolResultContent::Text(Text {
+                        text: "tool output".to_string(),
+                        additional_params: None,
+                    })),
                 })),
             },
         ];
@@ -2259,10 +2462,20 @@ mod tests {
     async fn test_local_embedding_client_embed_dims() {
         let cache_dir = std::env::temp_dir().join("rustyclaw_fastembed_test");
         let client = LocalEmbeddingClient::new(&cache_dir).expect("model init failed");
-        let result = client.embed(&["Hello world", "こんにちは"]).await.expect("embed failed");
+        let result = client
+            .embed(&["Hello world", "こんにちは"])
+            .await
+            .expect("embed failed");
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].len(), 384, "expected 384 dims for multilingual-e5-small");
-        assert_ne!(result[0], result[1], "different texts should produce different vectors");
+        assert_eq!(
+            result[0].len(),
+            384,
+            "expected 384 dims for multilingual-e5-small"
+        );
+        assert_ne!(
+            result[0], result[1],
+            "different texts should produce different vectors"
+        );
     }
 }
 
@@ -2286,7 +2499,10 @@ fn calc_cf_neurons(model: &str, prompt_tokens: u32, completion_tokens: u32) -> f
 static NEURON_USAGE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
 fn record_neuron_usage(neurons: f64) {
-    let _guard = NEURON_USAGE_LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap();
+    let _guard = NEURON_USAGE_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap();
 
     let neuron_path = get_app_dir().join("neuron_usage.json");
     let today_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -2298,7 +2514,10 @@ fn record_neuron_usage(neurons: f64) {
             if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
                 if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
                     if date_str == today_utc {
-                        neurons_used = json.get("neurons_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        neurons_used = json
+                            .get("neurons_used")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
                     }
                 }
             }
@@ -2329,13 +2548,16 @@ pub fn get_neuron_stats() -> serde_json::Value {
             if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
                 if let Some(date_str) = json.get("last_reset_date").and_then(|v| v.as_str()) {
                     if date_str == today_utc {
-                        neurons_used = json.get("neurons_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        neurons_used = json
+                            .get("neurons_used")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
                     }
                 }
             }
         }
     }
-    
+
     let now = chrono::Local::now();
     let mut next_reset = chrono::Local::now()
         .date_naive()
@@ -2346,7 +2568,7 @@ pub fn get_neuron_stats() -> serde_json::Value {
     if now >= next_reset {
         next_reset = next_reset + chrono::Duration::days(1);
     }
-    
+
     let remaining_secs = next_reset.signed_duration_since(now).num_seconds();
     let hours = remaining_secs / 3600;
     let minutes = (remaining_secs % 3600) / 60;

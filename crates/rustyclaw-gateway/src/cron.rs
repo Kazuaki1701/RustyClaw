@@ -1,18 +1,24 @@
+use crate::{MessageBus, Priority, SystemEvent};
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
-use serde::Deserialize;
-use crate::{MessageBus, SystemEvent, Priority};
 
 /// sessions/ ディレクトリ内でサマリーが必要な最初の1セッションを返す（1tick につき最大1件）。
-pub(crate) fn find_next_session_needing_summary(sessions_dir: &std::path::Path, ws_path: &std::path::Path) -> Option<String> {
+pub(crate) fn find_next_session_needing_summary(
+    sessions_dir: &std::path::Path,
+    ws_path: &std::path::Path,
+) -> Option<String> {
     let now = std::time::SystemTime::now();
     let entries = std::fs::read_dir(sessions_dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
         let filename = path.file_name()?.to_string_lossy().to_string();
         // cron セッションと http-dashboard（Dashboard /chat）は除外
-        if !filename.ends_with(".jsonl") || filename.starts_with("cron") || filename.starts_with("http-") {
+        if !filename.ends_with(".jsonl")
+            || filename.starts_with("cron")
+            || filename.starts_with("http-")
+        {
             continue;
         }
         let safe_session_id = filename.trim_end_matches(".jsonl").to_string();
@@ -24,12 +30,17 @@ pub(crate) fn find_next_session_needing_summary(sessions_dir: &std::path::Path, 
         }
         let local_modified: chrono::DateTime<chrono::Local> = modified.into();
         let session_date = local_modified.format("%Y-%m-%d").to_string();
-        let summary_path = ws_path.join("memory").join("summaries").join(format!("{}-{}.md", session_date, safe_session_id));
+        let summary_path = ws_path
+            .join("memory")
+            .join("summaries")
+            .join(format!("{}-{}.md", session_date, safe_session_id));
 
         // サマリーファイルが過去 10 分以内に更新されていれば再トリガーしない。
         // 生成中（プレースホルダー書き込み後）および完了直後の重複発火を防ぐ。
         if summary_path.exists() {
-            if let Some(summary_age_secs) = summary_path.metadata().ok()
+            if let Some(summary_age_secs) = summary_path
+                .metadata()
+                .ok()
                 .and_then(|m| m.modified().ok())
                 .and_then(|sm| now.duration_since(sm).ok())
                 .map(|d| d.as_secs())
@@ -43,7 +54,9 @@ pub(crate) fn find_next_session_needing_summary(sessions_dir: &std::path::Path, 
         let needs_summary = if !summary_path.exists() {
             true
         } else {
-            summary_path.metadata().ok()
+            summary_path
+                .metadata()
+                .ok()
                 .and_then(|m| m.modified().ok())
                 .map(|sm| sm < modified)
                 .unwrap_or(false)
@@ -91,10 +104,10 @@ impl CronService {
         tokio::spawn(async move {
             tracing::info!("CronService: Starting 30-minute Heartbeat scheduler...");
             let mut interval = time::interval(Duration::from_secs(1800)); // 30 minutes = 1800s
-            
+
             // First tick fires immediately, let's skip or let it run
-            interval.tick().await; 
-            
+            interval.tick().await;
+
             loop {
                 interval.tick().await;
                 tracing::info!("CronService: Triggering Heartbeat patrol event...");
@@ -124,22 +137,26 @@ impl CronService {
 
             loop {
                 interval.tick().await;
-                
+
                 let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                
+
                 // Read from SQLite last run date
                 let last_run = match rustyclaw_storage::DbManager::new(&db_path_daily) {
-                    Ok(db) => {
-                        match db.get_last_patrol_run("daily_summary_date") {
-                            Ok(res) => res,
-                            Err(e) => {
-                                tracing::error!("CronService: Failed to get daily_summary_date: {:#}", e);
-                                None
-                            }
+                    Ok(db) => match db.get_last_patrol_run("daily_summary_date") {
+                        Ok(res) => res,
+                        Err(e) => {
+                            tracing::error!(
+                                "CronService: Failed to get daily_summary_date: {:#}",
+                                e
+                            );
+                            None
                         }
-                    }
+                    },
                     Err(e) => {
-                        tracing::error!("CronService: Failed to open db in daily summary loop: {:#}", e);
+                        tracing::error!(
+                            "CronService: Failed to open db in daily summary loop: {:#}",
+                            e
+                        );
                         None
                     }
                 };
@@ -151,12 +168,17 @@ impl CronService {
                     }
 
                     // Offset triggering by 5 minutes to prevent locks/collisions with Heartbeat 10m ticks on gmn_sem
-                    tracing::info!("CronService: Daily Summary date changed. Waiting 5 minutes offset before triggering...");
+                    tracing::info!(
+                        "CronService: Daily Summary date changed. Waiting 5 minutes offset before triggering..."
+                    );
                     let bus_clone = bus_daily.clone();
                     let today_clone = today.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(300)).await;
-                        tracing::info!("CronService: Triggering Daily Summary event for date: {}...", today_clone);
+                        tracing::info!(
+                            "CronService: Triggering Daily Summary event for date: {}...",
+                            today_clone
+                        );
                         let event = SystemEvent::IncomingMessage {
                             session_id: "cron:daily-summary".to_string(),
                             user_id: "cron".to_string(),
@@ -165,7 +187,10 @@ impl CronService {
                             priority: Priority::Background,
                         };
                         if let Err(e) = bus_clone.publish(event) {
-                            tracing::error!("CronService: Failed to publish Daily Summary event: {:#}", e);
+                            tracing::error!(
+                                "CronService: Failed to publish Daily Summary event: {:#}",
+                                e
+                            );
                         }
                     });
                 }
@@ -182,21 +207,26 @@ impl CronService {
                 tokio::time::Instant::now() + Duration::from_secs(30),
                 Duration::from_secs(60),
             );
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let sessions_dir = ws_path.join("sessions");
                 if !sessions_dir.exists() {
                     continue;
                 }
-                
+
                 // 1tick につき最大1セッションのみ発火（CF rate limit 連続突破を防ぐ）
-                if let Some(safe_session_id) = find_next_session_needing_summary(&sessions_dir, &ws_path) {
+                if let Some(safe_session_id) =
+                    find_next_session_needing_summary(&sessions_dir, &ws_path)
+                {
                     let logger = rustyclaw_storage::SessionLogger::new(&ws_path);
                     if let Ok(history) = logger.load_history(&safe_session_id) {
                         if !history.is_empty() {
-                            tracing::info!("CronService: Session {} has been idle for 5+ mins and needs summary. Triggering...", safe_session_id);
+                            tracing::info!(
+                                "CronService: Session {} has been idle for 5+ mins and needs summary. Triggering...",
+                                safe_session_id
+                            );
                             let event = SystemEvent::IncomingMessage {
                                 session_id: format!("cron:session-summary:{}", safe_session_id),
                                 user_id: "cron".to_string(),
@@ -205,7 +235,10 @@ impl CronService {
                                 priority: Priority::Background,
                             };
                             if let Err(e) = bus_summary.publish(event) {
-                                tracing::error!("CronService: Failed to publish Session Summary event: {:#}", e);
+                                tracing::error!(
+                                    "CronService: Failed to publish Session Summary event: {:#}",
+                                    e
+                                );
                             }
                         }
                     }
@@ -225,10 +258,10 @@ impl CronService {
                 tokio::time::Instant::now() + Duration::from_secs(60),
                 Duration::from_secs(60),
             );
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let cron_json_path = ws_path_dynamic.join("cron.json");
                 if !cron_json_path.exists() {
                     continue;
@@ -253,7 +286,10 @@ impl CronService {
                 let db = match rustyclaw_storage::DbManager::new(&db_path_dynamic) {
                     Ok(d) => d,
                     Err(e) => {
-                        tracing::error!("CronService: Failed to open db in dynamic cron loop: {:#}", e);
+                        tracing::error!(
+                            "CronService: Failed to open db in dynamic cron loop: {:#}",
+                            e
+                        );
                         continue;
                     }
                 };
@@ -270,17 +306,30 @@ impl CronService {
                                 if now_time == *expr {
                                     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                                     let state_key = format!("cron_run_date:{}", job.id);
-                                    
-                                    let last_run = db.get_last_patrol_run(&state_key).unwrap_or(None);
+
+                                    let last_run =
+                                        db.get_last_patrol_run(&state_key).unwrap_or(None);
                                     if last_run.is_none() || last_run.unwrap() != today {
                                         if let Err(e) = db.set_state_value(&state_key, &today) {
-                                            tracing::error!("CronService: Failed to set cron date state for {}: {:#}", job.id, e);
+                                            tracing::error!(
+                                                "CronService: Failed to set cron date state for {}: {:#}",
+                                                job.id,
+                                                e
+                                            );
                                         }
 
-                                        tracing::info!("CronService: Triggering dynamic cron job ({})...", job.name);
+                                        tracing::info!(
+                                            "CronService: Triggering dynamic cron job ({})...",
+                                            job.name
+                                        );
                                         let session_id = format!("cron:{}", job.id);
                                         let display_name = format!("{} ({})", job.name, expr);
-                                        crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &display_name);
+                                        crate::queue_update_or_insert(
+                                            &session_id,
+                                            "Waiting",
+                                            0.0,
+                                            &display_name,
+                                        );
                                         let event = SystemEvent::IncomingMessage {
                                             session_id,
                                             user_id: "cron".to_string(),
@@ -289,7 +338,11 @@ impl CronService {
                                             priority: Priority::Background,
                                         };
                                         if let Err(e) = bus_dynamic.publish(event) {
-                                            tracing::error!("CronService: Failed to publish dynamic cron event for {}: {:#}", job.id, e);
+                                            tracing::error!(
+                                                "CronService: Failed to publish dynamic cron event for {}: {:#}",
+                                                job.id,
+                                                e
+                                            );
                                         }
                                     }
                                 }
@@ -299,10 +352,11 @@ impl CronService {
                             if let Some(minutes) = job.trigger.minutes {
                                 let state_key = format!("cron_last_run:{}", job.id);
                                 let now_sec = chrono::Local::now().timestamp();
-                                
-                                let last_run_str = db.get_last_patrol_run(&state_key).unwrap_or(None);
+
+                                let last_run_str =
+                                    db.get_last_patrol_run(&state_key).unwrap_or(None);
                                 let mut should_run = false;
-                                
+
                                 if let Some(last_str) = last_run_str {
                                     if let Ok(last_sec) = last_str.parse::<i64>() {
                                         let elapsed_min = (now_sec - last_sec) / 60;
@@ -317,13 +371,27 @@ impl CronService {
                                 }
 
                                 if should_run {
-                                    if let Err(e) = db.set_state_value(&state_key, &now_sec.to_string()) {
-                                        tracing::error!("CronService: Failed to set cron last run time for {}: {:#}", job.id, e);
+                                    if let Err(e) =
+                                        db.set_state_value(&state_key, &now_sec.to_string())
+                                    {
+                                        tracing::error!(
+                                            "CronService: Failed to set cron last run time for {}: {:#}",
+                                            job.id,
+                                            e
+                                        );
                                     }
 
-                                    tracing::info!("CronService: Triggering dynamic interval job ({})...", job.name);
+                                    tracing::info!(
+                                        "CronService: Triggering dynamic interval job ({})...",
+                                        job.name
+                                    );
                                     let session_id = format!("cron:{}", job.id);
-                                    crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &job.name);
+                                    crate::queue_update_or_insert(
+                                        &session_id,
+                                        "Waiting",
+                                        0.0,
+                                        &job.name,
+                                    );
                                     let event = SystemEvent::IncomingMessage {
                                         session_id,
                                         user_id: "cron".to_string(),
@@ -332,13 +400,21 @@ impl CronService {
                                         priority: Priority::Background,
                                     };
                                     if let Err(e) = bus_dynamic.publish(event) {
-                                        tracing::error!("CronService: Failed to publish dynamic interval event for {}: {:#}", job.id, e);
+                                        tracing::error!(
+                                            "CronService: Failed to publish dynamic interval event for {}: {:#}",
+                                            job.id,
+                                            e
+                                        );
                                     }
                                 }
                             }
                         }
                         other => {
-                            tracing::warn!("CronService: Unknown trigger type {} for job {}", other, job.id);
+                            tracing::warn!(
+                                "CronService: Unknown trigger type {} for job {}",
+                                other,
+                                job.id
+                            );
                         }
                     }
                 }
@@ -369,10 +445,13 @@ pub fn next_run_epoch(
             let target = if today > now {
                 today
             } else {
-                let naive_tomorrow = now.date_naive()
+                let naive_tomorrow = now
+                    .date_naive()
                     .checked_add_days(chrono::Days::new(1))?
                     .and_hms_opt(h, m, 0)?;
-                chrono::Local.from_local_datetime(&naive_tomorrow).earliest()?
+                chrono::Local
+                    .from_local_datetime(&naive_tomorrow)
+                    .earliest()?
             };
             Some(target.timestamp())
         }
@@ -504,7 +583,10 @@ mod tests {
         std::fs::write(&path, r#"{"role":"user","content":"hi"}"#).unwrap();
 
         let result = find_next_session_needing_summary(&sessions_dir, ws.path());
-        assert!(result.is_none(), "recent sessions (< 5 min idle) must be excluded");
+        assert!(
+            result.is_none(),
+            "recent sessions (< 5 min idle) must be excluded"
+        );
     }
 
     #[test]
@@ -520,7 +602,11 @@ mod tests {
         let mut f = std::fs::File::create(&session_path).unwrap();
         writeln!(f, r#"{{"role":"user","content":"hi"}}"#).unwrap();
         let jsonl_time = std::time::SystemTime::now() - std::time::Duration::from_secs(400);
-        filetime::set_file_mtime(&session_path, filetime::FileTime::from_system_time(jsonl_time)).unwrap();
+        filetime::set_file_mtime(
+            &session_path,
+            filetime::FileTime::from_system_time(jsonl_time),
+        )
+        .unwrap();
 
         // session_date は JSONL mtime から動的に生成（production コードと同じロジック）
         let local_modified: chrono::DateTime<chrono::Local> = jsonl_time.into();
@@ -532,10 +618,17 @@ mod tests {
         let summary_path = summaries_dir.join(format!("{}-discord-test-session.md", session_date));
         std::fs::write(&summary_path, "<!-- turns: 1 -->").unwrap();
         let summary_time = std::time::SystemTime::now() - std::time::Duration::from_secs(500);
-        filetime::set_file_mtime(&summary_path, filetime::FileTime::from_system_time(summary_time)).unwrap();
+        filetime::set_file_mtime(
+            &summary_path,
+            filetime::FileTime::from_system_time(summary_time),
+        )
+        .unwrap();
 
         let result = find_next_session_needing_summary(&sessions_dir, ws.path());
-        assert!(result.is_none(), "recently summarized session (summary < 10 min old) must be excluded by mtime guard");
+        assert!(
+            result.is_none(),
+            "recently summarized session (summary < 10 min old) must be excluded by mtime guard"
+        );
     }
 }
 
@@ -547,18 +640,34 @@ mod next_run_tests {
     #[test]
     fn cron_type_returns_today_if_future_else_tomorrow() {
         // 現在 10:00 とする
-        let now = chrono::Local.with_ymd_and_hms(2026, 5, 31, 10, 0, 0).unwrap();
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 5, 31, 10, 0, 0)
+            .unwrap();
         // 22:00 は当当日未来 → 同日 22:00
         let n1 = next_run_epoch("cron", Some("22:00"), None, now, None).unwrap();
-        assert_eq!(n1, chrono::Local.with_ymd_and_hms(2026, 5, 31, 22, 0, 0).unwrap().timestamp());
+        assert_eq!(
+            n1,
+            chrono::Local
+                .with_ymd_and_hms(2026, 5, 31, 22, 0, 0)
+                .unwrap()
+                .timestamp()
+        );
         // 04:45 は当日過去 → 翌日 04:45
         let n2 = next_run_epoch("cron", Some("04:45"), None, now, None).unwrap();
-        assert_eq!(n2, chrono::Local.with_ymd_and_hms(2026, 6, 1, 4, 45, 0).unwrap().timestamp());
+        assert_eq!(
+            n2,
+            chrono::Local
+                .with_ymd_and_hms(2026, 6, 1, 4, 45, 0)
+                .unwrap()
+                .timestamp()
+        );
     }
 
     #[test]
     fn interval_type_uses_last_run_plus_minutes() {
-        let now = chrono::Local.with_ymd_and_hms(2026, 5, 31, 10, 0, 0).unwrap();
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 5, 31, 10, 0, 0)
+            .unwrap();
         let last = now.timestamp() - 60 * 60; // 1時間前
         // 360分間隔 → last + 360分
         let n = next_run_epoch("interval", None, Some(360), now, Some(last)).unwrap();

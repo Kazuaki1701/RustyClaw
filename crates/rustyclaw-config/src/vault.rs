@@ -1,13 +1,13 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
+use anyhow::{Result, anyhow};
 use pbkdf2::pbkdf2_hmac;
+use rand::RngCore;
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use anyhow::{anyhow, Result};
-use rand::RngCore;
 
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -119,8 +119,8 @@ pub fn save_vault(secrets: &HashMap<String, String>, passphrase: &str) -> Result
 /// 既存の平文 vault.json から vault.enc へ一括移行する
 pub fn import_from_json(json_path: &std::path::Path, passphrase: &str) -> Result<usize> {
     let content = fs::read_to_string(json_path)?;
-    let map: HashMap<String, String> = serde_json::from_str(&content)
-        .map_err(|e| anyhow!("Failed to parse vault.json: {}", e))?;
+    let map: HashMap<String, String> =
+        serde_json::from_str(&content).map_err(|e| anyhow!("Failed to parse vault.json: {}", e))?;
     let count = map.len();
     save_vault(&map, passphrase)?;
     Ok(count)
@@ -139,7 +139,10 @@ mod tests {
 
         let mut secrets = HashMap::new();
         secrets.insert("cf-token".to_string(), "test-token-abc".to_string());
-        secrets.insert("discord-token".to_string(), "discord-secret-xyz".to_string());
+        secrets.insert(
+            "discord-token".to_string(),
+            "discord-secret-xyz".to_string(),
+        );
 
         // 暗号化保存（vault_path を一時的に上書き）
         let passphrase = "test-passphrase-123";
@@ -151,7 +154,9 @@ mod tests {
         rng.fill_bytes(&mut nonce_bytes);
         let key = derive_key(passphrase, &salt);
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let ciphertext = cipher.encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_slice()).unwrap();
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_slice())
+            .unwrap();
 
         let mut file = File::create(&vault_path).unwrap();
         file.write_all(&salt).unwrap();
@@ -160,7 +165,10 @@ mod tests {
 
         // 復号確認
         let mut buf = Vec::new();
-        File::open(&vault_path).unwrap().read_to_end(&mut buf).unwrap();
+        File::open(&vault_path)
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
         let (s, rest) = buf.split_at(SALT_LEN);
         let (n, ct) = rest.split_at(NONCE_LEN);
         let key2 = derive_key(passphrase, s);
@@ -187,7 +195,9 @@ mod tests {
         rng.fill_bytes(&mut nonce_bytes);
         let key = derive_key("correct-pass", &salt);
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let ciphertext = cipher.encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_slice()).unwrap();
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_slice())
+            .unwrap();
 
         let mut file = File::create(&vault_path).unwrap();
         file.write_all(&salt).unwrap();
@@ -195,7 +205,10 @@ mod tests {
         file.write_all(&ciphertext).unwrap();
 
         let mut buf = Vec::new();
-        File::open(&vault_path).unwrap().read_to_end(&mut buf).unwrap();
+        File::open(&vault_path)
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
         let (s, rest) = buf.split_at(SALT_LEN);
         let (n, ct) = rest.split_at(NONCE_LEN);
         let key_wrong = derive_key("wrong-pass", s);

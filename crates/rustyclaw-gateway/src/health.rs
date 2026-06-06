@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::path::{Path, PathBuf};
-use std::io::BufRead;
 use rustyclaw_config::get_app_dir;
+use std::io::BufRead;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -26,11 +26,19 @@ impl HealthServer {
         gmn_capacity: usize,
     ) -> Self {
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
-        Self { addr, reload_tx, bus, workspace_path, gmn_sem, gmn_capacity }
+        Self {
+            addr,
+            reload_tx,
+            bus,
+            workspace_path,
+            gmn_sem,
+            gmn_capacity,
+        }
     }
 
     pub async fn start(self) -> Result<()> {
-        let listener = TcpListener::bind(self.addr).await
+        let listener = TcpListener::bind(self.addr)
+            .await
             .with_context(|| format!("Failed to bind HealthServer to {}", self.addr))?;
 
         tracing::info!("HealthServer listening on http://{}", self.addr);
@@ -56,7 +64,9 @@ impl HealthServer {
                             if let Ok(n) = socket.read(&mut buffer).await {
                                 let request = String::from_utf8_lossy(&buffer[..n]);
 
-                                let (status, body, content_type) = if request.starts_with("GET /health") {
+                                let (status, body, content_type) = if request
+                                    .starts_with("GET /health")
+                                {
                                     ("200 OK".to_string(), "OK".to_string(), "text/plain")
                                 } else if request.starts_with("GET /ready") {
                                     ("200 OK".to_string(), "READY".to_string(), "text/plain")
@@ -67,18 +77,24 @@ impl HealthServer {
                                 // ── ログ系エンドポイント ─────────────────────────
                                 } else if request.starts_with("GET /logs/memory") {
                                     let path = workspace_path_clone.join("MEMORY.md");
-                                    let content = std::fs::read_to_string(&path)
-                                        .unwrap_or_else(|_| "(MEMORY.md が見つかりません)".to_string());
+                                    let content =
+                                        std::fs::read_to_string(&path).unwrap_or_else(|_| {
+                                            "(MEMORY.md が見つかりません)".to_string()
+                                        });
                                     ("200 OK".to_string(), content, "text/plain; charset=utf-8")
-
                                 } else if request.starts_with("GET /logs/heartbeat-digest") {
-                                    let path = workspace_path_clone.join("memory").join("heartbeat-digest.md");
-                                    let content = std::fs::read_to_string(&path)
-                                        .unwrap_or_else(|_| "(heartbeat-digest.md が見つかりません)".to_string());
+                                    let path = workspace_path_clone
+                                        .join("memory")
+                                        .join("heartbeat-digest.md");
+                                    let content =
+                                        std::fs::read_to_string(&path).unwrap_or_else(|_| {
+                                            "(heartbeat-digest.md が見つかりません)".to_string()
+                                        });
                                     ("200 OK".to_string(), content, "text/plain; charset=utf-8")
-
                                 } else if request.starts_with("GET /logs/heartbeat-state") {
-                                    let path = workspace_path_clone.join("memory").join("heartbeat-state.json");
+                                    let path = workspace_path_clone
+                                        .join("memory")
+                                        .join("heartbeat-state.json");
                                     let raw = std::fs::read_to_string(&path)
                                         .unwrap_or_else(|_| "{}".to_string());
                                     // JSON をパースして pretty-print し直す（失敗時はそのまま）
@@ -87,88 +103,168 @@ impl HealthServer {
                                         .and_then(|v| serde_json::to_string_pretty(&v).ok())
                                         .unwrap_or(raw);
                                     ("200 OK".to_string(), pretty, "text/plain; charset=utf-8")
-
                                 } else if request.starts_with("GET /logs/app") {
                                     let logs = if let Some(log_path) = get_latest_app_log() {
                                         read_last_lines(&log_path, 100)
                                     } else {
-                                        format!("No application logs found under {}/logs/", get_app_dir().display())
+                                        format!(
+                                            "No application logs found under {}/logs/",
+                                            get_app_dir().display()
+                                        )
                                     };
                                     ("200 OK".to_string(), logs, "text/plain; charset=utf-8")
 
                                 // ── デバッグダンプ エンドポイント ──────────────
                                 } else if request.starts_with("GET /debug/request") {
-                                    let path = workspace_path_clone.join("memory").join("debug").join("last_request.json");
+                                    let path = workspace_path_clone
+                                        .join("memory")
+                                        .join("debug")
+                                        .join("last_request.json");
                                     let raw = std::fs::read_to_string(&path)
                                         .unwrap_or_else(|_| "null".to_string());
                                     let pretty = serde_json::from_str::<serde_json::Value>(&raw)
                                         .ok()
                                         .and_then(|v| serde_json::to_string_pretty(&v).ok())
                                         .unwrap_or(raw);
-                                    ("200 OK".to_string(), pretty, "application/json; charset=utf-8")
-
+                                    (
+                                        "200 OK".to_string(),
+                                        pretty,
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /debug/response") {
-                                    let path = workspace_path_clone.join("memory").join("debug").join("last_response.json");
+                                    let path = workspace_path_clone
+                                        .join("memory")
+                                        .join("debug")
+                                        .join("last_response.json");
                                     let raw = std::fs::read_to_string(&path)
                                         .unwrap_or_else(|_| "null".to_string());
                                     let pretty = serde_json::from_str::<serde_json::Value>(&raw)
                                         .ok()
                                         .and_then(|v| serde_json::to_string_pretty(&v).ok())
                                         .unwrap_or(raw);
-                                    ("200 OK".to_string(), pretty, "application/json; charset=utf-8")
-
+                                    (
+                                        "200 OK".to_string(),
+                                        pretty,
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/llm/dates") {
-                                    let cat = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
-                                    let llm_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat);
+                                    let cat = extract_query_param(&request, "cat")
+                                        .unwrap_or_else(|| "tools".to_string());
+                                    let llm_dir = workspace_path_clone
+                                        .join("memory")
+                                        .join("debug")
+                                        .join("llm")
+                                        .join(&cat);
                                     let mut dates: Vec<String> = std::fs::read_dir(&llm_dir)
-                                        .map(|rd| rd.flatten()
-                                            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                                            .map(|e| e.file_name().to_string_lossy().to_string())
-                                            .filter(|n| chrono::NaiveDate::parse_from_str(n, "%Y-%m-%d").is_ok())
-                                            .collect())
+                                        .map(|rd| {
+                                            rd.flatten()
+                                                .filter(|e| {
+                                                    e.file_type()
+                                                        .map(|t| t.is_dir())
+                                                        .unwrap_or(false)
+                                                })
+                                                .map(|e| {
+                                                    e.file_name().to_string_lossy().to_string()
+                                                })
+                                                .filter(|n| {
+                                                    chrono::NaiveDate::parse_from_str(n, "%Y-%m-%d")
+                                                        .is_ok()
+                                                })
+                                                .collect()
+                                        })
                                         .unwrap_or_default();
                                     dates.sort_unstable_by(|a, b| b.cmp(a));
-                                    ("200 OK".to_string(), serde_json::to_string(&dates).unwrap_or_else(|_| "[]".to_string()), "application/json; charset=utf-8")
-
+                                    (
+                                        "200 OK".to_string(),
+                                        serde_json::to_string(&dates)
+                                            .unwrap_or_else(|_| "[]".to_string()),
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/llm/times") {
-                                    let cat  = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
-                                    let date = extract_query_param(&request, "date").unwrap_or_default();
-                                    let time_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat).join(&date);
+                                    let cat = extract_query_param(&request, "cat")
+                                        .unwrap_or_else(|| "tools".to_string());
+                                    let date =
+                                        extract_query_param(&request, "date").unwrap_or_default();
+                                    let time_dir = workspace_path_clone
+                                        .join("memory")
+                                        .join("debug")
+                                        .join("llm")
+                                        .join(&cat)
+                                        .join(&date);
                                     let mut times: Vec<String> = std::fs::read_dir(&time_dir)
-                                        .map(|rd| rd.flatten()
-                                            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                                            .map(|e| e.file_name().to_string_lossy().replace(".json", ""))
-                                            .collect())
+                                        .map(|rd| {
+                                            rd.flatten()
+                                                .filter(|e| {
+                                                    e.file_type()
+                                                        .map(|t| t.is_file())
+                                                        .unwrap_or(false)
+                                                })
+                                                .map(|e| {
+                                                    e.file_name()
+                                                        .to_string_lossy()
+                                                        .replace(".json", "")
+                                                })
+                                                .collect()
+                                        })
                                         .unwrap_or_default();
                                     times.sort_unstable_by(|a, b| b.cmp(a));
-                                    ("200 OK".to_string(), serde_json::to_string(&times).unwrap_or_else(|_| "[]".to_string()), "application/json; charset=utf-8")
-
+                                    (
+                                        "200 OK".to_string(),
+                                        serde_json::to_string(&times)
+                                            .unwrap_or_else(|_| "[]".to_string()),
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/llm/io") {
-                                    let cat  = extract_query_param(&request, "cat").unwrap_or_else(|| "tools".to_string());
+                                    let cat = extract_query_param(&request, "cat")
+                                        .unwrap_or_else(|| "tools".to_string());
                                     let date = extract_query_param(&request, "date");
                                     let time = extract_query_param(&request, "time");
 
-                                    let llm_cat_dir = workspace_path_clone.join("memory").join("debug").join("llm").join(&cat);
+                                    let llm_cat_dir = workspace_path_clone
+                                        .join("memory")
+                                        .join("debug")
+                                        .join("llm")
+                                        .join(&cat);
 
                                     let file_path = if let (Some(d), Some(t)) = (date, time) {
                                         Some(llm_cat_dir.join(&d).join(format!("{}.json", t)))
                                     } else {
                                         // latest: newest date dir → newest time file
-                                        let latest_date = std::fs::read_dir(&llm_cat_dir).ok()
-                                            .and_then(|rd| {
-                                                let mut dates: Vec<_> = rd.flatten()
-                                                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                                                    .map(|e| e.file_name().to_string_lossy().to_string())
-                                                    .filter(|n| chrono::NaiveDate::parse_from_str(n, "%Y-%m-%d").is_ok())
+                                        let latest_date =
+                                            std::fs::read_dir(&llm_cat_dir).ok().and_then(|rd| {
+                                                let mut dates: Vec<_> = rd
+                                                    .flatten()
+                                                    .filter(|e| {
+                                                        e.file_type()
+                                                            .map(|t| t.is_dir())
+                                                            .unwrap_or(false)
+                                                    })
+                                                    .map(|e| {
+                                                        e.file_name().to_string_lossy().to_string()
+                                                    })
+                                                    .filter(|n| {
+                                                        chrono::NaiveDate::parse_from_str(
+                                                            n, "%Y-%m-%d",
+                                                        )
+                                                        .is_ok()
+                                                    })
                                                     .collect();
                                                 dates.sort_unstable_by(|a, b| b.cmp(a));
                                                 dates.into_iter().next()
                                             });
                                         latest_date.and_then(|d| {
                                             let date_dir = llm_cat_dir.join(&d);
-                                            let mut times: Vec<_> = std::fs::read_dir(&date_dir).ok()?.flatten()
-                                                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                                                .map(|e| e.file_name().to_string_lossy().to_string())
+                                            let mut times: Vec<_> = std::fs::read_dir(&date_dir)
+                                                .ok()?
+                                                .flatten()
+                                                .filter(|e| {
+                                                    e.file_type()
+                                                        .map(|t| t.is_file())
+                                                        .unwrap_or(false)
+                                                })
+                                                .map(|e| {
+                                                    e.file_name().to_string_lossy().to_string()
+                                                })
                                                 .collect();
                                             times.sort_unstable_by(|a, b| b.cmp(a));
                                             times.into_iter().next().map(|t| date_dir.join(t))
@@ -176,18 +272,28 @@ impl HealthServer {
                                     };
 
                                     match file_path.and_then(|p| std::fs::read_to_string(&p).ok()) {
-                                        Some(content) => ("200 OK".to_string(), content, "application/json; charset=utf-8"),
-                                        None => ("404 Not Found".to_string(), "{}".to_string(), "application/json; charset=utf-8"),
+                                        Some(content) => (
+                                            "200 OK".to_string(),
+                                            content,
+                                            "application/json; charset=utf-8",
+                                        ),
+                                        None => (
+                                            "404 Not Found".to_string(),
+                                            "{}".to_string(),
+                                            "application/json; charset=utf-8",
+                                        ),
                                     }
-
                                 } else if request.starts_with("GET /api/queue") {
                                     let mut state = crate::QUEUE_STATE.lock().unwrap().clone();
-                                    
+
                                     // 最新のクールダウン情報も動的に更新する
-                                    if let Some(cooldown_dur) = rustyclaw_providers::global_cooldown_remaining() {
+                                    if let Some(cooldown_dur) =
+                                        rustyclaw_providers::global_cooldown_remaining()
+                                    {
                                         for item in state.items.iter_mut() {
                                             if item.status == "Cooldown" {
-                                                item.cooldown_left_secs = cooldown_dur.as_secs_f64();
+                                                item.cooldown_left_secs =
+                                                    cooldown_dur.as_secs_f64();
                                             }
                                         }
                                     } else {
@@ -199,22 +305,31 @@ impl HealthServer {
                                             }
                                         }
                                     }
-                                    
-                                    let json = serde_json::to_string(&state.items).unwrap_or_else(|_| "[]".to_string());
-                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
 
+                                    let json = serde_json::to_string(&state.items)
+                                        .unwrap_or_else(|_| "[]".to_string());
+                                    (
+                                        "200 OK".to_string(),
+                                        json,
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/neurons") {
                                     let stats = rustyclaw_providers::get_neuron_stats();
-                                    let json = serde_json::to_string(&stats).unwrap_or_else(|_| "{}".to_string());
-                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
-
+                                    let json = serde_json::to_string(&stats)
+                                        .unwrap_or_else(|_| "{}".to_string());
+                                    (
+                                        "200 OK".to_string(),
+                                        json,
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/concurrency") {
                                     let providers_map = {
                                         let mut m = serde_json::Map::new();
                                         for p in ["cloudflare", "groq", "openrouter", "gmn"] {
-                                            let secs = rustyclaw_providers::provider_cooldown_remaining(p)
-                                                .map(|d| d.as_secs_f64())
-                                                .unwrap_or(0.0);
+                                            let secs =
+                                                rustyclaw_providers::provider_cooldown_remaining(p)
+                                                    .map(|d| d.as_secs_f64())
+                                                    .unwrap_or(0.0);
                                             m.insert(p.to_string(), serde_json::json!(secs));
                                         }
                                         m
@@ -223,45 +338,80 @@ impl HealthServer {
                                         "capacity": gmn_cap_clone,
                                         "providers": providers_map,
                                     });
-                                    ("200 OK".to_string(), json.to_string(), "application/json; charset=utf-8")
-
+                                    (
+                                        "200 OK".to_string(),
+                                        json.to_string(),
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/usage/summary") {
                                     let since = extract_since_param(&request);
                                     let db_path = workspace_path_clone.join("memory.db");
-                                    let json = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                    let json = if let Ok(db) =
+                                        rustyclaw_storage::DbManager::new(&db_path)
+                                    {
                                         db.get_usage_summary(since.as_deref())
                                     } else {
                                         serde_json::json!({ "total_runs": 0, "total_tokens": 0, "by_model": {} })
                                     };
-                                    ("200 OK".to_string(), json.to_string(), "application/json; charset=utf-8")
-
+                                    (
+                                        "200 OK".to_string(),
+                                        json.to_string(),
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/usage/timeline") {
-                                    let gran = extract_query_i64(&request, "gran").unwrap_or(86400).max(1) as u64;
+                                    let gran =
+                                        extract_query_i64(&request, "gran").unwrap_or(86400).max(1)
+                                            as u64;
                                     let from = extract_query_i64(&request, "from");
                                     let now = chrono::Utc::now().timestamp();
                                     let db_path = workspace_path_clone.join("memory.db");
-                                    let rows = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                    let rows = if let Ok(db) =
+                                        rustyclaw_storage::DbManager::new(&db_path)
+                                    {
                                         db.get_usage_timeline(from, now, gran)
-                                    } else { vec![] };
-                                    let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string());
-                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
-
+                                    } else {
+                                        vec![]
+                                    };
+                                    let json = serde_json::to_string(&rows)
+                                        .unwrap_or_else(|_| "[]".to_string());
+                                    (
+                                        "200 OK".to_string(),
+                                        json,
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/usage/by-trigger") {
                                     let since = extract_since_param(&request);
                                     let db_path = workspace_path_clone.join("memory.db");
-                                    let rows = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                    let rows = if let Ok(db) =
+                                        rustyclaw_storage::DbManager::new(&db_path)
+                                    {
                                         db.get_usage_by_trigger(since.as_deref())
-                                    } else { vec![] };
-                                    let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string());
-                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
-
+                                    } else {
+                                        vec![]
+                                    };
+                                    let json = serde_json::to_string(&rows)
+                                        .unwrap_or_else(|_| "[]".to_string());
+                                    (
+                                        "200 OK".to_string(),
+                                        json,
+                                        "application/json; charset=utf-8",
+                                    )
                                 } else if request.starts_with("GET /api/schedule") {
                                     let db_path = workspace_path_clone.join("memory.db");
-                                    let rows = if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {
+                                    let rows = if let Ok(db) =
+                                        rustyclaw_storage::DbManager::new(&db_path)
+                                    {
                                         crate::cron::compute_schedule(&workspace_path_clone, &db)
-                                    } else { vec![] };
-                                    let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_string());
-                                    ("200 OK".to_string(), json, "application/json; charset=utf-8")
+                                    } else {
+                                        vec![]
+                                    };
+                                    let json = serde_json::to_string(&rows)
+                                        .unwrap_or_else(|_| "[]".to_string());
+                                    (
+                                        "200 OK".to_string(),
+                                        json,
+                                        "application/json; charset=utf-8",
+                                    )
 
                                 // ── ダッシュボード & チャット ────────────────────
                                 } else if request.starts_with("GET /dashboard")
@@ -270,13 +420,14 @@ impl HealthServer {
                                 {
                                     let html = get_dashboard_html();
                                     ("200 OK".to_string(), html, "text/html; charset=utf-8")
-
                                 } else if request.starts_with("POST /chat") {
                                     let mut chat_resp = "Error: Invalid request body".to_string();
 
                                     if let Some(body_start) = request.find("\r\n\r\n") {
                                         let json_body = request[body_start + 4..].trim();
-                                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_body) {
+                                        if let Ok(val) =
+                                            serde_json::from_str::<serde_json::Value>(json_body)
+                                        {
                                             if let Some(msg) = val["message"].as_str() {
                                                 let session_id = "http-dashboard".to_string();
                                                 let mut rx = bus_clone.subscribe();
@@ -311,14 +462,20 @@ impl HealthServer {
                                         }
                                     }
                                     ("200 OK".to_string(), chat_resp, "text/plain; charset=utf-8")
-
                                 } else {
-                                    ("404 NOT FOUND".to_string(), "NOT FOUND".to_string(), "text/plain")
+                                    (
+                                        "404 NOT FOUND".to_string(),
+                                        "NOT FOUND".to_string(),
+                                        "text/plain",
+                                    )
                                 };
 
                                 let response = format!(
                                     "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                                    status, content_type, body.len(), body
+                                    status,
+                                    content_type,
+                                    body.len(),
+                                    body
                                 );
                                 let _ = socket.write_all(response.as_bytes()).await;
                                 let _ = socket.flush().await;
@@ -345,7 +502,11 @@ fn read_last_lines(path: &Path, limit: usize) -> String {
     if let Ok(file) = std::fs::File::open(path) {
         let reader = std::io::BufReader::new(file);
         let lines: Vec<String> = reader.lines().flatten().collect();
-        let start = if lines.len() > limit { lines.len() - limit } else { 0 };
+        let start = if lines.len() > limit {
+            lines.len() - limit
+        } else {
+            0
+        };
         return lines[start..].join("\n");
     }
     "Failed to open log file.".to_string()
@@ -385,7 +546,13 @@ fn extract_since_param(request: &str) -> Option<String> {
     let end = query.find(' ').unwrap_or(query.len());
     for pair in query[..end].split('&') {
         if let Some(val) = pair.strip_prefix("since=") {
-            if val.len() >= 10 && val.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            if val.len() >= 10
+                && val
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+            {
                 return Some(val.to_string());
             }
         }
@@ -409,7 +576,10 @@ fn extract_query_i64(request: &str, key: &str) -> Option<i64> {
 
 fn extract_query_param(request: &str, key: &str) -> Option<String> {
     let query_start = request.find('?')?;
-    let query_end = request[query_start..].find(' ').map(|i| query_start + i).unwrap_or(request.len());
+    let query_end = request[query_start..]
+        .find(' ')
+        .map(|i| query_start + i)
+        .unwrap_or(request.len());
     let query = &request[query_start + 1..query_end];
     for pair in query.split('&') {
         if let Some((k, v)) = pair.split_once('=') {
@@ -422,7 +592,6 @@ fn extract_query_param(request: &str, key: &str) -> Option<String> {
 }
 
 // ── ダッシュボード HTML ────────────────────────────────────────────────────────
-
 
 fn get_dashboard_html() -> String {
     r##"<!DOCTYPE html>

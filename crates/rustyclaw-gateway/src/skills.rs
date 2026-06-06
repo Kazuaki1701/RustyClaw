@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 use gray_matter::{Matter, engine::YAML};
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// YAMLの allowed-tools を文字列（スペース区切り）と配列の両方に対応するためのデシリアライザ
 fn deserialize_allowed_tools<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
@@ -35,7 +35,10 @@ where
 
             match RawAllowedTools::deserialize(deserializer)? {
                 RawAllowedTools::Single(s) => {
-                    let tools = s.split_whitespace().map(|x| x.to_string()).collect::<Vec<_>>();
+                    let tools = s
+                        .split_whitespace()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>();
                     if tools.is_empty() {
                         Ok(None)
                     } else {
@@ -60,7 +63,11 @@ where
 pub struct SkillManifest {
     pub name: String,
     pub description: String,
-    #[serde(rename = "allowed-tools", default, deserialize_with = "deserialize_allowed_tools")]
+    #[serde(
+        rename = "allowed-tools",
+        default,
+        deserialize_with = "deserialize_allowed_tools"
+    )]
     pub allowed_tools: Option<Vec<String>>,
     pub license: Option<String>,
     pub compatibility: Option<String>,
@@ -71,8 +78,8 @@ pub struct SkillManifest {
 #[derive(Debug, Clone)]
 pub struct Skill {
     pub manifest: SkillManifest,
-    pub instructions: String,    // SKILL.md の本文部分 (Markdown)
-    pub path: PathBuf,           // [skill-name]/ ディレクトリの絶対パス
+    pub instructions: String, // SKILL.md の本文部分 (Markdown)
+    pub path: PathBuf,        // [skill-name]/ ディレクトリの絶対パス
 }
 
 /// workspace/skills/ 配下から標準スキルおよび互換スキルをロードする
@@ -92,7 +99,7 @@ pub fn load_skills(workspace_path: &Path) -> Vec<Skill> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        
+
         // パターン1: ディレクトリ構造 [skill-name]/SKILL.md
         if path.is_dir() {
             let skill_md_path = path.join("SKILL.md");
@@ -105,12 +112,21 @@ pub fn load_skills(workspace_path: &Path) -> Vec<Skill> {
                 }
             }
         }
-        
+
         // パターン2: 従来互換フラットファイル [skill-name].md (フォールバック)
         if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                let skill_name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-                let skill = parse_fallback_skill(&content, &skill_name, &path.parent().unwrap().to_path_buf(), &matter);
+                let skill_name = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let skill = parse_fallback_skill(
+                    &content,
+                    &skill_name,
+                    &path.parent().unwrap().to_path_buf(),
+                    &matter,
+                );
                 skills.push(skill);
             }
         }
@@ -122,9 +138,12 @@ fn validate_manifest(manifest: &SkillManifest, dir_path: &Path) -> Result<(), St
     // 1. name の検証
     let name = &manifest.name;
     if name.is_empty() || name.len() > 64 {
-        return Err(format!("Skill name '{}' length must be between 1 and 64 characters", name));
+        return Err(format!(
+            "Skill name '{}' length must be between 1 and 64 characters",
+            name
+        ));
     }
-    
+
     // 使用可能文字のチェック
     let mut prev_is_hyphen = false;
     for (i, c) in name.chars().enumerate() {
@@ -135,36 +154,49 @@ fn validate_manifest(manifest: &SkillManifest, dir_path: &Path) -> Result<(), St
                 return Err(format!("Skill name '{}' cannot start with a hyphen", name));
             }
             if prev_is_hyphen {
-                return Err(format!("Skill name '{}' cannot contain consecutive hyphens", name));
+                return Err(format!(
+                    "Skill name '{}' cannot contain consecutive hyphens",
+                    name
+                ));
             }
             prev_is_hyphen = true;
         } else {
-            return Err(format!("Skill name '{}' contains invalid character '{}' (only lowercase alphanumeric and hyphens are allowed)", name, c));
+            return Err(format!(
+                "Skill name '{}' contains invalid character '{}' (only lowercase alphanumeric and hyphens are allowed)",
+                name, c
+            ));
         }
     }
     if name.ends_with('-') {
         return Err(format!("Skill name '{}' cannot end with a hyphen", name));
     }
-    
+
     // 親ディレクトリ名との一致検証
     if let Some(dir_name) = dir_path.file_name().and_then(|n| n.to_str()) {
         if name != dir_name {
-            return Err(format!("Skill name '{}' does not match its parent directory name '{}'", name, dir_name));
+            return Err(format!(
+                "Skill name '{}' does not match its parent directory name '{}'",
+                name, dir_name
+            ));
         }
     }
-    
+
     // 2. description の検証
     if manifest.description.is_empty() || manifest.description.len() > 1024 {
-        return Err(format!("Skill description length must be between 1 and 1024 characters"));
+        return Err(format!(
+            "Skill description length must be between 1 and 1024 characters"
+        ));
     }
-    
+
     // 3. compatibility の検証
     if let Some(ref compat) = manifest.compatibility {
         if compat.is_empty() || compat.len() > 500 {
-            return Err(format!("Skill compatibility length must be between 1 and 500 characters"));
+            return Err(format!(
+                "Skill compatibility length must be between 1 and 500 characters"
+            ));
         }
     }
-    
+
     Ok(())
 }
 
@@ -173,22 +205,23 @@ fn rewrite_relative_links(instructions: &str, skill_name: &str) -> String {
         Ok(r) => r,
         Err(_) => return instructions.to_string(),
     };
-    
+
     re.replace_all(instructions, |caps: &regex::Captures| {
         let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         let url = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-        
-        if url.starts_with("http://") 
-            || url.starts_with("https://") 
-            || url.starts_with("file://") 
-            || url.starts_with("/") 
-            || url.starts_with("#") 
+
+        if url.starts_with("http://")
+            || url.starts_with("https://")
+            || url.starts_with("file://")
+            || url.starts_with("/")
+            || url.starts_with("#")
         {
             format!("{}({})", prefix, url)
         } else {
             format!("{}(skills/{}/{})", prefix, skill_name, url)
         }
-    }).into_owned()
+    })
+    .into_owned()
 }
 
 /// 標準 SKILL.md ファイルのパース
@@ -198,16 +231,20 @@ fn parse_standard_skill(content: &str, dir_path: &Path, matter: &Matter<YAML>) -
     let manifest: SkillManifest = match raw_data.deserialize() {
         Ok(m) => m,
         Err(e) => {
-            tracing::warn!("Failed to deserialize skill manifest in {:?}: {}", dir_path, e);
+            tracing::warn!(
+                "Failed to deserialize skill manifest in {:?}: {}",
+                dir_path,
+                e
+            );
             return None;
         }
     };
-    
+
     if let Err(e) = validate_manifest(&manifest, dir_path) {
         tracing::warn!("Validation failed for skill in {:?}: {}", dir_path, e);
         return None;
     }
-    
+
     Some(Skill {
         manifest,
         instructions: result.content,
@@ -216,7 +253,12 @@ fn parse_standard_skill(content: &str, dir_path: &Path, matter: &Matter<YAML>) -
 }
 
 /// 従来のフラットマークダウンを疑似 manifest にラップして下位互換
-fn parse_fallback_skill(content: &str, file_name: &str, base_path: &Path, matter: &Matter<YAML>) -> Skill {
+fn parse_fallback_skill(
+    content: &str,
+    file_name: &str,
+    base_path: &Path,
+    matter: &Matter<YAML>,
+) -> Skill {
     // 既にYAMLが含まれているかチェック
     if let Some(skill) = parse_standard_skill(content, base_path, matter) {
         return skill;
@@ -224,7 +266,8 @@ fn parse_fallback_skill(content: &str, file_name: &str, base_path: &Path, matter
 
     // YAMLが含まれていないプレーンなマークダウンの場合
     let lines: Vec<&str> = content.lines().collect();
-    let description = lines.iter()
+    let description = lines
+        .iter()
         .find(|l| !l.is_empty() && !l.starts_with("#"))
         .copied()
         .unwrap_or("RustyClaw Fallback Skill")
@@ -264,9 +307,7 @@ pub fn generate_skills_directory(skills: &[Skill]) -> String {
             .map(|rd| {
                 let mut names: Vec<String> = rd
                     .flatten()
-                    .filter(|e| {
-                        e.path().extension().and_then(|x| x.to_str()) == Some("sh")
-                    })
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("sh"))
                     .map(|e| {
                         format!(
                             "skills/{}/scripts/{}",
@@ -284,20 +325,15 @@ pub fn generate_skills_directory(skills: &[Skill]) -> String {
             // スクリプトなし: LLM が直接処理するタイプ
             dir_str.push_str(&format!(
                 "- **{}**: {} (instruction-based, no script)\n",
-                skill.manifest.name,
-                skill.manifest.description
+                skill.manifest.name, skill.manifest.description
             ));
         } else {
             dir_str.push_str(&format!(
                 "- **{}**: {}\n",
-                skill.manifest.name,
-                skill.manifest.description
+                skill.manifest.name, skill.manifest.description
             ));
             for path in &script_paths {
-                dir_str.push_str(&format!(
-                    "  → run_workspace_script: \"{}\"\n",
-                    path
-                ));
+                dir_str.push_str(&format!("  → run_workspace_script: \"{}\"\n", path));
             }
         }
     }
@@ -322,12 +358,15 @@ pub fn inject_skill_content(workspace_path: &Path, content: &str) -> String {
     for skill in &skills {
         let trigger_tag = format!("use-skill: {}", skill.manifest.name);
         let name_match = format!("skill:{}", skill.manifest.name);
-        
-        if search_target.contains(&trigger_tag) 
-            || search_target.contains(&name_match) 
-            || search_target.contains(&skill.manifest.name) 
+
+        if search_target.contains(&trigger_tag)
+            || search_target.contains(&name_match)
+            || search_target.contains(&skill.manifest.name)
         {
-            tracing::info!("Activation: Dynamic loading of skill '{}' into prompt", skill.manifest.name);
+            tracing::info!(
+                "Activation: Dynamic loading of skill '{}' into prompt",
+                skill.manifest.name
+            );
             injected_instructions.push_str(&format!(
                 "\n\n--- [ACTIVE SKILL: {}] ---\n{}\n",
                 skill.manifest.name,
@@ -342,7 +381,11 @@ pub fn inject_skill_content(workspace_path: &Path, content: &str) -> String {
         final_content = format!("{}{}", final_content, skills_directory);
     }
     if !injected_instructions.is_empty() {
-        final_content = format!("{}\n\n---\n\n{}", injected_instructions.trim(), final_content);
+        final_content = format!(
+            "{}\n\n---\n\n{}",
+            injected_instructions.trim(),
+            final_content
+        );
     }
     final_content
 }
@@ -357,9 +400,12 @@ mod tests {
         let content = "# Fallback Skill\nThis is a fallback skill description.\nMore details here.";
         let matter = Matter::<YAML>::new();
         let skill = parse_fallback_skill(content, "test-skill", dir.path(), &matter);
-        
+
         assert_eq!(skill.manifest.name, "test-skill");
-        assert_eq!(skill.manifest.description, "This is a fallback skill description.");
+        assert_eq!(
+            skill.manifest.description,
+            "This is a fallback skill description."
+        );
         assert!(skill.instructions.contains("More details here."));
     }
 
@@ -368,15 +414,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let skill_dir = dir.path().join("standard-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        
+
         let content = "---\nname: standard-skill\ndescription: A standard skill description.\nallowed-tools:\n  - run_workspace_script\n---\n# Instructions\nFollow these steps.";
         let matter = Matter::<YAML>::new();
         let skill = parse_standard_skill(content, &skill_dir, &matter).unwrap();
-        
+
         assert_eq!(skill.manifest.name, "standard-skill");
         assert_eq!(skill.manifest.description, "A standard skill description.");
-        assert_eq!(skill.manifest.allowed_tools.unwrap(), vec!["run_workspace_script".to_string()]);
-        assert_eq!(skill.instructions.trim(), "# Instructions\nFollow these steps.");
+        assert_eq!(
+            skill.manifest.allowed_tools.unwrap(),
+            vec!["run_workspace_script".to_string()]
+        );
+        assert_eq!(
+            skill.instructions.trim(),
+            "# Instructions\nFollow these steps."
+        );
     }
 
     #[test]
@@ -384,12 +436,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let skill_dir = dir.path().join("space-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        
+
         let content = "---\nname: space-skill\ndescription: Space description.\nallowed-tools: tool1 tool2 tool3\n---\n# Instructions";
         let matter = Matter::<YAML>::new();
         let skill = parse_standard_skill(content, &skill_dir, &matter).unwrap();
-        
-        assert_eq!(skill.manifest.allowed_tools.unwrap(), vec!["tool1".to_string(), "tool2".to_string(), "tool3".to_string()]);
+
+        assert_eq!(
+            skill.manifest.allowed_tools.unwrap(),
+            vec![
+                "tool1".to_string(),
+                "tool2".to_string(),
+                "tool3".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -397,19 +456,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let skill_dir = dir.path().join("standard-skill"); // name mismatch
         std::fs::create_dir_all(&skill_dir).unwrap();
-        
+
         let matter = Matter::<YAML>::new();
-        
+
         // ケースA: ディレクトリ名不一致
         let content_mismatch = "---\nname: other-name\ndescription: Valid desc.\n---";
         assert!(parse_standard_skill(content_mismatch, &skill_dir, &matter).is_none());
-        
+
         // ケースB: 大文字含む名前
         let skill_dir_capital = dir.path().join("CapitalSkill");
         std::fs::create_dir_all(&skill_dir_capital).unwrap();
         let content_capital = "---\nname: CapitalSkill\ndescription: Valid desc.\n---";
         assert!(parse_standard_skill(content_capital, &skill_dir_capital, &matter).is_none());
-        
+
         // ケースC: 連続ハイフン
         let skill_dir_hyphens = dir.path().join("foo--bar");
         std::fs::create_dir_all(&skill_dir_hyphens).unwrap();
@@ -436,10 +495,18 @@ mod tests {
         // 1. 標準スキルディレクトリの作成
         let vitals_dir = skills_dir.join("vitals-coach");
         std::fs::create_dir_all(&vitals_dir).unwrap();
-        std::fs::write(vitals_dir.join("SKILL.md"), "---\nname: vitals-coach\ndescription: Garmin coach.\n---\n# Garmin instructions").unwrap();
+        std::fs::write(
+            vitals_dir.join("SKILL.md"),
+            "---\nname: vitals-coach\ndescription: Garmin coach.\n---\n# Garmin instructions",
+        )
+        .unwrap();
 
         // 2. 従来互換フラットスキルの作成
-        std::fs::write(skills_dir.join("topic-patrol.md"), "# Topic Patrol\nPatrol description.").unwrap();
+        std::fs::write(
+            skills_dir.join("topic-patrol.md"),
+            "# Topic Patrol\nPatrol description.",
+        )
+        .unwrap();
 
         // テストA: トリガーワードが含まれていない場合 (Discoveryのみ追加される)
         let prompt = "How is the weather today?";

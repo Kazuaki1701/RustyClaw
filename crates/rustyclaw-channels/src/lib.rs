@@ -27,10 +27,10 @@ pub trait Channel: Send + Sync {
 pub trait ProgressReporter: Send + Sync {
     /// 進行インジケーター（タイピング表示、および中間メッセージ）の開始
     async fn start(&self) -> Result<()>;
-    
+
     /// 現在の処理状況やツール実行ステータスを更新する
     async fn update_status(&self, status: &str) -> Result<()>;
-    
+
     /// 処理が完了した時のクリーンアップ（タイピングの停止、メッセージの削除など）
     async fn finish(&self) -> Result<()>;
 }
@@ -175,12 +175,14 @@ impl DiscordConnector {
     /// コネクタ（クライアント）の起動
     pub async fn start(&self) -> Result<()> {
         if self.token == "mock" || self.token == "dummy" || self.token.is_empty() {
-            tracing::info!("DiscordConnector started in MOCK/DUMMY mode. Gateway connection skipped.");
+            tracing::info!(
+                "DiscordConnector started in MOCK/DUMMY mode. Gateway connection skipped."
+            );
             return Ok(());
         }
 
-        let intents = GatewayIntents::GUILD_MESSAGES 
-            | GatewayIntents::DIRECT_MESSAGES 
+        let intents = GatewayIntents::GUILD_MESSAGES
+            | GatewayIntents::DIRECT_MESSAGES
             | GatewayIntents::MESSAGE_CONTENT;
 
         let handler = DiscordHandler {
@@ -215,16 +217,25 @@ impl DiscordConnector {
 #[async_trait]
 impl Channel for DiscordConnector {
     async fn send_message(&self, channel_id: &str, content: &str) -> Result<()> {
-        let http = self.http.as_ref()
+        let http = self
+            .http
+            .as_ref()
             .context("DiscordConnector is in MOCK mode. Cannot send real message.")?;
 
-        let cid: u64 = channel_id.parse()
+        let cid: u64 = channel_id
+            .parse()
             .context("Failed to parse channel_id as u64")?;
         let serenity_channel_id = serenity::model::id::ChannelId::new(cid);
 
         for chunk in split_message(content, DISCORD_MAX_LENGTH) {
-            tracing::debug!("Sending chunk ({} chars) to channel {}", chunk.len(), channel_id);
-            serenity_channel_id.say(http, &chunk).await
+            tracing::debug!(
+                "Sending chunk ({} chars) to channel {}",
+                chunk.len(),
+                channel_id
+            );
+            serenity_channel_id
+                .say(http, &chunk)
+                .await
                 .context("Failed to send message chunk via serenity")?;
         }
         Ok(())
@@ -235,7 +246,8 @@ impl DiscordConnector {
     /// ProgressReporter インスタンスを生成する。
     /// MOCK モードの場合はダミー（何もしない空のレポーター）を返す。
     pub fn create_progress_reporter(&self, channel_id: &str) -> Result<Arc<dyn ProgressReporter>> {
-        let cid: u64 = channel_id.parse()
+        let cid: u64 = channel_id
+            .parse()
             .context("Failed to parse channel_id as u64")?;
 
         if let Some(ref http) = self.http {
@@ -251,9 +263,15 @@ pub struct DummyProgressReporter;
 
 #[async_trait]
 impl ProgressReporter for DummyProgressReporter {
-    async fn start(&self) -> Result<()> { Ok(()) }
-    async fn update_status(&self, _status: &str) -> Result<()> { Ok(()) }
-    async fn finish(&self) -> Result<()> { Ok(()) }
+    async fn start(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn update_status(&self, _status: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn finish(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 pub struct DiscordProgressReporter {
@@ -284,14 +302,23 @@ impl ProgressReporter for DiscordProgressReporter {
 
         // 1. 初期メッセージ投稿
         let serenity_channel_id = serenity::model::id::ChannelId::new(channel_id);
-        match serenity_channel_id.say(&http, "*エージェントが考え中...*").await {
+        match serenity_channel_id
+            .say(&http, "*エージェントが考え中...*")
+            .await
+        {
             Ok(msg) => {
                 let mut msg_id_lock = self.progress_message_id.lock().await;
                 *msg_id_lock = Some(msg.id.get());
-                tracing::info!("DiscordProgressReporter: posted progress message id={}", msg.id.get());
+                tracing::info!(
+                    "DiscordProgressReporter: posted progress message id={}",
+                    msg.id.get()
+                );
             }
             Err(e) => {
-                tracing::warn!("DiscordProgressReporter: failed to post initial progress message: {:?}", e);
+                tracing::warn!(
+                    "DiscordProgressReporter: failed to post initial progress message: {:?}",
+                    e
+                );
             }
         }
 
@@ -338,8 +365,15 @@ impl ProgressReporter for DiscordProgressReporter {
         let content = format!("*エージェントが実行中: {}*", status);
         let builder = serenity::builder::EditMessage::new().content(content);
 
-        if let Err(e) = serenity_channel_id.edit_message(&self.http, serenity_message_id, builder).await {
-            tracing::warn!("DiscordProgressReporter: failed to edit message id={}: {:?}", msg_id, e);
+        if let Err(e) = serenity_channel_id
+            .edit_message(&self.http, serenity_message_id, builder)
+            .await
+        {
+            tracing::warn!(
+                "DiscordProgressReporter: failed to edit message id={}: {:?}",
+                msg_id,
+                e
+            );
         }
 
         Ok(())
@@ -364,10 +398,20 @@ impl ProgressReporter for DiscordProgressReporter {
         if let Some(id) = msg_id {
             let serenity_channel_id = serenity::model::id::ChannelId::new(self.channel_id);
             let serenity_message_id = serenity::model::id::MessageId::new(id);
-            if let Err(e) = serenity_channel_id.delete_message(&self.http, serenity_message_id).await {
-                tracing::warn!("DiscordProgressReporter: failed to delete message id={}: {:?}", id, e);
+            if let Err(e) = serenity_channel_id
+                .delete_message(&self.http, serenity_message_id)
+                .await
+            {
+                tracing::warn!(
+                    "DiscordProgressReporter: failed to delete message id={}: {:?}",
+                    id,
+                    e
+                );
             } else {
-                tracing::info!("DiscordProgressReporter: deleted progress message id={}", id);
+                tracing::info!(
+                    "DiscordProgressReporter: deleted progress message id={}",
+                    id
+                );
             }
         }
 
@@ -386,7 +430,11 @@ struct DiscordHandler {
 
 #[serenity_async_trait]
 impl EventHandler for DiscordHandler {
-    async fn ready(&self, _ctx: serenity::prelude::Context, ready: serenity::model::gateway::Ready) {
+    async fn ready(
+        &self,
+        _ctx: serenity::prelude::Context,
+        ready: serenity::model::gateway::Ready,
+    ) {
         tracing::info!(
             bot_name = %ready.user.name,
             guild_count = ready.guilds.len(),
@@ -491,7 +539,11 @@ mod tests {
         let line = "a".repeat(700);
         let text = format!("{}\n{}\n{}", line, line, line);
         let chunks = split_message(&text, 2000);
-        assert_eq!(chunks.len(), 2, "should split into 2 chunks at line boundary");
+        assert_eq!(
+            chunks.len(),
+            2,
+            "should split into 2 chunks at line boundary"
+        );
         assert!(chunks[0].len() <= 2000);
         assert!(chunks[1].len() <= 2000);
     }
@@ -504,7 +556,11 @@ mod tests {
         let chunks = split_message(&text, 2000);
         if chunks.len() > 1 {
             // 途中チャンクは ``` で閉じられる
-            assert!(chunks[0].ends_with("```"), "first chunk must close fence: {:?}", &chunks[0][chunks[0].len().saturating_sub(10)..]);
+            assert!(
+                chunks[0].ends_with("```"),
+                "first chunk must close fence: {:?}",
+                &chunks[0][chunks[0].len().saturating_sub(10)..]
+            );
             // 次チャンクは ``` で再開される
             assert!(chunks[1].starts_with("```"), "next chunk must reopen fence");
         }
