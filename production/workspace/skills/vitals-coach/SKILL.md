@@ -40,7 +40,7 @@ Garmin devices are consumer wearables, not clinical diagnostic tools. If the use
 
 ### 2. Synchronization Latency Verification (Critical)
 Always parse the `"Garmin Connect Last synced"` timestamp from the raw JSON payload.
-*   **Timezone Conversion**: The timestamp is in UTC (`+00:00`). You **MUST** convert it to JST (`+09:00`) before calculating the latency elapsed relative to current system time.
+*   **Timezone Note**: `Last synced` は **真の UTC**（`+00:00`）。JST に変換（+9時間）してから経過時間を計算すること。なお `Wake time` / `Bedtime` は `+00:00` サフィックスが付いているが **実態は JST**（UTC 変換不要）。
 *   **Rule**: If the last synced time is older than **30 minutes**, append a prominent warning:
     > [!WARNING]
     > **データ同期の遅延があります**: このデータは **[経過時間]前**（[ローカル表記での同期時刻]）のものです。急激な体格・体調の変化は反映されていないため、現在の体調の判断材料にしないでください。
@@ -57,16 +57,50 @@ Invoke the Garmin retrieval script located inside this skill's localized path, p
     *   `env`:
         *   `HOMEASSISTANT_TOKEN`: `$vault:homeassistant-token`
 
+The script returns **only the 27 core fields** listed in the tables below. Do not attempt to parse other fields — they are not returned.
+
 ### Step 2: Filtration & Threshold Analysis (Level 2)
-Extract only the **Core Health Metrics** and evaluate them against these coaching thresholds:
+
+Evaluate the data in two passes.
+
+#### Alert Evaluation — fields with explicit thresholds
+Address **every** threshold violation in the coaching output.
 
 | Metric | Alert Threshold | Coaching Strategy (Japanese) |
 | :--- | :--- | :--- |
-| **Body Battery** | Current < 20 | 激しい活動を控え、早めの就寝や休息を優先するよう提案。 |
-| **Stress Level** | Average > 50 | 深呼吸、スクリーンフリー時間、または軽い休憩を推奨。 |
-| **Steps Taken** | Under 10,000 | 軽いストレッチや散歩を提案（目標10,000歩）。 |
-| **Sleep Duration** | Under 6 hours | 睡眠不足を指摘し、短時間の昼寝や就寝環境の改善をアドバイス。 |
-| **HRV Status** | "Unbalanced" | 身体的疲労の蓄積を指摘し、完全なパッシブリカバリーを推奨。 |
+| **`Garmin Connect Body battery`** | < 20 % | 激しい活動を控え、早めの就寝や休息を優先するよう提案。 |
+| **`Garmin Connect Body battery highest`** | < 40 % | 1日の最高値が低い場合、慢性的な疲労蓄積として言及。 |
+| **`Garmin Connect Average stress level`** | > 50 | 深呼吸、スクリーンフリー時間、または軽い休憩を推奨。 |
+| **`Garmin Connect High stress duration`** | > 90 min | 長時間の高ストレス状態を具体的に指摘し、こまめな休憩を促す。 |
+| **`Garmin Connect Max stress level`** | > 80 | ピーク過負荷を指摘し、翌日の活動量を抑えるよう提案。 |
+| **`Garmin Connect Low stress duration`** | < 120 min | リラックス時間の確保を促す。意識的な休息を提案。 |
+| **`Garmin Connect Resting heart rate`** | > 70 bpm | 安静時心拍の上昇は疲労・体調不良のサイン。無理な活動を避けるよう提案。 |
+| **`Garmin Connect Steps`** | Under `Daily step goal` | 軽いストレッチや散歩を提案。 |
+| **`Garmin Connect Sedentary time`** | > 600 min | 長時間の座りっぱなしを指摘し、1時間ごとに立ち上がることを提案。 |
+| **`Garmin Connect Active time`** | < 30 min | 最低限の活動量が不足している旨を指摘し、軽い運動を提案。 |
+| **`Garmin Connect Intensity minutes`** | < 20 min | 有酸素活動の追加を提案（例：速歩き15分）。 |
+| **`Garmin Connect Sleep duration`** | < 360 min | 睡眠不足を指摘し、短時間の昼寝や就寝環境の改善をアドバイス。 |
+| **`Garmin Connect Deep sleep`** | < 60 min | 深睡眠の不足は身体回復の低下を意味する。早めの就寝・寝室環境の見直しを提案。 |
+| **`Garmin Connect REM sleep`** | < 90 min | REM 不足は精神的疲労に直結。ストレス軽減・就寝前のリラックスを推奨。 |
+| **`Garmin Connect Awake time`** | > 30 min | 睡眠中の覚醒が多い。就寝環境（温度・光・音）の見直しを提案。 |
+
+#### Context Reference — fields without fixed thresholds
+Use these as contextual signals combined with other data. No threshold-based alert required.
+
+| Metric | Usage |
+| :--- | :--- |
+| **`Garmin Connect Body battery charged`** | `drained` / `lowest` との差分で睡眠中の回復効率を評価。 |
+| **`Garmin Connect Body battery drained`** | 日中消費量のパターン把握。charged との差が大きい場合は過負荷を示唆。 |
+| **`Garmin Connect Body battery lowest`** | 今日の最低到達点。current との差で回復傾向を確認。 |
+| **`Garmin Connect Activity stress duration`** | 運動由来のストレス。High stress duration の内訳評価に使用（運動ならポジティブ）。 |
+| **`Garmin Connect Medium stress duration`** | Low / High との比率でストレス構造を把握。 |
+| **`Garmin Connect Light sleep`** | Deep / REM 比率との組み合わせで睡眠構造を評価。 |
+| **`Garmin Connect Bedtime`** | `Wake time` との組み合わせで睡眠習慣を把握。値は **JST そのまま**（UTC 変換不要）。 |
+| **`Garmin Connect Yesterday steps`** | 今日の Steps と比較してトレンドを判断。 |
+| **`Garmin Connect Weekly step average`** | 活動習慣の長期トレンド把握。Daily step goal との乖離を確認。 |
+| **`Garmin Connect Wake time`** | 起床時刻の把握。値は **JST そのまま**（`+00:00` サフィックスは誤表記、UTC 変換不要）。 |
+| **`Garmin Connect Daily step goal`** | `Steps` のアラート基準値として参照。 |
+| **`Garmin Connect Last synced`** | データ鮮度の検証。30分超で同期遅延警告を出す（真の UTC → JST に +9時間変換して計算）。 |
 
 ### Step 3: Deliver (Concise & Empathetic Secretary Tone)
 Formulate a supportive, professional, yet warm secretary-style response in Japanese (K-sama's preference).
@@ -80,7 +114,7 @@ Formulate a supportive, professional, yet warm secretary-style response in Japan
 
 ## Common Mistakes & Antipatterns
 
-*   **Raw Data Dumping**: Outputting 70+ lines of raw JSON, wasting context and tokens. (Fix: Filter strictly to the 5 core health metrics).
+*   **Raw Data Dumping**: The script already filters to 27 core fields. Do not modify the script to output all sensors.
 *   **Assuming Real-time Status**: Ignoring the sync time and declaring hours-old vitals as "fine" during an acute illness. (Fix: Always calculate and declare JST sync latency).
 *   **Missing Vault Keys**: Running without verifying if `homeassistant-token` exists in `vault.json`. (Fix: Verify token presence first and fail gracefully).
 *   **Absolute Script Execution**: Running shell scripts directly. (Fix: Use `run_workspace_script` for secure localized execution).
