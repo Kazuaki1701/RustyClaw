@@ -667,7 +667,12 @@ Rules:
             .collect();
 
         let max_loops = 5;
-        for _ in 0..max_loops {
+        for loop_idx in 0..max_loops {
+            // 2回目以降: 古いツールペアを捨てて直近1世代のみ保持
+            if loop_idx > 0 {
+                trim_heartbeat_messages(&mut messages);
+            }
+
             self.dump_request(workspace_dir, &messages);
 
             let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &provider_tools, Duration::from_secs(900)).await?;
@@ -709,6 +714,9 @@ Rules:
                                 );
                             }
                         }
+
+                        // ツール結果を 3,000 bytes にキャップ（Groq TPM 上限対策）
+                        tool_content = truncate_70_20(&tool_content, 3_000);
 
                         let tool_msg = Message {
                             role: "tool".to_string(),
@@ -1897,6 +1905,28 @@ fn parse_context_window(context_window: Option<&str>) -> usize {
     }
 }
 
+/// Heartbeat メッセージ配列を [system, user, 直近1世代] に切り詰める。
+/// messages[0]=system, messages[1]=user を保持しつつ、
+/// それ以降の assistant+tool ペアは最後の1世代（最後の assistant メッセージ以降）のみ残す。
+/// 世代が1つ以下の場合は何もしない。
+fn trim_heartbeat_messages(messages: &mut Vec<Message>) {
+    if messages.len() <= 2 {
+        return;
+    }
+    // 末尾から assistant ロールのメッセージを探す
+    let last_assistant_idx = messages
+        .iter()
+        .rposition(|m| m.role == "assistant");
+    if let Some(idx) = last_assistant_idx {
+        // idx >= 2 かつ前にもっと古い世代がある場合のみ削除
+        if idx >= 2 && messages[..idx].iter().any(|m| m.role == "assistant") {
+            let tail: Vec<Message> = messages.drain(idx..).collect();
+            messages.truncate(2); // system + user のみ残す
+            messages.extend(tail);
+        }
+    }
+}
+
 /// 70/20/10 戦略でテキストを `max_bytes` 以内に切り詰める。
 fn truncate_70_20(content: &str, max_bytes: usize) -> String {
     if content.len() <= max_bytes {
@@ -2955,5 +2985,102 @@ Keep it short.\n\
         let chunks = chunk_static_document("big.md", &content);
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].chars().count() <= 800, "800文字を超えないこと");
+    }
+
+    // ── Phase 28b-4: trim_heartbeat_messages ──
+    #[test]
+    fn test_trim_heartbeat_messages_empty() {
+        let mut msgs: Vec<Message> = vec![];
+        trim_heartbeat_messages(&mut msgs);
+        assert_eq!(msgs.len(), 0);
+    }
+
+    #[test]
+    fn test_trim_heartbeat_messages_only_system_user() {
+        let mut msgs = vec![
+            Message { role: "system".to_string(), content: "sys".to_string(), ..Default::default() },
+            Message { role: "user".to_string(),   content: "usr".to_string(), ..Default::default() },
+        ];
+        trim_heartbeat_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2, "system+user のみなら変化しない");
+    }
+
+    #[test]
+    fn test_trim_heartbeat_messages_one_generation() {
+        let mut msgs = vec![
+            Message { role: "system".to_string(),    content: "sys".to_string(), ..Default::default() },
+            Message { role: "user".to_string(),      content: "usr".to_string(), ..Default::default() },
+            Message { role: "assistant".to_string(), content: "".to_string(),
+                tool_calls: Some(vec![]), ..Default::default() },
+            Message { role: "tool".to_string(), content: "result_a".to_string(), ..Default::default() },
+            Message { role: "tool".to_string(), content: "result_b".to_string(), ..Default::default() },
+        ];
+        trim_heartbeat_messages(&mut msgs);
+        assert_eq!(msgs.len(), 5, "1世代しかなければ削除しない");
+    }
+
+    #[test]
+    fn test_trim_heartbeat_messages_two_generations() {
+        let mut msgs = vec![
+            Message { role: "system".to_string(),    content: "sys".to_string(), ..Default::default() },
+            Message { role: "user".to_string(),      content: "usr".to_string(), ..Default::default() },
+            Message { role: "assistant".to_string(), content: "gen1".to_string(), ..Default::default() },
+            Message { role: "tool".to_string(),      content: "old_result".to_string(), ..Default::default() },
+            Message { role: "assistant".to_string(), content: "gen2".to_string(), ..Default::default() },
+            Message { role: "tool".to_string(),      content: "new_result".to_string(), ..Default::default() },
+        ];
+        trim_heartbeat_messages(&mut msgs);
+        assert_eq!(msgs.len(), 4, "古い世代が削除され [system, user, gen2_assistant, gen2_tool] になる");
+        assert_eq!(msgs[0].role, "system");
+        assert_eq!(msgs[1].role, "user");
+        assert_eq!(msgs[2].content, "gen2");
+        assert_eq!(msgs[3].content, "new_result");
+    }
+
+    #[test]
+    fn test_trim_heartbeat_messages_three_generations() {
+        let mut msgs = vec![
+            Message { role: "system".to_string(),    content: "sys".to_string(), ..Default::default() },
+            Message { role: "user".to_string(),      content: "usr".to_string(), ..Default::default() },
+            Message { role: "assistant".to_string(), content: "gen1".to_string(), ..Default::default() },
+            Message { role: "tool".to_string(),      content: "r1".to_string(), ..Default::default() },
+            Message { role: "assistant".to_string(), content: "gen2".to_string(), ..Default::default() },
+            Message { role: "tool".to_string(),      content: "r2".to_string(), ..Default::default() },
+            Message { role: "assistant".to_string(), content: "gen3".to_string(), ..Default::default() },
+            Message { role: "tool".to_string(),      content: "r3".to_string(), ..Default::default() },
+        ];
+        trim_heartbeat_messages(&mut msgs);
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[2].content, "gen3");
+        assert_eq!(msgs[3].content, "r3");
+    }
+
+    // ── Phase 28b-4: ツール結果截断 ──
+    #[test]
+    fn test_truncate_70_20_within_limit() {
+        let short = "abc".repeat(100); // 300 bytes < 3000
+        let result = truncate_70_20(&short, 3_000);
+        assert_eq!(result, short, "上限以内なら変化しない");
+    }
+
+    #[test]
+    fn test_truncate_70_20_over_limit() {
+        let long = "x".repeat(6_000); // 6000 bytes > 3000
+        let result = truncate_70_20(&long, 3_000);
+        assert!(result.len() < 6_000, "截断後は元より短い");
+        assert!(result.contains("[..."), "省略マーカーが含まれる");
+        // 先頭70% = 2100 bytes が保持される
+        assert!(result.starts_with(&"x".repeat(2_100)));
+    }
+
+    #[test]
+    fn test_truncate_70_20_preserves_head_and_tail() {
+        let mut content = "BEGIN_".to_string();
+        content.push_str(&"m".repeat(5_000));
+        content.push_str("_END");
+        let result = truncate_70_20(&content, 3_000);
+        assert!(result.starts_with("BEGIN_"), "先頭が保持される");
+        assert!(result.ends_with("_END"), "末尾が保持される");
+        assert!(result.contains("[..."), "省略マーカーが含まれる");
     }
 }
