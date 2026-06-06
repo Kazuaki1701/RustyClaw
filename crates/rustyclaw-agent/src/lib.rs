@@ -699,7 +699,30 @@ Rules:
         tool_registry: &ToolRegistry,
         db_path: &Path,
     ) -> Result<LlmResponse> {
-        let system_context = self.build_heartbeat_context(workspace_dir)?;
+        let mut system_context = self.build_heartbeat_context(workspace_dir)?;
+
+        // RAG: heartbeat プロンプトに関連チャンクを注入 (ISSUE-27)
+        // execute() と同じパターンで local / remote RAG を条件分岐する
+        if self
+            .config
+            .embedding
+            .as_ref()
+            .map(|e| e.use_local_embedding)
+            .unwrap_or(false)
+        {
+            if let Some(client) = make_embed_client(&self.config) {
+                let rag_ctx =
+                    retrieve_rag_context_local(user_message, &self.config, &client, db_path).await;
+                if !rag_ctx.is_empty() {
+                    system_context.push_str(&rag_ctx);
+                }
+            }
+        } else if let Some(ref rag) = self.rag {
+            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            if !rag_ctx.is_empty() {
+                system_context.push_str(&rag_ctx);
+            }
+        }
 
         let logger = SessionLogger::new(workspace_dir);
         let user_msg = Message {
