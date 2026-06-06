@@ -1871,7 +1871,9 @@ fn filter_seen_tool_result(
             if db.is_item_seen(&item_id).unwrap_or(false) {
                 seen_count += 1;
             } else {
-                let _ = db.mark_item_seen(&item_id, category);
+                if let Err(e) = db.mark_item_seen(&item_id, category) {
+                    tracing::warn!("Failed to mark {} as seen: {}", item_id, e);
+                }
                 new_items.push(item.clone());
             }
         } else {
@@ -2672,8 +2674,8 @@ Keep it short.\n\
     }
 
     // ── Task 2: filter_seen_tool_result ──
-    #[tokio::test]
-    async fn test_filter_seen_tool_result_gmail_first_time() {
+    #[test]
+    fn test_filter_seen_tool_result_gmail_first_time() {
         let dir = tempfile::tempdir().unwrap();
         let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
 
@@ -2685,8 +2687,8 @@ Keep it short.\n\
         assert!(db.is_item_seen("gmail:msg1").unwrap(), "Should be marked as seen after first call");
     }
 
-    #[tokio::test]
-    async fn test_filter_seen_tool_result_gmail_already_seen() {
+    #[test]
+    fn test_filter_seen_tool_result_gmail_already_seen() {
         let dir = tempfile::tempdir().unwrap();
         let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
         db.mark_item_seen("gmail:msg1", "gmail").unwrap();
@@ -2699,8 +2701,8 @@ Keep it short.\n\
         assert!(result.contains("already seen"), "Should indicate filtered items");
     }
 
-    #[tokio::test]
-    async fn test_filter_seen_tool_result_calendar() {
+    #[test]
+    fn test_filter_seen_tool_result_calendar() {
         let dir = tempfile::tempdir().unwrap();
         let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
 
@@ -2716,8 +2718,8 @@ Keep it short.\n\
         assert!(!result2.contains("evt1"));
     }
 
-    #[tokio::test]
-    async fn test_filter_seen_tool_result_non_script_passthrough() {
+    #[test]
+    fn test_filter_seen_tool_result_non_script_passthrough() {
         let dir = tempfile::tempdir().unwrap();
         let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
 
@@ -2733,8 +2735,8 @@ Keep it short.\n\
         assert_eq!(result2, "weather data");
     }
 
-    #[tokio::test]
-    async fn test_filter_seen_tool_result_partial_seen() {
+    #[test]
+    fn test_filter_seen_tool_result_partial_seen() {
         let dir = tempfile::tempdir().unwrap();
         let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
         db.mark_item_seen("gmail:msg1", "gmail").unwrap();
