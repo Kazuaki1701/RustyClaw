@@ -363,6 +363,7 @@ impl LaneRegistry {
                                                     response.total_tokens.unwrap_or(0),
                                                     response.model_used.as_deref().unwrap_or(""),
                                                     trigger,
+                                                    response.provider_id.as_deref(),
                                                     0,
                                                 );
                                             }
@@ -418,7 +419,7 @@ impl LaneRegistry {
                         let desc = if session_id.starts_with("cron:session-summary:") {
                             format!("Auto-Summary for Session '{}'", &session_id["cron:session-summary:".len()..])
                         } else {
-                            let char_limit = 40;
+                            let char_limit = 80;
                             let mut truncated = content.chars().take(char_limit).collect::<String>();
                             if content.chars().count() > char_limit {
                                 truncated.push_str("...");
@@ -483,6 +484,7 @@ impl LaneRegistry {
                                                 completion_tokens: None,
                                                 total_tokens: None,
                                                 model_used: None,
+                                                provider_id: None,
                                             })
                                     } else {
                                         let run_purpose = if session_id == "cron:topic-patrol" { "patrol" } else { "discord" };
@@ -541,6 +543,7 @@ impl LaneRegistry {
                                                     response.total_tokens.unwrap_or(0),
                                                     response.model_used.as_deref().unwrap_or(""),
                                                     trigger,
+                                                    response.provider_id.as_deref(),
                                                     0,
                                                 );
                                             }

@@ -112,6 +112,7 @@ impl DbManager {
             "ALTER TABLE usage ADD COLUMN model TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE usage ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'unknown'",
             "ALTER TABLE usage ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE usage ADD COLUMN provider_id TEXT",
         ] {
             let _ = self.conn.execute(stmt, []);
         }
@@ -128,12 +129,13 @@ impl DbManager {
         total: u32,
         model: &str,
         trigger_type: &str,
+        provider_id: Option<&str>,
         duration_ms: u64,
     ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT INTO usage (session_id, prompt_tokens, completion_tokens, total_tokens, model, trigger_type, duration_ms, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![session_id, prompt, completion, total, model, trigger_type, duration_ms as i64, now],
+            "INSERT INTO usage (session_id, prompt_tokens, completion_tokens, total_tokens, model, trigger_type, provider_id, duration_ms, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![session_id, prompt, completion, total, model, trigger_type, provider_id, duration_ms as i64, now],
         )
         .context("Failed to record usage in SQLite")?;
         Ok(())
@@ -166,12 +168,30 @@ impl DbManager {
             }
         }
 
+        let mut by_provider = serde_json::Map::new();
+        {
+            let prov_sql = format!(
+                "SELECT provider_id, COUNT(*), COALESCE(SUM(total_tokens),0) FROM usage WHERE provider_id IS NOT NULL {} GROUP BY provider_id ORDER BY SUM(total_tokens) DESC",
+                if since.is_some() { "AND created_at >= ?1" } else { "" }
+            );
+            if let Ok(mut stmt) = self.conn.prepare(&prov_sql) {
+                if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+                }) {
+                    for row in rows.flatten() {
+                        by_provider.insert(row.0, serde_json::json!({ "runs": row.1, "tokens": row.2 }));
+                    }
+                }
+            }
+        }
+
         serde_json::json!({
             "total_runs": total.0,
             "total_input_tokens": total.1,
             "total_completion_tokens": total.2,
             "total_tokens": total.3,
             "by_model": by_model,
+            "by_provider": by_provider,
         })
     }
 
@@ -545,7 +565,7 @@ mod tests {
         let db = DbManager::new(&db_path)?;
         
         // Usage テスト
-        db.record_usage("session-1", 100, 50, 150, "test-model", "cli", 0)?;
+        db.record_usage("session-1", 100, 50, 150, "test-model", "cli", None, 0)?;
         
         // Patrol State テスト
         assert!(db.get_last_patrol_run("patrol-1")?.is_none());
@@ -597,8 +617,8 @@ mod tests {
     fn test_usage_aggregation() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let db = DbManager::new(&tmp_dir.path().join("agg.db"))?;
-        db.record_usage("cron:heartbeat", 100, 50, 150, "model-a", "heartbeat", 0)?;
-        db.record_usage("discord-1", 200, 80, 280, "model-a", "discord", 0)?;
+        db.record_usage("cron:heartbeat", 100, 50, 150, "model-a", "heartbeat", Some("groq"), 0)?;
+        db.record_usage("discord-1",      200, 80, 280, "model-a", "discord",   Some("groq"), 0)?;
 
         let summary = db.get_usage_summary(None);
         assert_eq!(summary["total_runs"], 2);
@@ -670,6 +690,26 @@ mod tests {
         assert_eq!(history.messages.len(), 10);
         assert_eq!(history.messages[7].role, "system");
         assert!(history.messages[7].content.contains("omitted"));
+    }
+
+    #[test]
+    fn test_by_provider_aggregation() -> Result<()> {
+        let tmp_dir = tempfile::tempdir()?;
+        let db = DbManager::new(&tmp_dir.path().join("prov.db"))?;
+        db.record_usage("s1", 100, 50, 150, "model-cf", "heartbeat", Some("cloudflare"), 0)?;
+        db.record_usage("s2", 200, 80, 280, "model-gr", "discord",   Some("groq"),       0)?;
+        db.record_usage("s3",  50, 20,  70, "model-gr", "cli",       Some("groq"),       0)?;
+        db.record_usage("s4",  30, 10,  40, "model-old","unknown",   None,               0)?;
+
+        let summary = db.get_usage_summary(None);
+        let by_provider = &summary["by_provider"];
+        assert_eq!(by_provider["cloudflare"]["runs"], 1);
+        assert_eq!(by_provider["cloudflare"]["tokens"], 150);
+        assert_eq!(by_provider["groq"]["runs"], 2);
+        assert_eq!(by_provider["groq"]["tokens"], 350);
+        // None entries should not appear
+        assert!(by_provider.get("").is_none());
+        Ok(())
     }
 
     #[tokio::test]
