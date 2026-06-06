@@ -667,7 +667,12 @@ Rules:
             .collect();
 
         let max_loops = 5;
-        for _ in 0..max_loops {
+        for loop_idx in 0..max_loops {
+            // 2回目以降: 古いツールペアを捨てて直近1世代のみ保持
+            if loop_idx > 0 {
+                trim_heartbeat_messages(&mut messages);
+            }
+
             self.dump_request(workspace_dir, &messages);
 
             let mut response = self.complete_with_fallback("heartbeat", session_id, &messages, &provider_tools, Duration::from_secs(900)).await?;
@@ -709,6 +714,9 @@ Rules:
                                 );
                             }
                         }
+
+                        // ツール結果を 3,000 bytes にキャップ（Groq TPM 上限対策）
+                        tool_content = truncate_70_20(&tool_content, 3_000);
 
                         let tool_msg = Message {
                             role: "tool".to_string(),
