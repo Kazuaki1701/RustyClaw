@@ -1498,7 +1498,7 @@ impl UnifiedRagEngine {
     }
 
     /// top_k 件の (source, text, score) を返す。
-    /// source は ID プレフィックスから抽出。
+    /// source は DB の source カラムから取得（source_map 経由）。
     pub async fn search(
         &self,
         query_text: &str,
