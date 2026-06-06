@@ -20,7 +20,7 @@ docs/
 │   ├── 05_gateway_spec.md     # Gateway・並列制御 Lane Queue 仕様
 │   ├── 06_dashboard_spec.md   # Web Dashboard・管理用 API 仕様
 │   ├── 08_operation_inspection.md  # 稼働点検ガイド（コマンド集・既知パターン）
-│   ├── 10_weather_yolp_spec.md # YOLP気象情報APIリファレンス雨雲レーダー仕様
+│   ├── 12_weather_yolp_spec.md # YOLP気象情報APIリファレンス雨雲レーダー仕様
 │   ├── 11_skills_spec.md      # Skills システム仕様・GeminiClaw 比較・移植記録
 │   ├── 81_llm_provider_model_selection.md # プロバイダー・モデル選定指針仕様
 │   ├── 91_geminiclaw_comparison.md # GeminiClaw との機能・コード比較移植仕様
