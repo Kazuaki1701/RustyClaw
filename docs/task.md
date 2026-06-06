@@ -16,13 +16,13 @@
   - Heartbeat 専用のヒストリキャップ強化またはツール結果切り詰め処理を検討。
   - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`、`crates/rustyclaw-agent/src/lib.rs`（`get_history_message_limit`）
 
-- `[ ]` **ISSUE-26: Phase 40-7 残存バグ — `ingest_static_documents` の非再帰スキャンにより skills/*.md が未 ingest**
+- `[x]` **ISSUE-26: Phase 40-7 残存バグ — `ingest_static_documents` の非再帰スキャンにより skills/*.md が未 ingest** ✅ 完了（2026-06-06）
   - `ingest_static_documents` は `read_dir`（非再帰）で `workspace/skills/` 直下の `.md` ファイルをスキャンするが、実際のファイルは `skills/<name>/SKILL.md` のサブディレクトリ構成のため全件スキップされている。
   - 12スキル × 平均 ~4KB = **約48KB 分のスキル定義が RAG 未登録**の状態。
   - 修正: `read_dir` を再帰スキャン（`walkdir` または手動1階層拡張）に変更し、`skills/*/*.md` を対象に含める。
   - 対象: `crates/rustyclaw-agent/src/lib.rs`（`ingest_static_documents`）
 
-- `[ ]` **ISSUE-27: Phase 40-7 残存バグ — `execute_heartbeat` に RAG 注入がなく Heartbeat コンテキストに doc: チャンクが届かない**
+- `[x]` **ISSUE-27: Phase 40-7 残存バグ — `execute_heartbeat` に RAG 注入がなく Heartbeat コンテキストに doc: チャンクが届かない** ✅ 完了（2026-06-06）
   - `execute()` パスは `retrieve_rag_context` → `format_rag_context` を呼んで doc: チャンクをシステムプロンプトへ注入するが、`execute_heartbeat` にはその呼び出しが存在しない。
   - Heartbeat の `build_heartbeat_context` は SOUL.md / MEMORY.md / HEARTBEAT.md の固定3ファイル読み込みのみ（計 ~14.2KB）。スキルや AGENTS.md の知識は heartbeat 実行中に参照できない。
   - 修正: `execute_heartbeat` 内で `build_heartbeat_context` の後に `retrieve_rag_context(user_message, &self.config, rag)` を呼び、heartbeat_prompt に関連チャンクを追記する。ただし ISSUE-26 の修正後に実施すること（スキルが ingest されていない状態で RAG 注入しても効果が薄い）。
