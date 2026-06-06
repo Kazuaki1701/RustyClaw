@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# systemd サービスは ~/.cargo/bin を PATH に含まないため補完する
+export PATH="$HOME/.cargo/bin:$PATH"
+
 QUERY="${1:-is:unread}"
 MAX="${2:-10}"
 

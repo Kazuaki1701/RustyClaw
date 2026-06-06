@@ -577,4 +577,12 @@
   - Verification: Partially OK (Caution: High-velocity versioning)
 ## 2026-06-01 (Rotation Index 34)
 - Cloudflare Agents Week 2026: AI GatewayがMCP Server Portalとして機能し、エージェント基盤の標準化が進んでいる。これは今後のAIインフラ設計における重要なトレンドであり、自律型エージェント運用を大きく変える可能性がある。— shared (19:37)
-- Unitree G1 Humanoid: 23〜43 DOFを持つヒューマノイドが量産フェーズに入り、羽田空港での手荷物運搬テストなど商業利用が進展している。Physical AIの具体的な応用事例として注目に値する。— shared (19:37)
+- Unitree G1 Humanoid: 23〜43 DOFを持つヒューマノイドが量産フェーズに入り、羽田空港での手荷物運搬テストなど商業利用が進展している。Physical AIの具体的な応用事例として注目に値する。— shared (19:37)## 2026-06-02
+- Local LLM Gemma Ollama: ローカルランタイム（Ollamaなど）の進化により、Gemma 4などの大規模モデルをオンデバイスで動かすことが容易になり、エージェント開発が加速。 (shared)## 2026-06-02
+- AI Agent Trend: マルチAIエージェント連携の進化 — Found major trends regarding the shift from single, isolated agents to highly coordinated "multi-agentic" systems. Focus areas include cross-departmental digital labor forces and the necessity of robust coordination protocols (Source: blueprism.com, salesforce.com).
+- [14:05] [Rain Patrol] Rain alert triggered (Max: 0.1 mm/h)
+
+- [17:05] [Rain Patrol] Rain alert triggered (Max: 0.2 mm/h)
+## 2026-06-02
+- AI Agent / Autonomous Agent: エージェントは情報検索から業務実行・取引プロセスへの移行期にあり、ワークフロー全体を自動化する動きが加速している — shared
+- [20:35] [Rain Patrol] Rain alert triggered (Max: 0.2 mm/h)
