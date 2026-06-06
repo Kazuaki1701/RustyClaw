@@ -9,6 +9,14 @@
 
 set -e
 
+# オプション解析
+BUILD_X64=false
+for arg in "$@"; do
+    case "$arg" in
+        --x64) BUILD_X64=true ;;
+    esac
+done
+
 # ディレクトリ設定
 PROJECT_ROOT="/home/kazuaki/Projects/RustyClaw"
 PROD_DIR="$PROJECT_ROOT/production"
@@ -38,16 +46,16 @@ echo -e "${BLUE}========================================================${NC}"
 # production/bin ディレクトリの確保
 mkdir -p "$PROD_BIN_DIR"
 
-# 1. 開発機 (x64) 向けリリースビルド
-echo -e "\n${YELLOW}[1/4] 開発機 (x64) 向けローカルリリースビルドを実行中...${NC}"
-cargo build --release
-
-# バイナリの複製・リネーム
-cp "$PROJECT_ROOT/target/release/rustyclaw-cli" "$PROD_BIN_DIR/rustyclaw-x64"
-echo -e "${GREEN}✓ 開発機用バイナリを作成しました: production/bin/rustyclaw-x64${NC}"
+# 1. 開発機 (x64) 向けリリースビルド（--x64 指定時のみ）
+if [ "$BUILD_X64" = true ]; then
+    echo -e "\n${YELLOW}[x64] 開発機 (x64) 向けローカルリリースビルドを実行中...${NC}"
+    cargo build --release
+    cp "$PROJECT_ROOT/target/release/rustyclaw-cli" "$PROD_BIN_DIR/rustyclaw-x64"
+    echo -e "${GREEN}✓ 開発機用バイナリを作成しました: production/bin/rustyclaw-x64${NC}"
+fi
 
 # 2. RPi4 (aarch64) 向けクロスビルド
-echo -e "\n${YELLOW}[2/4] RPi4 (aarch64) 向けクロスコンパイルを実行中...${NC}"
+echo -e "\n${YELLOW}[1/3] RPi4 (aarch64) 向けクロスコンパイルを実行中...${NC}"
 check_command aarch64-linux-gnu-gcc
 CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
     cargo build --release --target aarch64-unknown-linux-gnu
@@ -57,7 +65,7 @@ cp "$PROJECT_ROOT/target/aarch64-unknown-linux-gnu/release/rustyclaw-cli" "$PROD
 echo -e "${GREEN}✓ RPi4用バイナリを作成しました: production/bin/rustyclaw-rpi4${NC}"
 
 # 3. RPi4 (rp1) へのデプロイ
-echo -e "\n${YELLOW}[3/4] RPi4 (rp1) 上へのバイナリ配置を自動実行中...${NC}"
+echo -e "\n${YELLOW}[2/3] RPi4 (rp1) 上へのバイナリ配置を自動実行中...${NC}"
 
 # SSH 接続確認
 if ! ssh -q rp1 exit; then
@@ -75,7 +83,7 @@ ssh rp1 "sudo systemctl stop rustyclaw && \
 echo -e "${GREEN}✓ RPi4 側の ~/.local/bin/rustyclaw を更新しました。${NC}"
 
 # ~/.rustyclaw -> production/ symlink の確認（初回以降は不要）
-echo -e "\n${YELLOW}[4/4] symlink 確認とサービスの再起動を実行中...${NC}"
+echo -e "\n${YELLOW}[3/3] symlink 確認とサービスの再起動を実行中...${NC}"
 
 ssh rp1 "if [ ! -L ~/.rustyclaw ]; then \
              echo '⚠ ~/.rustyclaw が symlink ではありません。手動で再構成が必要です。'; \
