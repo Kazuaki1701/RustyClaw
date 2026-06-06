@@ -178,11 +178,42 @@ impl DbManager {
         Ok(out)
     }
 
+    /// (id, source, text_content, embedding) の全行を返す。UnifiedRagEngine の rebuild に使用。
+    pub fn load_all_embeddings_with_ids(&self) -> Result<Vec<(String, String, String, Vec<f32>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, source, text_content, embedding FROM memory_embeddings"
+        ).context("Failed to prepare load_all_embeddings_with_ids")?;
+        let rows = stmt.query_map([], |row| {
+            let id:     String  = row.get(0)?;
+            let source: String  = row.get(1)?;
+            let text:   String  = row.get(2)?;
+            let blob:   Vec<u8> = row.get(3)?;
+            Ok((id, source, text, blob))
+        }).context("Failed to query embeddings")?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, source, text, blob) = row.context("Failed to read row")?;
+            out.push((id, source, text, Self::deserialize_embedding(&blob)));
+        }
+        Ok(out)
+    }
+
     pub fn delete_embeddings_by_source(&self, source: &str) -> Result<()> {
         self.conn.execute(
             "DELETE FROM memory_embeddings WHERE source = ?1",
             rusqlite::params![source],
         ).context("Failed to delete embeddings by source")?;
+        Ok(())
+    }
+
+    /// source="session" の embedding のうち keep_days 日より古いものを削除する。
+    pub fn delete_old_session_embeddings(&self, keep_days: u32) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM memory_embeddings
+             WHERE source = 'session'
+               AND created_at < datetime('now', ?1)",
+            rusqlite::params![format!("-{} days", keep_days)],
+        ).context("Failed to delete old session embeddings")?;
         Ok(())
     }
 
@@ -915,5 +946,45 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "hello");
         assert!((results[0].1 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_load_all_embeddings_with_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = DbManager::new(dir.path().join("t.db").to_str().unwrap()).unwrap();
+        db.upsert_embedding("m0", "memory",  None,          "text A", &[1.0f32, 0.0]).unwrap();
+        db.upsert_embedding("s0", "session", Some("ses-1"), "text B", &[0.0f32, 1.0]).unwrap();
+
+        let rows = db.load_all_embeddings_with_ids().unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<&str> = rows.iter().map(|(id, _, _, _)| id.as_str()).collect();
+        assert!(ids.contains(&"m0"));
+        assert!(ids.contains(&"s0"));
+        let (_, src, _, _) = rows.iter().find(|(id, _, _, _)| id == "m0").unwrap();
+        assert_eq!(src, "memory");
+    }
+
+    #[test]
+    fn test_delete_old_session_embeddings() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = DbManager::new(dir.path().join("t.db").to_str().unwrap()).unwrap();
+        db.conn.execute(
+            "INSERT INTO memory_embeddings(id,source,session_id,text_content,embedding,created_at)
+             VALUES('old','session','s-old','old',X'00000000','2020-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        db.upsert_embedding("new", "session", Some("s-new"), "new", &[0.0f32]).unwrap();
+        db.upsert_embedding("mem", "memory",  None,          "keep", &[0.0f32]).unwrap();
+
+        db.delete_old_session_embeddings(30).unwrap();
+
+        let n_session: i64 = db.conn.query_row(
+            "SELECT count(*) FROM memory_embeddings WHERE source='session'", [], |r| r.get(0)
+        ).unwrap();
+        let n_memory: i64 = db.conn.query_row(
+            "SELECT count(*) FROM memory_embeddings WHERE source='memory'", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(n_session, 1);
+        assert_eq!(n_memory,  1);
     }
 }

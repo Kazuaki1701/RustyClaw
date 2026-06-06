@@ -10,18 +10,25 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+use rig_core::vector_store::in_memory_store::InMemoryVectorStore;
+use rig_core::embeddings::Embedding;
+use rig_core::OneOrMany;
+use rig_core::vector_store::request::VectorSearchRequest;
+use rig_core::vector_store::VectorStoreIndex;
 
 pub struct Pipeline {
     config: Config,
     provider: Box<dyn LlmProvider>,
     /// flush_memory() の同時実行を 1 本に制限するセマフォ
     flush_sem: Arc<Semaphore>,
+    /// RAG エンジン (Task 7 で初期化される。None の場合は RAG スキップ)
+    pub rag: Option<Arc<UnifiedRagEngine>>,
 }
 
 impl Pipeline {
     pub fn new(config: Config, flush_sem: Arc<Semaphore>) -> Self {
         let provider = create_provider(config.get_model("default"));
-        Self { config, provider, flush_sem }
+        Self { config, provider, flush_sem, rag: None }
     }
 
     /// モデルチェーンを走査し、最初に成功したレスポンスを返す。
@@ -128,7 +135,7 @@ impl Pipeline {
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
         // 静的ブロック（SOUL/AGENTS/MEMORY/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
         // 動的な [now:] は末尾に置くことで毎回変わる部分がキャッシュ prefix を破壊しないようにする。
-        let files = ["SOUL.md", "AGENTS.md", "MEMORY.md", "USER.md"];
+        let files = ["SOUL.md", "AGENTS.md", "USER.md"];
         let mut context = String::new();
 
         for filename in &files {
@@ -561,7 +568,7 @@ Rules:
                 tracing::warn!("memory flush: failed to write MEMORY.md: {}", e);
             } else {
                 // MEMORY.md 更新成功時のみ RAG ingestion を実行 (fail-open)
-                ingest_memory_md(workspace_dir, &config, &db_path).await;
+                ingest_memory_md(workspace_dir, &config, &db_path, None).await;
             }
         }
 
@@ -963,6 +970,12 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let _ = fs::create_dir_all(&summaries_dir);
         let _ = fs::write(&existing_summary_path, &final_summary);
 
+        // セッション要約を DB に保存（rag_engine は Pipeline.rag 経由で Task 7 で接続）
+        {
+            let db_path = workspace_dir.join("memory.db");
+            ingest_session_summary(target_session_id, &final_summary, &self.config, &db_path, None).await;
+        }
+
         Ok(final_summary)
     }
 
@@ -985,13 +998,10 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
 
-        // RAG: ユーザーメッセージに関連する記憶を動的注入 (fail-open)
-        {
-            let db_path = workspace_dir.join("memory.db");
-            let rag = retrieve_rag_context(user_message, &self.config, &db_path).await;
-            if !rag.is_empty() {
-                system_context.push_str(&rag);
-            }
+        // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
+        if let Some(ref rag) = self.rag {
+            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            if !rag_ctx.is_empty() { system_context.push_str(&rag_ctx); }
         }
 
         // 過去履歴のロードとトークン圧縮処理の適用
@@ -1143,13 +1153,10 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
 
-        // RAG: ユーザーメッセージに関連する記憶を動的注入 (fail-open)
-        {
-            let db_path = workspace_dir.join("memory.db");
-            let rag = retrieve_rag_context(user_message, &self.config, &db_path).await;
-            if !rag.is_empty() {
-                system_context.push_str(&rag);
-            }
+        // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
+        if let Some(ref rag) = self.rag {
+            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            if !rag_ctx.is_empty() { system_context.push_str(&rag_ctx); }
         }
 
         // 1. 過去履歴のロードとトークン圧縮処理の適用
@@ -1311,6 +1318,103 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
 // ── RAG Helpers ──────────────────────────────────────────────────────────────
 
+/// rig-core InMemoryVectorStore を使った統合 RAG エンジン。
+/// SQLite（永続化）と InMemoryVectorStore（高速検索）のハイブリッド構成。
+/// source 情報は ID プレフィックス（"memory::N", "session::SESSION_ID"）で管理する。
+pub struct UnifiedRagEngine {
+    store: std::sync::Mutex<InMemoryVectorStore<String>>,
+    model: rustyclaw_providers::CloudflareEmbeddingModel,
+}
+
+impl UnifiedRagEngine {
+    pub fn new(model: rustyclaw_providers::CloudflareEmbeddingModel) -> Self {
+        Self {
+            store: std::sync::Mutex::new(InMemoryVectorStore::default()),
+            model,
+        }
+    }
+
+    /// SQLite の全 embedding データを InMemoryVectorStore に再ロードする。
+    pub fn rebuild_from_db(&self, db: &rustyclaw_storage::DbManager) -> anyhow::Result<()> {
+        let rows = db.load_all_embeddings_with_ids()?;
+        let mut store = self.store.lock().unwrap();
+        *store = InMemoryVectorStore::default();
+        let documents: Vec<(String, String, OneOrMany<Embedding>)> = rows
+            .into_iter()
+            .map(|(id, _source, text, vec_f32)| {
+                let emb = Embedding {
+                    document: text.clone(),
+                    vec: vec_f32.iter().map(|&x| x as f64).collect(),
+                };
+                (id, text, OneOrMany::one(emb))
+            })
+            .collect();
+        store.add_documents_with_ids(documents);
+        Ok(())
+    }
+
+    /// 1件を InMemoryVectorStore に追加する（SQLite への書き込みは呼び出し元が行う）。
+    pub fn add_one(
+        &self,
+        id: &str,
+        _source: &str,
+        _session_id: Option<&str>,
+        text: &str,
+        vec_f32: &[f32],
+    ) {
+        let emb = Embedding {
+            document: text.to_string(),
+            vec: vec_f32.iter().map(|&x| x as f64).collect(),
+        };
+        let mut store = self.store.lock().unwrap();
+        store.add_documents_with_ids([(id.to_string(), text.to_string(), OneOrMany::one(emb))]);
+    }
+
+    /// top_k 件の (source, text, score) を返す。
+    /// source は ID プレフィックスから抽出。
+    pub async fn search(
+        &self,
+        query_text: &str,
+        top_k: usize,
+    ) -> anyhow::Result<Vec<(String, String, f64)>> {
+        let req = VectorSearchRequest::builder()
+            .query(query_text.to_string())
+            .samples(top_k as u64)
+            .build();
+        let (store_clone, model_clone) = {
+            let store = self.store.lock().unwrap();
+            (store.clone(), self.model.clone())
+        };
+        let index = store_clone.index(model_clone);
+        let id_scores = index.top_n_ids(req).await
+            .map_err(|e| anyhow::anyhow!("RAG search failed: {}", e))?;
+
+        // id → text のマッピングを取得
+        let text_map: std::collections::HashMap<String, String> = {
+            let store = self.store.lock().unwrap();
+            store.iter()
+                .map(|(id, (text, _))| (id.clone(), text.clone()))
+                .collect()
+        };
+
+        Ok(id_scores.into_iter().filter_map(|(score, id)| {
+            let source = if id.starts_with("memory::") { "memory".to_string() }
+                else if id.starts_with("session::") { "session".to_string() }
+                else { "unknown".to_string() };
+            let text = text_map.get(&id)?.clone();
+            Some((source, text, score))
+        }).collect())
+    }
+
+    pub fn len(&self) -> usize {
+        self.store.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.store.lock().unwrap().is_empty()
+    }
+}
+
 /// MEMORY.md のバレット行を 1件 1チャンクに分割する。
 /// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
 pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
@@ -1350,6 +1454,7 @@ pub(crate) async fn ingest_memory_md(
     workspace_dir: &Path,
     config: &Config,
     db_path: &Path,
+    rag_engine: Option<&UnifiedRagEngine>,
 ) {
     let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
         Some(p) => p,
@@ -1374,8 +1479,8 @@ pub(crate) async fn ingest_memory_md(
     let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
         &api_endpoint,
         &api_key,
-        model,
     );
+    let _ = model; // model name is embedded in api_endpoint for Cloudflare Workers AI
     let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
     let embeddings = match client.embed(&text_refs).await {
         Ok(v) => v,
@@ -1397,67 +1502,109 @@ pub(crate) async fn ingest_memory_md(
         return;
     }
     for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-        let id = format!("memory-{}", i);
+        let id = format!("memory::{}", i);
         if let Err(e) = db.upsert_embedding(&id, "memory", None, chunk, emb) {
-            tracing::warn!("ingest_memory_md: failed to upsert embedding {}: {}", id, e);
+            tracing::warn!("ingest_memory_md: failed to upsert {}: {}", id, e);
+        }
+        if let Some(rag) = rag_engine {
+            rag.add_one(&id, "memory", None, chunk, emb);
         }
     }
     tracing::info!("ingest_memory_md: ingested {} chunks from MEMORY.md", chunks.len());
 }
 
-/// RAG 検索結果をシステムプロンプト注入用の Markdown 文字列に変換する。
-pub(crate) fn format_rag_context(items: &[(String, f32)]) -> String {
+/// セッション要約テキストを embedding して SQLite + UnifiedRagEngine に保存する。Fail-open。
+/// rag_engine が Some の場合は InMemoryVectorStore にも追加する。
+pub(crate) async fn ingest_session_summary(
+    session_id: &str,
+    summary_text: &str,
+    config: &Config,
+    db_path: &Path,
+    rag_engine: Option<&UnifiedRagEngine>,
+) {
+    let (api_endpoint, api_key, _model) = match config.get_embedding_client_params() {
+        Some(p) => p,
+        None => return,
+    };
+    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
+        &api_endpoint, &api_key,
+    );
+    let text_short: String = summary_text.chars().take(1024).collect();
+    let embeddings = match client.embed(&[text_short.as_str()]).await {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => { tracing::warn!("ingest_session_summary: empty embedding result"); return; }
+        Err(e) => { tracing::warn!("ingest_session_summary: embed error: {}", e); return; }
+    };
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => { tracing::warn!("ingest_session_summary: db open error: {}", e); return; }
+    };
+    let id = format!("session::{}", session_id.replace(':', "-"));
+    if let Err(e) = db.upsert_embedding(&id, "session", Some(session_id), &text_short, &embeddings[0]) {
+        tracing::warn!("ingest_session_summary: upsert error: {}", e);
+        return;
+    }
+    if let Some(rag) = rag_engine {
+        rag.add_one(&id, "session", Some(session_id), &text_short, &embeddings[0]);
+    }
+    let ttl_days = config.embedding.as_ref()
+        .and_then(|e| e.session_summary_ttl_days)
+        .unwrap_or(7);
+    if let Err(e) = db.delete_old_session_embeddings(ttl_days) {
+        tracing::warn!("ingest_session_summary: TTL cleanup error: {}", e);
+    }
+    tracing::info!("ingest_session_summary: stored embedding for session '{}'", session_id);
+}
+
+/// RAG 検索結果をシステムプロンプト注入用の Markdown に変換する。
+/// source="memory" と source="session" を別セクションで表示する。
+pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
     if items.is_empty() { return String::new(); }
-    let mut out = String::from("\n\n## Relevant Memory\n");
-    out.push_str("The following memories are relevant to the current conversation:\n\n");
-    for (text, _sim) in items {
-        out.push_str(text);
-        out.push('\n');
+    let memory_items: Vec<&str> = items.iter()
+        .filter(|(src, _, _)| src == "memory")
+        .map(|(_, txt, _)| txt.as_str())
+        .collect();
+    let session_items: Vec<&str> = items.iter()
+        .filter(|(src, _, _)| src == "session")
+        .map(|(_, txt, _)| txt.as_str())
+        .collect();
+    let mut out = String::new();
+    if !memory_items.is_empty() {
+        out.push_str("\n\n## Relevant Memory\n");
+        out.push_str("The following memories are relevant to the current conversation:\n\n");
+        for text in &memory_items { out.push_str(text); out.push('\n'); }
+    }
+    if !session_items.is_empty() {
+        out.push_str("\n\n## Relevant Past Sessions\n");
+        out.push_str("The following session summaries are relevant:\n\n");
+        for text in &session_items { out.push_str(text); out.push('\n'); }
     }
     out
 }
 
-/// ユーザーメッセージをベクトル化して memory.db を検索し、
-/// システムプロンプトに追記するコンテキスト文字列を返す (Fail-open)。
+/// ユーザーメッセージに関連する記憶・過去セッションを UnifiedRagEngine から検索し、
+/// システムプロンプト注入用の文字列を返す。Fail-open。
 pub(crate) async fn retrieve_rag_context(
     query_text: &str,
     config: &Config,
-    db_path: &Path,
+    rag_engine: &UnifiedRagEngine,
 ) -> String {
-    let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
-        Some(p) => p,
-        None => return String::new(),
-    };
-    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
-        &api_endpoint,
-        &api_key,
-        model,
-    );
-    let query_short: String = query_text.chars().take(512).collect();
-    let embeddings = match client.embed(&[query_short.as_str()]).await {
-        Ok(v) if !v.is_empty() => v,
-        Ok(_) => return String::new(),
-        Err(e) => { tracing::warn!("retrieve_rag_context: embed error: {}", e); return String::new(); }
-    };
-    let db = match rustyclaw_storage::DbManager::new(db_path) {
-        Ok(d) => d,
-        Err(e) => { tracing::warn!("retrieve_rag_context: db error: {}", e); return String::new(); }
-    };
+    if rag_engine.is_empty() {
+        return String::new();
+    }
     let top_k    = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
-    let threshold = config.embedding.as_ref().map(|e| e.similarity_threshold).unwrap_or(0.65);
-    let results = match db.search_similar_memories(
-        &embeddings[0],
-        top_k,
-        threshold,
-    ) {
+    let threshold = config.embedding.as_ref().map(|e| e.similarity_threshold as f64).unwrap_or(0.60);
+    let query_short: String = query_text.chars().take(512).collect();
+    let results = match rag_engine.search(&query_short, top_k).await {
         Ok(r) => r,
         Err(e) => { tracing::warn!("retrieve_rag_context: search error: {}", e); return String::new(); }
     };
-    if results.is_empty() {
-        return String::new();
-    }
-    tracing::debug!("retrieve_rag_context: {} hits for query snippet", results.len());
-    format_rag_context(&results)
+    let filtered: Vec<(String, String, f64)> = results.into_iter()
+        .filter(|(_, _, score)| *score >= threshold)
+        .collect();
+    if filtered.is_empty() { return String::new(); }
+    tracing::debug!("retrieve_rag_context: {} hits above threshold {}", filtered.len(), threshold);
+    format_rag_context(&filtered)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -2254,12 +2401,29 @@ Keep it short.\n\
     #[test]
     fn test_format_rag_context_with_items() {
         let items = vec![
-            ("- Rust is fast".to_string(), 0.92_f32),
-            ("- RPi4 has 8GB RAM".to_string(), 0.85),
+            ("memory".to_string(), "- Rust is fast".to_string(), 0.92_f64),
+            ("memory".to_string(), "- RPi4 has 8GB RAM".to_string(), 0.85_f64),
         ];
         let result = format_rag_context(&items);
         assert!(result.contains("Rust is fast"));
         assert!(result.contains("RPi4 has 8GB RAM"));
         assert!(result.contains("## Relevant Memory"));
+    }
+
+    #[test]
+    fn test_unified_rag_engine_rebuild_from_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("memory.db");
+        let db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
+        db.upsert_embedding("memory::0",   "memory",  None,       "大森駅周辺", &vec![1.0f32; 4]).unwrap();
+        db.upsert_embedding("session::s1", "session", Some("s1"), "RAG 検証完了", &vec![0.5f32; 4]).unwrap();
+
+        let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
+            "http://127.0.0.1:1", "dummy",
+        );
+        let model = rustyclaw_providers::CloudflareEmbeddingModel::new(client, 4);
+        let engine = UnifiedRagEngine::new(model);
+        engine.rebuild_from_db(&db).unwrap();
+        assert_eq!(engine.len(), 2);
     }
 }

@@ -701,8 +701,19 @@ struct CfEmbedResponse {
     errors: Vec<serde_json::Value>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct OpenAiEmbedItem {
+    embedding: Vec<f32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAiEmbedResponse {
+    data: Vec<OpenAiEmbedItem>,
+}
+
 /// Cloudflare Workers AI の embedding エンドポイントに POST してベクトルを返すクライアント。
 /// reqwest（既存依存）のみ使用。rig-core 不要。
+#[derive(Clone)]
 pub struct CloudflareEmbeddingClient {
     client: reqwest::Client,
     api_endpoint: String,
@@ -718,12 +729,23 @@ impl CloudflareEmbeddingClient {
         }
     }
 
+    /// エンドポイント種別に応じたリクエストボディを構築する。
+    /// `/embeddings` で終わる場合は OpenAI 互換形式（`input`）、それ以外は CF Workers AI ネイティブ形式（`text`）。
+    pub(crate) fn build_embed_body(&self, texts: &[&str]) -> serde_json::Value {
+        if self.api_endpoint.ends_with("/embeddings") {
+            serde_json::json!({ "input": texts })
+        } else {
+            serde_json::json!({ "text": texts })
+        }
+    }
+
     /// テキストのスライスをベクトル化して返す。入力と同順・同数の Vec<Vec<f32>>。
     pub async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
         }
-        let body = serde_json::json!({ "text": texts });
+        let is_openai_compat = self.api_endpoint.ends_with("/embeddings");
+        let body = self.build_embed_body(texts);
         let resp = self.client
             .post(&self.api_endpoint)
             .bearer_auth(&self.api_key)
@@ -739,16 +761,63 @@ impl CloudflareEmbeddingClient {
             anyhow::bail!("CF embedding: HTTP {} — {}", status, &text[..text.len().min(200)]);
         }
 
-        let parsed: CfEmbedResponse = serde_json::from_str(&text)
-            .context("CF embedding: failed to parse response JSON")?;
-
-        if !parsed.success {
-            anyhow::bail!("CF embedding: API error — {:?}", parsed.errors);
+        if is_openai_compat {
+            let parsed: OpenAiEmbedResponse = serde_json::from_str(&text)
+                .context("CF embedding: failed to parse OpenAI response JSON")?;
+            Ok(parsed.data.into_iter().map(|item| item.embedding).collect())
+        } else {
+            let parsed: CfEmbedResponse = serde_json::from_str(&text)
+                .context("CF embedding: failed to parse response JSON")?;
+            if !parsed.success {
+                anyhow::bail!("CF embedding: API error — {:?}", parsed.errors);
+            }
+            parsed.result
+                .map(|r| r.data)
+                .ok_or_else(|| anyhow::anyhow!("CF embedding: result field is null"))
         }
+    }
+}
 
-        parsed.result
-            .map(|r| r.data)
-            .ok_or_else(|| anyhow::anyhow!("CF embedding: result field is null"))
+/// rig-core の EmbeddingModel トレイトを実装したラッパー。
+/// CloudflareEmbeddingClient（OpenAI互換 / CF Workers AI）を rig の VectorStore と統合する。
+#[derive(Clone)]
+pub struct CloudflareEmbeddingModel {
+    client: CloudflareEmbeddingClient,
+    dims: usize,
+}
+
+impl CloudflareEmbeddingModel {
+    pub fn new(client: CloudflareEmbeddingClient, dims: usize) -> Self {
+        Self { client, dims }
+    }
+}
+
+impl rig_core::embeddings::EmbeddingModel for CloudflareEmbeddingModel {
+    const MAX_DOCUMENTS: usize = 100;
+    type Client = CloudflareEmbeddingClient;
+
+    fn make(client: &Self::Client, _model: impl Into<String>, dims: Option<usize>) -> Self {
+        Self::new(client.clone(), dims.unwrap_or(1024))
+    }
+
+    fn ndims(&self) -> usize {
+        self.dims
+    }
+
+    async fn embed_texts(
+        &self,
+        texts: impl IntoIterator<Item = String> + rig_core::wasm_compat::WasmCompatSend,
+    ) -> Result<Vec<rig_core::embeddings::Embedding>, rig_core::embeddings::EmbeddingError> {
+        let texts: Vec<String> = texts.into_iter().collect();
+        let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let vecs = self.client.embed(&text_refs).await
+            .map_err(|e| rig_core::embeddings::EmbeddingError::ProviderError(e.to_string()))?;
+        Ok(texts.into_iter().zip(vecs).map(|(doc, vec)| {
+            rig_core::embeddings::Embedding {
+                document: doc,
+                vec: vec.iter().map(|&x| x as f64).collect(),
+            }
+        }).collect())
     }
 }
 
@@ -1525,6 +1594,45 @@ mod tests {
     }
 
     #[test]
+    fn test_embed_body_uses_input_for_openai_compat_endpoint() {
+        let client = CloudflareEmbeddingClient::new(
+            "http://192.168.1.110:1234/v1/embeddings",
+            "lm-studio",
+        );
+        let body = client.build_embed_body(&["hello", "world"]);
+        assert!(body.get("input").is_some(), "OpenAI-compat endpoint must use 'input' field");
+        assert!(body.get("text").is_none(), "OpenAI-compat endpoint must NOT use 'text' field");
+    }
+
+    #[test]
+    fn test_embed_body_uses_text_for_cf_native_endpoint() {
+        let client = CloudflareEmbeddingClient::new(
+            "https://gateway.ai.cloudflare.com/v1/abc/rustyclaw-gateway/workers-ai/@cf/baai/bge-m3",
+            "cf-key",
+        );
+        let body = client.build_embed_body(&["hello"]);
+        assert!(body.get("text").is_some(), "CF native endpoint must use 'text' field");
+        assert!(body.get("input").is_none(), "CF native endpoint must NOT use 'input' field");
+    }
+
+    #[test]
+    fn test_parse_openai_embed_response() {
+        let json = r#"{
+            "object": "list",
+            "data": [
+                {"object": "embedding", "embedding": [0.1, 0.2, 0.3], "index": 0},
+                {"object": "embedding", "embedding": [0.4, 0.5, 0.6], "index": 1}
+            ],
+            "model": "text-embedding-bge-m3",
+            "usage": {"prompt_tokens": 5, "total_tokens": 5}
+        }"#;
+        let parsed: OpenAiEmbedResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.data.len(), 2);
+        assert!((parsed.data[0].embedding[0] - 0.1_f32).abs() < 1e-6);
+        assert!((parsed.data[1].embedding[2] - 0.6_f32).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_provider_error_reset_after() {
         let err = ProviderError::RateLimit("Error: Your Quota will reset after 56s. Please try again.".to_string());
         assert_eq!(err.reset_after(), Some(std::time::Duration::from_secs(56)));
@@ -1587,6 +1695,21 @@ mod tests {
         // Cloudflare RPM 429 (lowercase)
         let err_cf_rpm3 = ProviderError::RateLimit("too many requests".to_string());
         assert_eq!(err_cf_rpm3.reset_after(), Some(std::time::Duration::from_secs(60)));
+    }
+
+    #[tokio::test]
+    async fn test_cloudflare_embedding_model_implements_embedding_model() {
+        use rig_core::embeddings::EmbeddingModel;
+        let client = CloudflareEmbeddingClient::new(
+            "http://127.0.0.1:1",
+            "dummy",
+        );
+        let model = CloudflareEmbeddingModel::new(client, 1024);
+        assert_eq!(model.ndims(), 1024);
+
+        // 空入力は即 Ok(vec![]) を返す（HTTP 呼び出しなし）
+        let result = model.embed_texts(vec![]).await.unwrap();
+        assert!(result.is_empty());
     }
 }
 

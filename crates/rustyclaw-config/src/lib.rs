@@ -102,6 +102,9 @@ pub struct EmbeddingConfig {
     /// コサイン類似度の最低閾値 (0.0〜1.0)
     #[serde(default = "default_similarity_threshold")]
     pub similarity_threshold: f32,
+    /// セッション要約 embedding の保持日数（省略時は 7 日）
+    #[serde(default)]
+    pub session_summary_ttl_days: Option<u32>,
 }
 
 /// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
@@ -877,6 +880,15 @@ mod tests {
         assert_eq!(cfg.dimensions, 1024);
         assert_eq!(cfg.top_k, 5);
         assert!((cfg.similarity_threshold - 0.65).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_embedding_config_ttl_default() {
+        let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(cfg.session_summary_ttl_days.is_none());
+
+        let cfg2: EmbeddingConfig = serde_json::from_str(r#"{"session_summary_ttl_days": 14}"#).unwrap();
+        assert_eq!(cfg2.session_summary_ttl_days, Some(14));
     }
 
     #[test]

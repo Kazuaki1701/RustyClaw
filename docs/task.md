@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-04 (Phase 40-3 完了: RAG Memory 実装)  
+> **最終更新日**: 2026-06-05 (Phase 40-5 バグ修正完了・Phase 39 格下げ🟢・Phase 40 格上げ🔴)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/2026-06-04-completed-phases-24-36-38.md` に保存
 
 > **優先方針（2026-05-31 更新）**: **GeminiClaw との機能ギャップ回収を最優先（🔴）とする。**  
@@ -10,24 +10,21 @@
 
 ## 🔴 GeminiClaw 機能ギャップ（最優先）
 
-### Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル） 🔴
-> GeminiClaw は Discord / Slack / Telegram のマルチチャンネルに対応しており、notifications チャンネル（home と独立したバックグラウンドジョブ通知先）を持つ。RustyClaw は Discord のみで、LINE 導入予定に伴いこのギャップを回収する。  
-> 調査資料: [`docs/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/2026-06-03-geminiclaw-notifications-channel-analysis.md`](2026-06-03-geminiclaw-notifications-channel-analysis.md)
+### ~~Phase 40-5 バグ修正: CF Embedding `'input' field is required`~~ ✅ 完了
+> 2026-06-05 修正・デプロイ済み。commit `55f773f`。  
+> 根本原因: LM Studio（OpenAI 互換）に `{"text":}` を送っていたが `{"input":}` が正しい。URL末尾 `/embeddings` 検出で分岐、レスポンスパースも OpenAI 形式対応。  
+> 確認: 06:04 ログファイルで修正前エラー（`'input' field is required`）を 04:00〜06:01 に連続確認。06:49 デプロイ後は同エラー皆無。07:23 Heartbeat で `retrieve_rag_context` 成功ログを最終確認予定。
 
-- `[ ]` **1. LINE チャンネルコネクタの実装**
-  - `rustyclaw-channels` に `LineConnector` を追加（`Channel` トレイト実装）。
-  - LINE Messaging API（REST）による送信と、Webhook（HTTPS POST）受信エンドポイントの実装。
-  - `channel_secret` を使った HMAC-SHA256 署名検証を必須実装。
-  - session_id 命名規則: `line-U{userId}-{YYYYMMDD}` 形式。
-  - gateway への `LineConnector` 初期化・起動組み込みと `MessageBus` 配信分岐の追加。
-  - 対象: `crates/rustyclaw-channels/src/lib.rs`、`crates/rustyclaw-gateway/src/lib.rs`
+- `[x]` **1. `CloudflareEmbeddingClient.embed()` のリクエストボディを調査・修正**
+  - `build_embed_body()` 追加：`api_endpoint.ends_with("/embeddings")` で `{"input":}` / `{"text":}` を分岐。
+  - `OpenAiEmbedResponse` 構造体を追加しレスポンスパースを両形式対応。
+  - 新規テスト 3本追加済み。対象: `crates/rustyclaw-providers/src/lib.rs`
 
-- `[ ]` **2. Notifications チャンネル設定の導入**
-  - GeminiClaw の `notifications: { channel, channelId }` 相当。home と独立したバックグラウンドジョブ通知先チャンネル（未設定時は home にフォールバック）。
-  - `DiscordConfig`（および将来の LINE/Telegram 設定）に `notifications_channel_id` を追加、または `Config` 直下にプラットフォーム横断的 `notifications` 設定を追加。
-  - `heartbeat.rs::process_heartbeat_response` の配信先を `notifications_channel_id` 優先に切り替え。
-  - 背景: LINE を home にした場合、HEARTBEAT_OK の稼働ログが LINE に届き続けるノイズを防ぐための分離。
-  - 対象: `crates/rustyclaw-config/src/lib.rs`、`crates/rustyclaw-gateway/src/heartbeat.rs`
+- `[x]` **2. 修正後の動作確認 + deploy**
+  - `deploy.sh` 実行済み（06:49 サービス再起動確認）。
+  - 06:49 以降 embed エラー皆無（journalctl 確認）。07:23 wakeup で最終確認予定。
+
+---
 
 ### Phase 37: GeminiClaw 高度先進機能の移植と統合 🔴
 > 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。
@@ -52,7 +49,28 @@
 
 ## 🟢 その他の改善案件（独自機能・将来対応）
 
-### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🟢
+### Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル） 🟢
+> GeminiClaw は Discord / Slack / Telegram のマルチチャンネルに対応しており、notifications チャンネル（home と独立したバックグラウンドジョブ通知先）を持つ。RustyClaw は Discord のみで、LINE 導入予定に伴いこのギャップを回収する。  
+> 調査資料: [`docs/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/2026-06-03-geminiclaw-notifications-channel-analysis.md`](2026-06-03-geminiclaw-notifications-channel-analysis.md)
+
+- `[ ]` **1. LINE チャンネルコネクタの実装**
+  - `rustyclaw-channels` に `LineConnector` を追加（`Channel` トレイト実装）。
+  - LINE Messaging API（REST）による送信と、Webhook（HTTPS POST）受信エンドポイントの実装。
+  - `channel_secret` を使った HMAC-SHA256 署名検証を必須実装。
+  - session_id 命名規則: `line-U{userId}-{YYYYMMDD}` 形式。
+  - gateway への `LineConnector` 初期化・起動組み込みと `MessageBus` 配信分岐の追加。
+  - 対象: `crates/rustyclaw-channels/src/lib.rs`、`crates/rustyclaw-gateway/src/lib.rs`
+
+- `[ ]` **2. Notifications チャンネル設定の導入**
+  - GeminiClaw の `notifications: { channel, channelId }` 相当。home と独立したバックグラウンドジョブ通知先チャンネル（未設定時は home にフォールバック）。
+  - `DiscordConfig`（および将来の LINE/Telegram 設定）に `notifications_channel_id` を追加、または `Config` 直下にプラットフォーム横断的 `notifications` 設定を追加。
+  - `heartbeat.rs::process_heartbeat_response` の配信先を `notifications_channel_id` 優先に切り替え。
+  - 背景: LINE を home にした場合、HEARTBEAT_OK の稼働ログが LINE に届き続けるノイズを防ぐための分離。
+  - 対象: `crates/rustyclaw-config/src/lib.rs`、`crates/rustyclaw-gateway/src/heartbeat.rs`
+
+---
+
+### Phase 40: rig-core のフル活用による設計洗練とRAG拡張 🔴
 > LLM 接続やツール管理を rig-core で統合し、ベクトル検索による長期記憶拡張を実現する。
 
 - [ ] **1. rustyclaw-providers の rig-core Provider への置き換え**
@@ -67,6 +85,18 @@
   - 対象: `rustyclaw-config`, `rustyclaw-storage`, `rustyclaw-providers`, `rustyclaw-agent`, `production/config/config.release.json`
 - [ ] **4. 宣言的 AgentBuilder の導入**
   - heartbeat / summary / memory などのエージェント定義を AgentBuilder で再整理。
+- `[x]` **5. Unified RAG with rig-core InMemoryVectorStore**
+  - `InMemoryVectorStore` の採用、`MEMORY.md` チャンクとセッション要約のインメモリ統合 RAG 化。
+  - 実装済み・稼働中（commit `55f773f` で CF embedding バグ修正済み。06:49 デプロイ後エラー皆無）。
+  - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-unified-rag.md`
+- [ ] **6. rig-core 全面リファクタリング (Unified RAG & rig-core Refactoring)**
+  - `#[tool]` アトリビュートマクロ、`rmcp` クライアントへの移行、`rig::agent::Agent` 移行による ReAct/RAG ループの一本化。
+  - 前提: Phase 40-5 の CF embedding バグ修正完了後。
+  - 実装計画: `docs/superpowers/plans/2026-06-05-rig-core-refactoring.md`
+- [ ] **7. Static Docs RAG（AGENTS.md / skills/*.md の動的注入）**
+  - 静的ドキュメントをチャンク化・差分インジェストし、ユーザー入力との類似度で動的にシステムプロンプトへ注入。固定プロンプト最小化・履歴上限緩和も含む。
+  - 前提: Phase 40-5 の CF embedding バグ修正完了後。
+  - 実装計画: `docs/superpowers/plans/2026-06-05-static-docs-rag.md`
 
 ---
 
@@ -104,6 +134,11 @@
   - `queue_update_or_insert()` 呼び出し時に渡す `desc` 引数を `format!("{} ({})", job.name, job.trigger.expression)` 形式で生成するよう修正。
   - Heartbeat（`"Heartbeat Patrol / Activity Scan"`）はそのまま維持。
   - 対象: `crates/rustyclaw-gateway/src/lib.rs`（cron ジョブのキュー登録箇所）、`crates/rustyclaw-gateway/src/cron.rs`
+
+- `[ ]` **4. Heartbeat コンテキストオーバーフロー対策** 🟡
+  - Deep Scan 時（04:00 / 06:00 付近）にツール呼び出し後のコンテキストが肥大化し全モデル失敗 → Discord 通知欠落（2026-06-05 ログ確認: 9,812 tokens > Groq 6,000 上限）。
+  - Heartbeat 専用のヒストリキャップ強化またはツール結果切り詰め処理を検討。
+  - 対象: `crates/rustyclaw-gateway/src/heartbeat.rs`、`crates/rustyclaw-agent/src/lib.rs`（`get_history_message_limit`）
 
 ---
 
