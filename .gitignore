@@ -76,3 +76,4 @@ tempfile*
 
 .worktrees/
 /production/fastembed_cache/
+.claude/settings.json .claude/settings.local.json .claude/worktrees
