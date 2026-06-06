@@ -3046,4 +3046,33 @@ Keep it short.\n\
         assert_eq!(msgs[2].content, "gen3");
         assert_eq!(msgs[3].content, "r3");
     }
+
+    // ── Phase 28b-4: ツール結果截断 ──
+    #[test]
+    fn test_truncate_70_20_within_limit() {
+        let short = "abc".repeat(100); // 300 bytes < 3000
+        let result = truncate_70_20(&short, 3_000);
+        assert_eq!(result, short, "上限以内なら変化しない");
+    }
+
+    #[test]
+    fn test_truncate_70_20_over_limit() {
+        let long = "x".repeat(6_000); // 6000 bytes > 3000
+        let result = truncate_70_20(&long, 3_000);
+        assert!(result.len() < 6_000, "截断後は元より短い");
+        assert!(result.contains("[..."), "省略マーカーが含まれる");
+        // 先頭70% = 2100 bytes が保持される
+        assert!(result.starts_with(&"x".repeat(2_100)));
+    }
+
+    #[test]
+    fn test_truncate_70_20_preserves_head_and_tail() {
+        let mut content = "BEGIN_".to_string();
+        content.push_str(&"m".repeat(5_000));
+        content.push_str("_END");
+        let result = truncate_70_20(&content, 3_000);
+        assert!(result.starts_with("BEGIN_"), "先頭が保持される");
+        assert!(result.ends_with("_END"), "末尾が保持される");
+        assert!(result.contains("[..."), "省略マーカーが含まれる");
+    }
 }

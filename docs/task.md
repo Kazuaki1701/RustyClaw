@@ -34,7 +34,13 @@
 
 > 実装状況により今後の計画に与える影響が大きい案件。
 
-_(現時点では空)_
+### Phase 40-8 — Local Embedding & Complete RAG Unification
+
+> Embedding (ベクトル化) 処理を RPi4 ローカルで実行させ、外部 API (Cloudflare) への依存をゼロ化することで、RAG の完全ローカル完結（オフライン閉域動作）を実現する。  
+> 実装計画: `docs/plans/2026-06-06-local-embedding-complete-rag-unification.md`
+
+- `[ ]` **`multilingual-e5-small` を使用したローカル Embedding の実装**
+- `[ ]` **SQLite ベクトル次元数の変更 (1024 -> 384次元) に伴うマイグレーションと動作検証**
 
 ---
 
