@@ -75,3 +75,4 @@ tempfile*
 /production/workspace/memory/proactive-posts.md
 
 .worktrees/
+/production/fastembed_cache/
