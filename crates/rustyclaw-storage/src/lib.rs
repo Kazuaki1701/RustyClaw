@@ -197,7 +197,7 @@ impl DbManager {
         Ok(out)
     }
 
-    /// (id, source, text_content, embedding) の全行を返す。UnifiedRagEngine の rebuild に使用。
+    #[allow(clippy::type_complexity)]
     pub fn load_all_embeddings_with_ids(&self) -> Result<Vec<(String, String, String, Vec<f32>)>> {
         let mut stmt = self
             .conn
@@ -389,6 +389,7 @@ impl DbManager {
     }
 
     // --- Usage (トークン使用量) 操作 ---
+    #[allow(clippy::too_many_arguments)]
     pub fn record_usage(
         &self,
         session_id: &str,
@@ -430,13 +431,13 @@ impl DbManager {
         let mut by_model = serde_json::Map::new();
         if let Ok(mut stmt) = self.conn.prepare(
             &format!("SELECT model, COUNT(*), COALESCE(SUM(total_tokens),0) FROM usage {} GROUP BY model ORDER BY SUM(total_tokens) DESC LIMIT 10", where_clause)
-        ) {
-            if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
+        )
+            && let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
-            }) {
-                for row in rows.flatten() {
-                    by_model.insert(row.0, serde_json::json!({ "runs": row.1, "tokens": row.2 }));
-                }
+            })
+        {
+            for row in rows.flatten() {
+                by_model.insert(row.0, serde_json::json!({ "runs": row.1, "tokens": row.2 }));
             }
         }
 
@@ -450,18 +451,18 @@ impl DbManager {
                     ""
                 }
             );
-            if let Ok(mut stmt) = self.conn.prepare(&prov_sql) {
-                if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
+            if let Ok(mut stmt) = self.conn.prepare(&prov_sql)
+                && let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, i64>(2)?,
                     ))
-                }) {
-                    for row in rows.flatten() {
-                        by_provider
-                            .insert(row.0, serde_json::json!({ "runs": row.1, "tokens": row.2 }));
-                    }
+                })
+            {
+                for row in rows.flatten() {
+                    by_provider
+                        .insert(row.0, serde_json::json!({ "runs": row.1, "tokens": row.2 }));
                 }
             }
         }
@@ -945,7 +946,7 @@ mod tests {
     #[test]
     fn test_usage_aggregation() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
-        let db = DbManager::new(&tmp_dir.path().join("agg.db"))?;
+        let db = DbManager::new(tmp_dir.path().join("agg.db"))?;
         db.record_usage(
             "cron:heartbeat",
             100,
@@ -993,7 +994,7 @@ mod tests {
     #[test]
     fn test_usage_timeline_hourly_buckets_and_zero_fill() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
-        let db = DbManager::new(&tmp_dir.path().join("tl.db"))?;
+        let db = DbManager::new(tmp_dir.path().join("tl.db"))?;
         // 既知の created_at を 2 件（同一日・2時間離れ）直接挿入する
         db.conn.execute(
             "INSERT INTO usage (session_id, prompt_tokens, completion_tokens, total_tokens, model, trigger_type, duration_ms, created_at) \
@@ -1049,7 +1050,7 @@ mod tests {
     #[test]
     fn test_by_provider_aggregation() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
-        let db = DbManager::new(&tmp_dir.path().join("prov.db"))?;
+        let db = DbManager::new(tmp_dir.path().join("prov.db"))?;
         db.record_usage(
             "s1",
             100,
