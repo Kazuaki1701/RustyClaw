@@ -1568,6 +1568,117 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
         .collect()
 }
 
+/// 静的マークダウンを `##` / `###` 見出し単位でチャンク分割する。
+/// 各チャンク先頭に `[ファイル名 > 見出し]` の文脈を付与し、800 文字で切り捨てる。
+pub(crate) fn chunk_static_document(file_name: &str, content: &str) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current_header = String::new();
+    let mut current_body = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
+            let body = current_body.trim().to_string();
+            if !body.is_empty() {
+                let raw = format!("[{} > {}]\n{}", file_name, current_header, body);
+                chunks.push(raw.chars().take(800).collect());
+            }
+            current_header = trimmed.to_string();
+            current_body.clear();
+        } else if !trimmed.starts_with("# ") && trimmed != "#" {
+            // 最上位見出し (#) 行はスキップ（ドキュメントタイトルはチャンク対象外）
+            current_body.push_str(line);
+            current_body.push('\n');
+        }
+    }
+    let body = current_body.trim().to_string();
+    if !body.is_empty() && !current_header.is_empty() {
+        let raw = format!("[{} > {}]\n{}", file_name, current_header, body);
+        chunks.push(raw.chars().take(800).collect());
+    }
+    chunks
+}
+
+/// workspace_dir 内の AGENTS.md および skills/*.md をチャンク化し、
+/// ハッシュ差分がある場合のみ memory.db に embedding を保存する。Fail-open。
+pub async fn ingest_static_documents(
+    workspace_dir: &std::path::Path,
+    config: &Config,
+    db_path: &std::path::Path,
+) {
+    let (api_endpoint, api_key, _model) = match config.get_embedding_client_params() {
+        Some(p) => p,
+        None => return,
+    };
+    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(&api_endpoint, &api_key);
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => { tracing::warn!("ingest_static_documents: db open error: {}", e); return; }
+    };
+
+    // スキャン対象ファイル: AGENTS.md + skills/*.md
+    let mut files = vec![workspace_dir.join("AGENTS.md")];
+    let skills_dir = workspace_dir.join("skills");
+    if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+        let mut skill_files: Vec<_> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().map_or(false, |ext| ext == "md"))
+            .collect();
+        skill_files.sort();
+        files.extend(skill_files);
+    }
+
+    for file_path in files {
+        let content = match std::fs::read_to_string(&file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        use sha2::{Sha256, Digest};
+        let hash_str = format!("{:x}", Sha256::digest(content.as_bytes()));
+
+        let is_changed = db.check_and_update_doc_state(file_name, &hash_str)
+            .unwrap_or(true);
+
+        if !is_changed {
+            tracing::debug!("ingest_static_documents: '{}' unchanged, skipping", file_name);
+            continue;
+        }
+
+        tracing::info!("ingest_static_documents: '{}' changed, ingesting...", file_name);
+        let chunks = chunk_static_document(file_name, &content);
+        if chunks.is_empty() { continue; }
+
+        let source_id = format!("doc:{}", file_name);
+        if let Err(e) = db.delete_embeddings_by_source(&source_id) {
+            tracing::warn!("ingest_static_documents: delete error for '{}': {}", file_name, e);
+            continue;
+        }
+
+        let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
+        match client.embed(&text_refs).await {
+            Ok(embeddings) => {
+                for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                    let id = format!("doc-{}-{}", file_name.replace('.', "_"), i);
+                    if let Err(e) = db.upsert_embedding(&id, &source_id, None, chunk, emb) {
+                        tracing::warn!("ingest_static_documents: upsert error: {}", e);
+                    }
+                }
+                tracing::info!("ingest_static_documents: ingested {} chunks from '{}'", chunks.len(), file_name);
+            }
+            Err(e) => {
+                tracing::warn!("ingest_static_documents: embed API error for '{}': {}", file_name, e);
+                // ハッシュを空にリセットして次回再試行を促す
+                let _ = db.check_and_update_doc_state(file_name, "");
+            }
+        }
+    }
+}
+
 /// MEMORY.md を読み込み、バレット行をチャンク化してベクトル化し memory.db に保存する。
 /// Fail-open: エラーは warn ログのみで処理を継続する。
 pub(crate) async fn ingest_memory_md(
@@ -2779,5 +2890,24 @@ Keep it short.\n\
         let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
         assert!(result.contains("No new gmail items"), "Should indicate no new items: {}", result);
         assert!(result.contains("already seen"), "Should mention already-seen count: {}", result);
+    }
+
+    #[test]
+    fn test_chunk_static_document_splits_by_heading() {
+        let content = "# Doc\n\n## Section A\nContent A line1\nContent A line2\n\n## Section B\nContent B\n";
+        let chunks = chunk_static_document("test.md", content);
+        assert_eq!(chunks.len(), 2, "## 見出し単位で 2 チャンクになること");
+        assert!(chunks[0].contains("Section A"), "チャンク0 に Section A を含むこと");
+        assert!(chunks[0].contains("[test.md >"), "ファイル名コンテキストが付くこと");
+        assert!(chunks[1].contains("Section B"), "チャンク1 に Section B を含むこと");
+    }
+
+    #[test]
+    fn test_chunk_static_document_truncates_long_chunks() {
+        let long_line = "x".repeat(900);
+        let content = format!("## Big\n{}", long_line);
+        let chunks = chunk_static_document("big.md", &content);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].chars().count() <= 800, "800文字を超えないこと");
     }
 }
