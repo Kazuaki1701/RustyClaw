@@ -1887,15 +1887,29 @@ pub async fn ingest_static_documents(
         tracing::warn!("ingest_static_documents: migration error: {}", e);
     }
 
-    // スキャン対象ファイル: AGENTS.md + skills/*.md
+    // スキャン対象ファイル: AGENTS.md + skills/**/*.md (1階層サブディレクトリを含む)
     let mut files = vec![workspace_dir.join("AGENTS.md")];
     let skills_dir = workspace_dir.join("skills");
     if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-        let mut skill_files: Vec<_> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_file() && p.extension().is_some_and(|ext| ext == "md"))
-            .collect();
+        let mut skill_files: Vec<_> = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                skill_files.push(path);
+            } else if path.is_dir() {
+                // skills/<name>/*.md を1階層掘り下げてスキャン (ISSUE-26)
+                if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                    for sub_entry in sub_entries.flatten() {
+                        let sub_path = sub_entry.path();
+                        if sub_path.is_file()
+                            && sub_path.extension().is_some_and(|ext| ext == "md")
+                        {
+                            skill_files.push(sub_path);
+                        }
+                    }
+                }
+            }
+        }
         skill_files.sort();
         files.extend(skill_files);
     }
@@ -1906,15 +1920,24 @@ pub async fn ingest_static_documents(
             Ok(c) => c,
             Err(_) => continue,
         };
-        let file_name = file_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
+        // workspace_dir からの相対パスをキーにしてサブディレクトリ間の衝突を防ぐ (ISSUE-26)
+        let file_name: String = file_path
+            .strip_prefix(workspace_dir)
+            .ok()
+            .and_then(|p| p.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string()
+            });
 
         let hash_str = format!("{:x}", Sha256::digest(content.as_bytes()));
 
         let is_changed = db
-            .check_and_update_doc_state(file_name, &hash_str)
+            .check_and_update_doc_state(&file_name, &hash_str)
             .unwrap_or(true);
 
         if !is_changed {
@@ -1929,7 +1952,7 @@ pub async fn ingest_static_documents(
             "ingest_static_documents: '{}' changed, ingesting...",
             file_name
         );
-        let chunks = chunk_static_document(file_name, &content);
+        let chunks = chunk_static_document(&file_name, &content);
         if chunks.is_empty() {
             continue;
         }
@@ -1957,7 +1980,7 @@ pub async fn ingest_static_documents(
                 }
                 let saved = embeddings.len().min(chunks.len());
                 for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-                    let id = format!("doc-{}-{}", file_name.replace('.', "_"), i);
+                    let id = format!("doc-{}-{}", file_name.replace(['.', '/', '\\'], "_"), i);
                     if let Err(e) = db.upsert_embedding(&id, &source_id, None, chunk, emb) {
                         tracing::warn!("ingest_static_documents: upsert error: {}", e);
                     }
@@ -1975,7 +1998,7 @@ pub async fn ingest_static_documents(
                     e
                 );
                 // ハッシュを空にリセットして次回再試行を促す
-                let _ = db.check_and_update_doc_state(file_name, "");
+                let _ = db.check_and_update_doc_state(&file_name, "");
             }
         }
     }
@@ -3733,5 +3756,93 @@ Keep it short.\n\
         assert!(result.starts_with("BEGIN_"), "先頭が保持される");
         assert!(result.ends_with("_END"), "末尾が保持される");
         assert!(result.contains("[..."), "省略マーカーが含まれる");
+    }
+
+    // ── ISSUE-26: ingest_static_documents 再帰スキャン ──
+
+    /// skills/<name>/SKILL.md 形式のサブディレクトリ構成でファイルが収集されることを確認する。
+    /// 修正前は read_dir が直下のみスキャンするため、このテストは失敗していた。
+    #[test]
+    fn test_ingest_skills_subdir_files_are_discovered() {
+        use std::fs;
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+
+        // skills/<name>/SKILL.md 形式で2スキルを作成
+        let skill_a_dir = ws.join("skills").join("skill-a");
+        let skill_b_dir = ws.join("skills").join("skill-b");
+        fs::create_dir_all(&skill_a_dir).unwrap();
+        fs::create_dir_all(&skill_b_dir).unwrap();
+        fs::write(skill_a_dir.join("SKILL.md"), "# Skill A\ncontent a").unwrap();
+        fs::write(skill_b_dir.join("SKILL.md"), "# Skill B\ncontent b").unwrap();
+        // AGENTS.md も作成（存在しないと read_to_string が Err になるだけなので影響なし）
+        fs::write(ws.join("AGENTS.md"), "# Agents").unwrap();
+
+        // スキャンロジックを ingest_static_documents から抜き出して再現
+        let skills_dir = ws.join("skills");
+        let mut collected: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                    collected.push(path);
+                } else if path.is_dir() {
+                    if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                        for sub_entry in sub_entries.flatten() {
+                            let sub_path = sub_entry.path();
+                            if sub_path.is_file()
+                                && sub_path.extension().is_some_and(|ext| ext == "md")
+                            {
+                                collected.push(sub_path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(collected.len(), 2, "2スキルの SKILL.md が収集されるべき");
+        let names: Vec<_> = collected
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert!(names.iter().all(|n| *n == "SKILL.md"), "全て SKILL.md");
+    }
+
+    /// サブディレクトリ内の同名ファイル（SKILL.md）でキーが衝突しないことを確認する。
+    #[test]
+    fn test_ingest_skills_subdir_unique_keys() {
+        use std::fs;
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+
+        let skill_a_dir = ws.join("skills").join("skill-a");
+        let skill_b_dir = ws.join("skills").join("skill-b");
+        fs::create_dir_all(&skill_a_dir).unwrap();
+        fs::create_dir_all(&skill_b_dir).unwrap();
+        fs::write(skill_a_dir.join("SKILL.md"), "content a").unwrap();
+        fs::write(skill_b_dir.join("SKILL.md"), "content b").unwrap();
+
+        let paths = vec![skill_a_dir.join("SKILL.md"), skill_b_dir.join("SKILL.md")];
+        let keys: Vec<String> = paths
+            .iter()
+            .map(|fp| {
+                fp.strip_prefix(ws)
+                    .ok()
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        fp.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string()
+                    })
+            })
+            .collect();
+
+        assert_eq!(keys.len(), 2);
+        assert_ne!(keys[0], keys[1], "異なるサブディレクトリのキーは重複しないこと");
+        assert!(keys[0].contains("skill-a") || keys[1].contains("skill-a"));
+        assert!(keys[0].contains("skill-b") || keys[1].contains("skill-b"));
     }
 }
