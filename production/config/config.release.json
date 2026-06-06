@@ -243,6 +243,28 @@
       "temperature": 0.7,
       "enabled": false,
       "context_window": "16k"
+    },
+    {
+      "model_name": "lms-bge-m3",
+      "provider": "openai",
+      "model": "text-embedding-bge-m3",
+      "api_base": "http://192.168.1.110:1234/v1",
+      "api_key": "lm-studio",
+      "max_tokens": 0,
+      "temperature": 0.0,
+      "enabled": true,
+      "context_window": "512"
+    },
+    {
+      "model_name": "cf-bge-m3",
+      "provider": "openai",
+      "model": "@cf/baai/bge-m3",
+      "api_base": "https://gateway.ai.cloudflare.com/v1/a10120209a7dae1fcc497a5adf4be5d9/rustyclaw-gateway/workers-ai/@cf/baai/bge-m3",
+      "api_key": "$vault:cf-api-key",
+      "max_tokens": 0,
+      "temperature": 0.0,
+      "enabled": false,
+      "context_window": "512"
     }
   ],
   "agents": {
@@ -254,10 +276,20 @@
     "heartbeat": ["groq-llama-8b", "cf-gemma-4-26b"],
     "patrol":    ["groq-llama-70b", "groq-llama-8b"],
     "summary":   ["cf-gemma-4-26b", "groq-llama-8b"],
-    "memory":    ["cf-qwen3-30b", "groq-llama-8b"]
+    "memory":    ["cf-qwen3-30b", "groq-llama-8b"],
+    "embedding": "lms-bge-m3"
   },
   "debug_dump": true,
   "timezone": "Asia/Tokyo",
+  "embedding": {
+    "enabled": true,
+    "api_endpoint": "http://192.168.1.110:1234/v1/embeddings",
+    "api_key": "lm-studio",
+    "model": "text-embedding-bge-m3",
+    "dimensions": 1024,
+    "top_k": 5,
+    "similarity_threshold": 0.60
+  },
   "channels": {
     "discord": {
       "enabled": true,

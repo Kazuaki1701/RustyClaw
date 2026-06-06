@@ -102,6 +102,16 @@ impl DbManager {
                 category TEXT NOT NULL,
                 seen_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                session_id TEXT,
+                text_content TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source
+                ON memory_embeddings(source);
         ")
         .context("Failed to create SQLite tables")?;
 
@@ -118,6 +128,99 @@ impl DbManager {
         }
 
         Ok(())
+    }
+
+    // --- Memory Embeddings (RAG) ---
+
+    pub fn serialize_embedding(v: &[f32]) -> Vec<u8> {
+        v.iter().flat_map(|f| f.to_le_bytes()).collect()
+    }
+
+    pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
+        bytes.chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect()
+    }
+
+    pub fn upsert_embedding(
+        &self,
+        id: &str,
+        source: &str,
+        session_id: Option<&str>,
+        text_content: &str,
+        embedding: &[f32],
+    ) -> Result<()> {
+        let blob = Self::serialize_embedding(embedding);
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO memory_embeddings
+             (id, source, session_id, text_content, embedding, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, source, session_id, text_content, blob, now],
+        ).context("Failed to upsert embedding")?;
+        Ok(())
+    }
+
+    pub fn load_all_embeddings(&self) -> Result<Vec<(String, Vec<f32>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT text_content, embedding FROM memory_embeddings"
+        ).context("Failed to prepare load_all_embeddings")?;
+        let rows = stmt.query_map([], |row| {
+            let text: String = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            Ok((text, blob))
+        }).context("Failed to query embeddings")?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (text, blob) = row.context("Failed to read embedding row")?;
+            out.push((text, Self::deserialize_embedding(&blob)));
+        }
+        Ok(out)
+    }
+
+    pub fn delete_embeddings_by_source(&self, source: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM memory_embeddings WHERE source = ?1",
+            rusqlite::params![source],
+        ).context("Failed to delete embeddings by source")?;
+        Ok(())
+    }
+
+    /// コサイン類似度を計算する
+    /// 同じ次元数・ノンゼロのベクトルが必須。不正な場合は 0.0 を返す。
+    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
+        dot / (norm_a * norm_b)
+    }
+
+    /// クエリベクトルに近い記憶を上位 top_k 件返す → Vec<(text_content, similarity)>
+    /// threshold 未満のエントリは除外。外部依存なし。
+    pub fn search_similar_memories(
+        &self,
+        query_vec: &[f32],
+        top_k: usize,
+        threshold: f32,
+    ) -> Result<Vec<(String, f32)>> {
+        let all = self.load_all_embeddings()?;
+        let mut scored: Vec<(String, f32)> = all
+            .into_iter()
+            .map(|(text, emb)| {
+                let sim = Self::cosine_similarity(query_vec, &emb);
+                (text, sim)
+            })
+            .filter(|(_, sim)| *sim >= threshold)
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        Ok(scored)
     }
 
     // --- Usage (トークン使用量) 操作 ---
@@ -727,6 +830,31 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_serialize_deserialize_embedding() {
+        let v: Vec<f32> = vec![1.0, -0.5, 0.0, 2.5];
+        let bytes = DbManager::serialize_embedding(&v);
+        assert_eq!(bytes.len(), 16); // 4 × 4 bytes
+        let back = DbManager::deserialize_embedding(&bytes);
+        for (a, b) in v.iter().zip(back.iter()) {
+            assert!((a - b).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn test_embedding_crud() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = DbManager::new(tmp.path().join("test.db")).unwrap();
+        let emb: Vec<f32> = vec![0.1, 0.2, 0.3];
+        db.upsert_embedding("id1", "memory", None, "hello world", &emb).unwrap();
+        let rows = db.load_all_embeddings().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "hello world");
+        assert_eq!(rows[0].1.len(), 3);
+        db.delete_embeddings_by_source("memory").unwrap();
+        assert!(db.load_all_embeddings().unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn test_path_locking_concurrency() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
@@ -740,7 +868,7 @@ mod tests {
 
         // 2. 書き込みロックを取得し、その間は読み込みロックがブロックされるか検証
         let w_guard = acquire_write_lock(&file_path).await;
-        
+
         let file_path_clone = file_path.clone();
         let handle = tokio::spawn(async move {
             let _r_guard = acquire_read_lock(&file_path_clone).await;
@@ -758,5 +886,34 @@ mod tests {
         assert_eq!(val, 42);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_cosine_similarity_identical() {
+        let v = vec![1.0_f32, 0.0, 0.0];
+        assert!((DbManager::cosine_similarity(&v, &v) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let a = vec![1.0_f32, 0.0];
+        let b = vec![0.0_f32, 1.0];
+        assert!(DbManager::cosine_similarity(&a, &b).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_search_similar_memories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = DbManager::new(tmp.path().join("test.db")).unwrap();
+        // (1, 0, 0) = "hello" に近いベクトル
+        db.upsert_embedding("a", "memory", None, "hello", &[1.0, 0.0, 0.0]).unwrap();
+        // (0, 1, 0) = "world" は直交
+        db.upsert_embedding("b", "memory", None, "world", &[0.0, 1.0, 0.0]).unwrap();
+
+        // クエリ (1, 0, 0) → threshold 0.9 → "hello" のみヒット
+        let results = db.search_similar_memories(&[1.0, 0.0, 0.0], 5, 0.9).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "hello");
+        assert!((results[0].1 - 1.0).abs() < 1e-6);
     }
 }

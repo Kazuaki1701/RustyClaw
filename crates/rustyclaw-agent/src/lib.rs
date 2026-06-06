@@ -559,6 +559,9 @@ Rules:
             };
             if let Err(e) = rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()).await {
                 tracing::warn!("memory flush: failed to write MEMORY.md: {}", e);
+            } else {
+                // MEMORY.md 更新成功時のみ RAG ingestion を実行 (fail-open)
+                ingest_memory_md(workspace_dir, &config, &db_path).await;
             }
         }
 
@@ -982,6 +985,15 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             system_context.push_str(&continuation);
         }
 
+        // RAG: ユーザーメッセージに関連する記憶を動的注入 (fail-open)
+        {
+            let db_path = workspace_dir.join("memory.db");
+            let rag = retrieve_rag_context(user_message, &self.config, &db_path).await;
+            if !rag.is_empty() {
+                system_context.push_str(&rag);
+            }
+        }
+
         // 過去履歴のロードとトークン圧縮処理の適用
         let history_messages = if session_id.starts_with("cron:") {
             Vec::new()
@@ -1129,6 +1141,15 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let mut system_context = self.build_system_context(workspace_dir)?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id) {
             system_context.push_str(&continuation);
+        }
+
+        // RAG: ユーザーメッセージに関連する記憶を動的注入 (fail-open)
+        {
+            let db_path = workspace_dir.join("memory.db");
+            let rag = retrieve_rag_context(user_message, &self.config, &db_path).await;
+            if !rag.is_empty() {
+                system_context.push_str(&rag);
+            }
         }
 
         // 1. 過去履歴のロードとトークン圧縮処理の適用
@@ -1286,6 +1307,157 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         Ok(Box::pin(wrapped_stream))
     }
+}
+
+// ── RAG Helpers ──────────────────────────────────────────────────────────────
+
+/// MEMORY.md のバレット行を 1件 1チャンクに分割する。
+/// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
+pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            if let Some(prev) = current.take() {
+                chunks.push(prev);
+            }
+            current = Some(trimmed.to_string());
+        } else if !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && current.is_some()
+        {
+            if let Some(ref mut cur) = current {
+                cur.push(' ');
+                cur.push_str(trimmed);
+            }
+        }
+    }
+    if let Some(last) = current {
+        chunks.push(last);
+    }
+    chunks
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| if s.len() > 512 { s.chars().take(512).collect::<String>() } else { s })
+        .collect()
+}
+
+/// MEMORY.md を読み込み、バレット行をチャンク化してベクトル化し memory.db に保存する。
+/// Fail-open: エラーは warn ログのみで処理を継続する。
+pub(crate) async fn ingest_memory_md(
+    workspace_dir: &Path,
+    config: &Config,
+    db_path: &Path,
+) {
+    let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
+        Some(p) => p,
+        None => {
+            if config.embedding.as_ref().map(|e| e.enabled).unwrap_or(false) {
+                tracing::warn!("ingest_memory_md: embedding enabled but no valid model config found");
+            }
+            return;
+        }
+    };
+    let memory_path = workspace_dir.join("MEMORY.md");
+    let content = match std::fs::read_to_string(&memory_path) {
+        Ok(c) => c,
+        Err(e) => { tracing::warn!("ingest_memory_md: failed to read MEMORY.md: {}", e); return; }
+    };
+    let chunks = chunk_memory_md(&content);
+    if chunks.is_empty() {
+        tracing::debug!("ingest_memory_md: no chunks found in MEMORY.md");
+        return;
+    }
+
+    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
+        &api_endpoint,
+        &api_key,
+        model,
+    );
+    let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
+    let embeddings = match client.embed(&text_refs).await {
+        Ok(v) => v,
+        Err(e) => { tracing::warn!("ingest_memory_md: embedding API error: {}", e); return; }
+    };
+
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => { tracing::warn!("ingest_memory_md: db open error: {}", e); return; }
+    };
+    if embeddings.len() != chunks.len() {
+        tracing::warn!(
+            "ingest_memory_md: chunk/embedding count mismatch ({} vs {}), proceeding with zip",
+            chunks.len(), embeddings.len()
+        );
+    }
+    if let Err(e) = db.delete_embeddings_by_source("memory") {
+        tracing::warn!("ingest_memory_md: failed to delete old embeddings: {}", e);
+        return;
+    }
+    for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+        let id = format!("memory-{}", i);
+        if let Err(e) = db.upsert_embedding(&id, "memory", None, chunk, emb) {
+            tracing::warn!("ingest_memory_md: failed to upsert embedding {}: {}", id, e);
+        }
+    }
+    tracing::info!("ingest_memory_md: ingested {} chunks from MEMORY.md", chunks.len());
+}
+
+/// RAG 検索結果をシステムプロンプト注入用の Markdown 文字列に変換する。
+pub(crate) fn format_rag_context(items: &[(String, f32)]) -> String {
+    if items.is_empty() { return String::new(); }
+    let mut out = String::from("\n\n## Relevant Memory\n");
+    out.push_str("The following memories are relevant to the current conversation:\n\n");
+    for (text, _sim) in items {
+        out.push_str(text);
+        out.push('\n');
+    }
+    out
+}
+
+/// ユーザーメッセージをベクトル化して memory.db を検索し、
+/// システムプロンプトに追記するコンテキスト文字列を返す (Fail-open)。
+pub(crate) async fn retrieve_rag_context(
+    query_text: &str,
+    config: &Config,
+    db_path: &Path,
+) -> String {
+    let (api_endpoint, api_key, model) = match config.get_embedding_client_params() {
+        Some(p) => p,
+        None => return String::new(),
+    };
+    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(
+        &api_endpoint,
+        &api_key,
+        model,
+    );
+    let query_short: String = query_text.chars().take(512).collect();
+    let embeddings = match client.embed(&[query_short.as_str()]).await {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => return String::new(),
+        Err(e) => { tracing::warn!("retrieve_rag_context: embed error: {}", e); return String::new(); }
+    };
+    let db = match rustyclaw_storage::DbManager::new(db_path) {
+        Ok(d) => d,
+        Err(e) => { tracing::warn!("retrieve_rag_context: db error: {}", e); return String::new(); }
+    };
+    let top_k    = config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
+    let threshold = config.embedding.as_ref().map(|e| e.similarity_threshold).unwrap_or(0.65);
+    let results = match db.search_similar_memories(
+        &embeddings[0],
+        top_k,
+        threshold,
+    ) {
+        Ok(r) => r,
+        Err(e) => { tracing::warn!("retrieve_rag_context: search error: {}", e); return String::new(); }
+    };
+    if results.is_empty() {
+        return String::new();
+    }
+    tracing::debug!("retrieve_rag_context: {} hits for query snippet", results.len());
+    format_rag_context(&results)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1538,6 +1710,16 @@ mod tests {
         let result = truncate_70_20(&long, 5000);
         assert!(result.len() < 6000);
         assert!(result.contains("bytes omitted"));
+    }
+
+    #[test]
+    fn test_chunk_memory_md_truncates_long_utf8() {
+        // 日本語混在: "- a" + "あ" × 170 = 3 + 3×170 = 513バイト
+        let long = format!("- a{}", "あ".repeat(170));
+        let chunks = chunk_memory_md(&long);
+        assert_eq!(chunks.len(), 1);
+        // chars().take(512) なので512文字以内 → バイト数は大きくなりうるが panic しない
+        assert!(chunks[0].chars().count() <= 512);
     }
 
     #[tokio::test]
@@ -1977,6 +2159,31 @@ Keep it short.\n\
     }
 
     #[test]
+    fn test_chunk_memory_md_basic() {
+        let content = "# Memory\n\n- First bullet\n- Second bullet\n  continued\n- Third bullet";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0], "- First bullet");
+        assert!(chunks[1].contains("Second bullet"));
+        assert_eq!(chunks[2], "- Third bullet");
+    }
+
+    #[test]
+    fn test_chunk_memory_md_truncates_long() {
+        let long = format!("- {}", "x".repeat(600));
+        let chunks = chunk_memory_md(&long);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].len() <= 512);
+    }
+
+    #[test]
+    fn test_chunk_memory_md_skips_headers() {
+        let content = "# Title\n\n## Section\n\n- bullet one\n- bullet two";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(chunks.len(), 2);
+    }
+
+    #[test]
     fn test_parse_context_window_k_suffix() {
         assert_eq!(parse_context_window(Some("8k")), 8_192);
         assert_eq!(parse_context_window(Some("16k")), 16_384);
@@ -2036,5 +2243,23 @@ Keep it short.\n\
         assert_eq!(p64k.get_history_message_limit("default"),  40, "64k → 40件");
         assert_eq!(p131k.get_history_message_limit("default"), 60, "131k → 60件");
         assert_eq!(p256k.get_history_message_limit("default"), 80, "256k → 80件");
+    }
+
+    #[test]
+    fn test_format_rag_context_empty() {
+        let result = format_rag_context(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_format_rag_context_with_items() {
+        let items = vec![
+            ("- Rust is fast".to_string(), 0.92_f32),
+            ("- RPi4 has 8GB RAM".to_string(), 0.85),
+        ];
+        let result = format_rag_context(&items);
+        assert!(result.contains("Rust is fast"));
+        assert!(result.contains("RPi4 has 8GB RAM"));
+        assert!(result.contains("## Relevant Memory"));
     }
 }
