@@ -28,21 +28,21 @@
 ## 実施タスク
 
 ### Task 1: providers — `fastembed` の導入とローカルクライアントの実装
-- [ ] **Step 1**: `crates/rustyclaw-providers/Cargo.toml` に `fastembed` 依存関係を追加。
-- [ ] **Step 2**: `crates/rustyclaw-providers/src/lib.rs` に `LocalEmbeddingClient` 構造体を実装。
+- [x] **Step 1**: `crates/rustyclaw-providers/Cargo.toml` に `fastembed` 依存関係を追加。
+- [x] **Step 2**: `crates/rustyclaw-providers/src/lib.rs` に `LocalEmbeddingClient` 構造体を実装。
   - 初期化時に `fastembed::TextEmbedding::try_new` を使用して `multilingual-e5-small` モデルを読み込む。
   - `embed` メソッドを実装し、与えられた文字列スライスから `Vec<f32>` (384次元) の配列を出力する。
-- [ ] **Step 3**: 開発環境で動作確認する単体テストを追加し、テストがパスすることを確認。
+- [x] **Step 3**: 開発環境で動作確認する単体テストを追加し、テストがパスすることを確認。
 
 ### Task 2: storage — ベクトル次元数変更とデータベース・マイグレーションの実装
-- [ ] **Step 1**: `crates/rustyclaw-storage/src/lib.rs` の `DbManager::new` で `memory_embeddings` テーブル作成時の次元数制約やコメントを更新。
-- [ ] **Step 2**: データベースのベクトル次元数の移行マイグレーション（1024次元 ➡️ 384次元）の処理を実装。
+- [x] **Step 1**: `crates/rustyclaw-storage/src/lib.rs` の `DbManager::new` で `memory_embeddings` テーブル作成時の次元数制約やコメントを更新。
+- [x] **Step 2**: データベースのベクトル次元数の移行マイグレーション（1024次元 ➡️ 384次元）の処理を実装。
   - 起動時に既存 DB の次元数が 1024 の場合、`memory_embeddings` テーブルをクリーンアップ（truncate）し、次元数を 384 に切り替える。
   - ドキュメント状態テーブル（`document_states`）をクリアして、起動時に全静的ドキュメントが 384次元で再インジェストされるように促す。
-- [ ] **Step 3**: マイグレーションのユニットテストを記述・実行。
+- [x] **Step 3**: マイグレーションのユニットテストを記述・実行。
 
 ### Task 3: config & agent — ローカルクライアントの適用と動作検証
-- [ ] **Step 1**: `crates/rustyclaw-config/src/lib.rs` を更新し、ローカル Embedding モードの有効化オプションをサポート。
-- [ ] **Step 2**: `crates/rustyclaw-agent/src/lib.rs` の `ingest_static_documents` と類似度検索部分において、設定がローカルモードの場合は `LocalEmbeddingClient` を経由するように修正。
-- [ ] **Step 3**: ワークスペース全体のテスト（`cargo test --workspace`）を実行し、エラーがないことを確認。
-- [ ] **Step 4**: RPi4 (aarch64) でのクロスコンパイル環境を確認し、ビルドエラーがないか検証。
+- [x] **Step 1**: `crates/rustyclaw-config/src/lib.rs` を更新し、ローカル Embedding モードの有効化オプションをサポート。
+- [x] **Step 2**: `crates/rustyclaw-agent/src/lib.rs` の `ingest_static_documents` と類似度検索部分において、設定がローカルモードの場合は `LocalEmbeddingClient` を経由するように修正。
+- [x] **Step 3**: ワークスペース全体のテスト（`cargo test --workspace`）を実行し、エラーがないことを確認。
+- [x] **Step 4**: RPi4 (aarch64) でのクロスコンパイル環境を確認し、ビルドエラーがないか検証。
