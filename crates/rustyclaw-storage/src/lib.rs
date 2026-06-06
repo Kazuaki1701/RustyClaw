@@ -226,24 +226,32 @@ impl DbManager {
     /// 変更されている（または未登録）の場合は true を返し、ハッシュ値を更新する。
     /// Fail-closed: DB エラー時は true を返して再インジェストを促す。
     pub fn check_and_update_doc_state(&self, file_path: &str, current_hash: &str) -> Result<bool> {
-        let mut stmt = self.conn.prepare(
-            "SELECT last_hash FROM document_states WHERE file_path = ?1"
-        )?;
-        let mut rows = stmt.query([file_path])?;
+        // Use a closure to allow early-return with ? while catching all errors at the outer level.
+        let inner = || -> Result<bool> {
+            let mut stmt = self.conn.prepare(
+                "SELECT last_hash FROM document_states WHERE file_path = ?1"
+            )?;
+            let mut rows = stmt.query([file_path])?;
 
-        if let Some(row) = rows.next()? {
-            let last_hash: String = row.get(0)?;
-            if last_hash == current_hash {
-                return Ok(false);
+            if let Some(row) = rows.next()? {
+                let last_hash: String = row.get(0)?;
+                if last_hash == current_hash {
+                    return Ok(false);
+                }
             }
-        }
 
-        self.conn.execute(
-            "INSERT OR REPLACE INTO document_states (file_path, last_hash, updated_at)
-             VALUES (?1, ?2, datetime('now'))",
-            rusqlite::params![file_path, current_hash],
-        )?;
-        Ok(true)
+            self.conn.execute(
+                "INSERT OR REPLACE INTO document_states (file_path, last_hash, updated_at)
+                 VALUES (?1, ?2, datetime('now'))",
+                rusqlite::params![file_path, current_hash],
+            )?;
+            Ok(true)
+        };
+
+        Ok(inner().unwrap_or_else(|e| {
+            tracing::warn!("check_and_update_doc_state: DB error for '{}', forcing re-ingest: {}", file_path, e);
+            true
+        }))
     }
 
     /// コサイン類似度を計算する
