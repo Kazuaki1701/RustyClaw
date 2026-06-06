@@ -186,38 +186,41 @@
     {
       "model_name": "cf-qwen3-30b",
       "provider": "openai",
-      "model": "@cf/qwen/qwen3-30b-a3b-fp8",
-      "api_base": "https://api.cloudflare.com/client/v4/accounts/a10120209a7dae1fcc497a5adf4be5d9/ai/v1",
+      "model": "workers-ai/@cf/qwen/qwen3-30b-a3b-fp8",
+      "api_base": "https://gateway.ai.cloudflare.com/v1/a10120209a7dae1fcc497a5adf4be5d9/rustyclaw-gateway/compat",
       "api_key": "$vault:cf-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
       "enabled": true,
       "rpm": 300,
-      "context_window": "32k"
+      "context_window": "32k",
+      "cf_aig_gateway_id": "rustyclaw-gateway"
     },
     {
       "model_name": "cf-gemma-4-26b",
       "provider": "openai",
-      "model": "@cf/google/gemma-4-26b-a4b-it",
-      "api_base": "https://api.cloudflare.com/client/v4/accounts/a10120209a7dae1fcc497a5adf4be5d9/ai/v1",
+      "model": "workers-ai/@cf/google/gemma-4-26b-a4b-it",
+      "api_base": "https://gateway.ai.cloudflare.com/v1/a10120209a7dae1fcc497a5adf4be5d9/rustyclaw-gateway/compat",
       "api_key": "$vault:cf-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
       "enabled": true,
       "rpm": 300,
-      "context_window": "256k"
+      "context_window": "256k",
+      "cf_aig_gateway_id": "rustyclaw-gateway"
     },
     {
       "model_name": "cf-granite-micro",
       "provider": "openai",
-      "model": "@cf/ibm-granite/granite-4.0-h-micro",
-      "api_base": "https://api.cloudflare.com/client/v4/accounts/a10120209a7dae1fcc497a5adf4be5d9/ai/v1",
+      "model": "workers-ai/@cf/ibm-granite/granite-4.0-h-micro",
+      "api_base": "https://gateway.ai.cloudflare.com/v1/a10120209a7dae1fcc497a5adf4be5d9/rustyclaw-gateway/compat",
       "api_key": "$vault:cf-api-key",
       "max_tokens": 2048,
       "temperature": 0.7,
       "enabled": false,
       "rpm": 300,
-      "context_window": "131k"
+      "context_window": "131k",
+      "cf_aig_gateway_id": "rustyclaw-gateway"
     },
     {
       "model_name": "lms-gemma-4-e4b",

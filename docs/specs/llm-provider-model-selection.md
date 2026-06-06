@@ -60,6 +60,16 @@
 | cf-qwen3-30b | ~17.5 | ~570 |
 | cf-gemma-4-26b | ~18.2 | ~550 |
 
+#### Neurons 使用量トラッキング（実装）
+
+`~/.rustyclaw/neuron_usage.json` にUTC日付単位で累積保存。`/api/neurons` エンドポイントで参照可能。
+
+取得元の優先順位:
+1. レスポンスヘッダー `cf-ai-neurons`（Gateway AI が付与する場合）
+2. レスポンスボディ `usage.total_tokens`（`/compat` エンドポイントではヘッダーが返らないため代替。CF では概ね 1 token ≈ 1 neuron）
+
+ファイル書き込みは `NEURON_USAGE_LOCK`（`Mutex`）で排他制御。
+
 ### Google AI Studio Free Tier ★新規
 
 > データ学習: **日本からの利用はデータ学習対象**（UK/CH/EEA/EU のみ除外）
