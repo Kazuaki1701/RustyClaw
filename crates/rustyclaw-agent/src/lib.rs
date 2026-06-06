@@ -105,13 +105,31 @@ impl Pipeline {
             .find(|m| m.model == model_cfg.model_name && m.enabled)
             .and_then(|m| m.tpm)
             .unwrap_or(40000); // 未設定の場合は十分大きな値をデフォルトとする
-        
+
         if tpm <= 6000 {
             800
         } else if tpm <= 12000 {
             1500
         } else {
             3000
+        }
+    }
+
+    /// TPM 上限に基づくメッセージ件数ハードキャップ。
+    /// トークン推定のアンダーフロー問題の補完として、compact_if_needed_with_overhead 後に適用する。
+    fn get_history_message_limit(&self, purpose: &str) -> usize {
+        let model_cfg = self.config.get_model(purpose);
+        let tpm = self.config.model_list.iter()
+            .find(|m| m.model == model_cfg.model_name && m.enabled)
+            .and_then(|m| m.tpm)
+            .unwrap_or(40000);
+
+        if tpm <= 6000 {
+            10   // groq-llama-8b 等: 末尾 10 件 (~3K トークン)
+        } else if tpm <= 12000 {
+            20   // groq-llama-70b 等: 末尾 20 件 (~6K トークン)
+        } else {
+            40   // CF / LMS / 上位モデル: 末尾 40 件
         }
     }
 
@@ -674,6 +692,7 @@ Rules:
         // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
         let overhead_tokens = (system_context.chars().count() * 3) / 2;
         history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
+        history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
         let mut messages = Vec::new();
@@ -942,6 +961,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             + tool_registry.to_llm_schemas().iter().map(|s| s.to_string().chars().count()).sum::<usize>();
         let overhead_tokens = (overhead_chars * 3) / 2;
         history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
+        history.trim_to_last(self.get_history_message_limit(purpose));
 
         // 送信用メッセージリストの構築 (System + History)
         let mut active_messages = Vec::new();
@@ -1093,6 +1113,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         // ISSUE-02/FU-3: system プロンプト分のトークンを考慮して実効上限を下げる（ツール無し経路）
         let overhead_tokens = (system_context.chars().count() * 3) / 2;
         history.compact_if_needed_with_overhead(history_limit, overhead_tokens);
+        history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
         let mut messages = Vec::new();

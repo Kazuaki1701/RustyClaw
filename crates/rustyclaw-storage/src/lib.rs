@@ -533,6 +533,21 @@ impl ConversationHistory {
         let effective = limit.saturating_sub(overhead_tokens);
         self.compact_if_needed(effective)
     }
+
+    /// TPM 超過を防ぐためのハードキャップ: 末尾 max_messages 件のみ残す。
+    /// compact_if_needed_with_overhead の後段に適用することで、トークン推定の
+    /// アンダーフロー問題を補完する。
+    pub fn trim_to_last(&mut self, max_messages: usize) {
+        if self.messages.len() <= max_messages {
+            return;
+        }
+        let trimmed = self.messages.len() - max_messages;
+        tracing::info!(
+            "Hard-trimming history: {} → {} messages ({} removed for TPM compliance)",
+            self.messages.len(), max_messages, trimmed
+        );
+        self.messages = self.messages[trimmed..].to_vec();
+    }
 }
 
 // ==============================================================================
