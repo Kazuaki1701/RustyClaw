@@ -14,6 +14,7 @@
 ```
 docs/
 ├── specs/                     # 【常に最新】コードの最新実装と100%一致させる「基本仕様書」
+│   ├── 00_rustyclaw.md        # 総合システム仕様書 ＆ ドキュメントインデックス
 │   ├── 01_architecture.md     # 全体アーキテクチャ・開発環境仕様
 │   ├── 02_agent_pipeline.md   # パイプライン・LLMプロバイダ仕様
 │   ├── 03_workspace_spec.md   # ワークスペースファイル・ストレージ仕様
@@ -28,12 +29,9 @@ docs/
 │   └── 92_picoclaw_comparison.md  # PicoClaw とのアーキテクチャ・機能比較仕様
 │
 ├── plans/                     # 【開発中】実装前または現在進行中の「個別実装計画書」
-│   ├── 2026-06-04-rag-memory-implementation-plan.md # メモリRAG実装計画
-│   └── 2026-06-05-static-docs-rag.md                # 静的ドメイン知識RAG計画
+│   └── 2026-06-06-local-embedding-complete-rag-unification.md # ローカルEmbedding・完全RAG一元化計画
 │
-├── review/                    # 【点検・レビュー】コードレビュー、ログ点検、実行検証記録
-│   ├── phase31_steps1_3_code_review.md              # 各種コードレビュー記録
-│   └── 2026-06-05-log-inspection-report.md          # 稼働・ログ点検レポート
+├── review/                    # 【点検・レビュー】コードレビュー、ログ点検、実行検証記録（現在は空）
 │
 ├── adr/                       # 【永続保存】アーキテクチャ意思決定記録（Architecture Decision Records）
 │   └── 001-xxx.md             # 連番ファイル。SUPERSEDED になっても削除しない
@@ -43,7 +41,6 @@ docs/
 │   ├── review/                # 過去のログ検証・レビューレポート（Historical Reviews）
 │   └── tasks/                 # 過去の完了済みタスクリスト（Historical Tasks）
 │
-├── 00_rustyclaw.md            # 全体引継ぎ資料 ＆ ドキュメントインデックス
 ├── task.md                    # 直近の開発タスク管理リスト（完了マーク付き）
 └── README.md                  # 本ドキュメント運用ルール（本書）
 ```
