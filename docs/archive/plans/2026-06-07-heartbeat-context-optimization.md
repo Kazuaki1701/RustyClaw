@@ -1,6 +1,9 @@
 # Heartbeat Context Optimization Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去の計画書 - 開発完了済み)  
+> **完了日**: 2026-06-07  
+> **備考**: 最新の動作仕様については、`docs/specs/` 配下の最新仕様書を参照してください。
 
 **Goal:** ISSUE-28〜32 を実装し、Heartbeat のシステムプロンプトを Groq 6,000 token 制限内（目標: 4,000 token 以下）に安定させる。
 
@@ -27,7 +30,7 @@
 - Modify: `production/config/config.debug.json`
 - Modify: `production/config/config.release.json`
 
-- [ ] **Step 1: config.debug.json の model フィールドを修正**
+- [x] **Step 1: config.debug.json の model フィールドを修正**
 
 `production/config/config.debug.json` の `embedding.model` を変更する。
 
@@ -41,7 +44,7 @@
 "model": "intfloat/multilingual-e5-small",
 ```
 
-- [ ] **Step 2: config.release.json の model フィールドを修正**
+- [x] **Step 2: config.release.json の model フィールドを修正**
 
 `production/config/config.release.json` でも同様に変更する。
 
@@ -55,7 +58,7 @@
 "model": "intfloat/multilingual-e5-small",
 ```
 
-- [ ] **Step 3: JSON の構文チェック**
+- [x] **Step 3: JSON の構文チェック**
 
 ```bash
 python3 -c "import json; json.load(open('production/config/config.debug.json'))" && echo "debug OK"
@@ -68,7 +71,7 @@ debug OK
 release OK
 ```
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
 ```bash
 git add production/config/config.debug.json production/config/config.release.json
@@ -84,7 +87,7 @@ git commit -m "fix(config): ISSUE-32 embedding model 名を intfloat/multilingua
 
 ### 2-A: ISSUE-31 — `ingest_static_documents` に MEMORY.md を追加
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `crates/rustyclaw-agent/src/lib.rs` のテストセクション末尾（`}` の前）に追加する。
 
@@ -115,7 +118,7 @@ fn test_ingest_static_documents_includes_memory_md() {
 }
 ```
 
-- [ ] **Step 2: テストが通る実装に変更する**
+- [x] **Step 2: テストが通る実装に変更する**
 
 `crates/rustyclaw-agent/src/lib.rs` の `ingest_static_documents` 関数内:
 
@@ -134,7 +137,7 @@ fn test_ingest_static_documents_includes_memory_md() {
     ];
 ```
 
-- [ ] **Step 3: テストを実行して通過を確認**
+- [x] **Step 3: テストを実行して通過を確認**
 
 ```bash
 cargo test -p rustyclaw-agent test_ingest_static_documents_includes_memory_md 2>&1 | tail -10
@@ -148,7 +151,7 @@ test result: ok. 1 passed; ...
 
 ### 2-B: ISSUE-28 — `build_heartbeat_context` から MEMORY.md の静的ロードを除去
 
-- [ ] **Step 4: 失敗するテストを書く**
+- [x] **Step 4: 失敗するテストを書く**
 
 テストセクション末尾に追加する。
 
@@ -171,7 +174,7 @@ fn test_build_heartbeat_context_does_not_include_memory_md() {
 }
 ```
 
-- [ ] **Step 5: `build_heartbeat_context` の実装を変更する**
+- [x] **Step 5: `build_heartbeat_context` の実装を変更する**
 
 `crates/rustyclaw-agent/src/lib.rs` の `build_heartbeat_context` 関数（line 663-691 付近）:
 
@@ -192,7 +195,7 @@ fn test_build_heartbeat_context_does_not_include_memory_md() {
         let files = ["SOUL.md", "HEARTBEAT.md"];
 ```
 
-- [ ] **Step 6: ビルドチェック**
+- [x] **Step 6: ビルドチェック**
 
 ```bash
 cargo build -p rustyclaw-agent 2>&1 | tail -5
@@ -203,7 +206,7 @@ cargo build -p rustyclaw-agent 2>&1 | tail -5
 Finished `dev` profile [unoptimized + debuginfo] target(s) in ...
 ```
 
-- [ ] **Step 7: 全テストを実行**
+- [x] **Step 7: 全テストを実行**
 
 ```bash
 cargo test -p rustyclaw-agent 2>&1 | tail -10
@@ -214,7 +217,7 @@ cargo test -p rustyclaw-agent 2>&1 | tail -10
 test result: ok. N passed; 0 failed; ...
 ```
 
-- [ ] **Step 8: コミット**
+- [x] **Step 8: コミット**
 
 ```bash
 git add crates/rustyclaw-agent/src/lib.rs
@@ -233,7 +236,7 @@ git commit -m "fix(agent): ISSUE-28/31 MEMORY.md を ingest 対象に追加し H
 
 ### 3-A: Config にフィールドを追加
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `crates/rustyclaw-config/src/lib.rs` のテストセクション末尾（`}` の前）に追加する。
 
@@ -261,7 +264,7 @@ fn test_embedding_config_heartbeat_top_k() {
 }
 ```
 
-- [ ] **Step 2: `EmbeddingConfig` に `heartbeat_top_k` フィールドを追加**
+- [x] **Step 2: `EmbeddingConfig` に `heartbeat_top_k` フィールドを追加**
 
 `crates/rustyclaw-config/src/lib.rs` の `EmbeddingConfig` 構造体（`use_local_embedding` フィールドの直後）:
 
@@ -287,7 +290,7 @@ fn test_embedding_config_heartbeat_top_k() {
 }
 ```
 
-- [ ] **Step 3: テストを実行して通過を確認**
+- [x] **Step 3: テストを実行して通過を確認**
 
 ```bash
 cargo test -p rustyclaw-config test_embedding_config_heartbeat_top_k 2>&1 | tail -10
@@ -301,7 +304,7 @@ test result: ok. 1 passed; ...
 
 ### 3-B: `execute_heartbeat` で heartbeat_top_k を適用
 
-- [ ] **Step 4: `execute_heartbeat` の RAG 注入ブロックを変更する**
+- [x] **Step 4: `execute_heartbeat` の RAG 注入ブロックを変更する**
 
 `crates/rustyclaw-agent/src/lib.rs` の `execute_heartbeat` 内 RAG ブロック（line 704-725 付近）:
 
@@ -370,7 +373,7 @@ test result: ok. 1 passed; ...
         }
 ```
 
-- [ ] **Step 5: ビルドチェック**
+- [x] **Step 5: ビルドチェック**
 
 ```bash
 cargo build -p rustyclaw-agent 2>&1 | tail -5
@@ -381,7 +384,7 @@ cargo build -p rustyclaw-agent 2>&1 | tail -5
 Finished `dev` profile [unoptimized + debuginfo] target(s) in ...
 ```
 
-- [ ] **Step 6: 全テストを実行**
+- [x] **Step 6: 全テストを実行**
 
 ```bash
 cargo test -p rustyclaw-agent 2>&1 | tail -10
@@ -394,7 +397,7 @@ test result: ok. N passed; 0 failed; ...
 
 ### 3-C: config.json に heartbeat_top_k を追加
 
-- [ ] **Step 7: config.debug.json に heartbeat_top_k を追加**
+- [x] **Step 7: config.debug.json に heartbeat_top_k を追加**
 
 `production/config/config.debug.json` の `embedding` ブロックに追加:
 
@@ -418,11 +421,11 @@ embedding セクション全体の完成形（`top_k` の直後):
 }
 ```
 
-- [ ] **Step 8: config.release.json にも同じ変更を適用**
+- [x] **Step 8: config.release.json にも同じ変更を適用**
 
 `production/config/config.release.json` の `embedding` ブロックにも `"heartbeat_top_k": 2` を追加する（debug.json と同じ構造になるよう適用）。
 
-- [ ] **Step 9: JSON の構文チェック**
+- [x] **Step 9: JSON の構文チェック**
 
 ```bash
 python3 -c "import json; json.load(open('production/config/config.debug.json'))" && echo "debug OK"
@@ -435,7 +438,7 @@ debug OK
 release OK
 ```
 
-- [ ] **Step 10: コミット**
+- [x] **Step 10: コミット**
 
 ```bash
 git add crates/rustyclaw-config/src/lib.rs crates/rustyclaw-agent/src/lib.rs \
@@ -453,14 +456,14 @@ git commit -m "feat(config,agent): ISSUE-30 Heartbeat RAG top_k を heartbeat_to
 **目標:** 現在の 101 行 / ~1,096 tokens → 約 60 行 / ~600〜700 tokens に削減。  
 **方針:** 指示（What to do）は保持し、説明（Why / How it works）のみ削除する。
 
-- [ ] **Step 1: 現在のサイズを記録**
+- [x] **Step 1: 現在のサイズを記録**
 
 ```bash
 wc -l production/workspace/HEARTBEAT.md
 wc -w production/workspace/HEARTBEAT.md
 ```
 
-- [ ] **Step 2: HEARTBEAT.md を以下の内容で上書きする**
+- [x] **Step 2: HEARTBEAT.md を以下の内容で上書きする**
 
 削除対象:
 - Step 1 の「Also consult `MEMORY.md` (already in your context) for background.」（ISSUE-28 で MEMORY.md は RAG 経由になるため）
@@ -539,7 +542,7 @@ HEARTBEAT_OK
 - **Do NOT include `HEARTBEAT_OK` anywhere in the response.**
 ```
 
-- [ ] **Step 3: 圧縮後のサイズを確認**
+- [x] **Step 3: 圧縮後のサイズを確認**
 
 ```bash
 wc -l production/workspace/HEARTBEAT.md
@@ -548,7 +551,7 @@ wc -w production/workspace/HEARTBEAT.md
 
 期待: 行数が 101 → 60〜70 行程度に減っていること。
 
-- [ ] **Step 4: 必須要素のチェック**
+- [x] **Step 4: 必須要素のチェック**
 
 以下がすべて含まれることを確認する。
 
@@ -560,7 +563,7 @@ grep -c "Quiet hours" production/workspace/HEARTBEAT.md           # 1
 grep -c "topic-patrol" production/workspace/HEARTBEAT.md          # 1（禁止ルール）
 ```
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add production/workspace/HEARTBEAT.md
@@ -571,19 +574,19 @@ git commit -m "docs(workspace): ISSUE-29 HEARTBEAT.md を圧縮（~1,096→~650 
 
 ## 完了後の確認
 
-- [ ] **全テスト通過**
+- [x] **全テスト通過**
 
 ```bash
 cargo test --workspace 2>&1 | tail -15
 ```
 
-- [ ] **デプロイ**
+- [x] **デプロイ**
 
 ```bash
 ./scripts/deploy.sh
 ```
 
-- [ ] **GitHub Issues をクローズ**
+- [x] **GitHub Issues をクローズ**
 
 ```bash
 gh issue close 7  # ISSUE-28

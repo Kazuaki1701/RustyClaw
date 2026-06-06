@@ -1,10 +1,9 @@
 # Git History Reconstruction Phase 4 Implementation Plan
 
-> [!NOTE]
-> **ステータス**: `[ACTIVE]` (実装計画中)  
-> **最終更新日**: 2026-06-06  
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去の計画書 - 開発完了済み)  
+> **完了日**: 2026-06-06  
+> **備考**: 最新の動作仕様については、`docs/specs/` 配下の最新仕様書を参照してください。
 
 **Goal:** `abe5855` から `cbcc8d6` までの直線的コミット履歴（計73件）を、論理的なトピックブランチに再構築して `--no-ff` でマージし、その後に続くすべてのマージコミットをその上に綺麗にリプレイ（再構成）する。
 
@@ -99,7 +98,7 @@
 
 ### Task 1: 再構築スクリプト `scripts/reconstruct_phase4.sh` のひな形作成
 
-- [ ] **Step 1: ひな形ファイルを作成し、安全チェックとバックアップ処理を実装**
+- [x] **Step 1: ひな形ファイルを作成し、安全チェックとバックアップ処理を実装**
 
 `/home/kazuaki/Projects/RustyClaw/scripts/reconstruct_phase4.sh` を作成し、スクリプト実行時に自動で現在の `master` ブランチを `backup-master-reconstructed-v4` として保存する処理、および `Cargo.lock` 競合時の自動チェックアウト処理を定義する。
 
@@ -153,7 +152,7 @@ chmod +x scripts/reconstruct_phase4.sh
 
 ### Task 2: 新規トピックブランチ（A〜F）の作成とマージ処理の追加
 
-- [ ] **Step 1: `scripts/reconstruct_phase4.sh` に新規トピックブランチのマージ処理を追記**
+- [x] **Step 1: `scripts/reconstruct_phase4.sh` に新規トピックブランチのマージ処理を追記**
 
 `abe5855` から漸進的（プログレッシブ）にブランチを構築してマージするロジックを追記する。
 
@@ -280,7 +279,7 @@ EOF
 
 ### Task 3: 後続コミット（Phase 3 および Phase 1 & 2）のマージ・リプレイ追記
 
-- [ ] **Step 1: `scripts/reconstruct_phase4.sh` に `cbcc8d6` 以降の全トピックマージのリプレイを追記**
+- [x] **Step 1: `scripts/reconstruct_phase4.sh` に `cbcc8d6` 以降の全トピックマージのリプレイを追記**
 
 Phase 3およびそれ移行に master に統合されたすべてのトピックブランチのマージコミット順序を正確に再現するロジックを追記する。
 
@@ -590,10 +589,10 @@ EOF
 
 ### Task 4: テストとクリーンアップ
 
-- [ ] **Step 1: スクリプトの実行と再構築の完了検証**
+- [x] **Step 1: スクリプトの実行と再構築の完了検証**
 
 `./scripts/reconstruct_phase4.sh` を実行し、マージグラフの再構築がエラーなく完了することを確認する。
 
-- [ ] **Step 2: 開発ブランチ `feat/phase40-8-local-embedding` の再適用**
+- [x] **Step 2: 開発ブランチ `feat/phase40-8-local-embedding` の再適用**
 
 開発ブランチを新しい master に基づいて再構築し、開発中のコードコミットを再チェリーピックして作業環境を復旧する。
