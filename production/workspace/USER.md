@@ -25,14 +25,23 @@ _This is about understanding a person, not building a dossier._
 
 ## Interests
 - AI Agent / Autonomous Agent (Claude, Anthropic, MCP)
+  sources: HN
 - Cloudflare (Workers AI, AI Gateway, Vectorize, Wrangler)
+  sources: https://blog.cloudflare.com
 - Obsidian (Knowledge Management, Local REST API)
+  sources: Reddit/ObsidianMD
 - HomeAssistant
+  sources: Reddit/homeassistant
 - Karakeep (Self-hosted Bookmarks)
+  sources: github:hoarder-app/hoarder
 - Terminal tools (Fish shell, Ghostty, Zellij, tmux, yazi)
+  sources: Reddit/unixporn
 - Latest AI/ML tech (Local LLM, Gemma, Ollama)
+  sources: Reddit/LocalLLaMA
 - Evolutionary Memory / AI memory systems
+  sources: HN
 - Self-hosted infrastructure
+  sources: Reddit/selfhosted
 
 ## Preferences & Habits
 - **Link Quality:** High preference for verified, working links in Topic Patrol. Dislikes "guessed" or broken URLs. 紹介する各アイテムごとに必ず情報ソースへのリンク（URL）を付与し、**送信前に必ずリンクが有効であることを `web_fetch` 等で確認すること。** [2026-04-01/2026-04-29]

@@ -64,6 +64,9 @@ pub struct ModelEntry {
     /// コンテキストウィンドウサイズ（tokens。"131k", "1M" 等の表記可）
     #[serde(default)]
     pub context_window: Option<String>,
+    /// Cloudflare AI Gateway ID (Optional)
+    #[serde(default)]
+    pub cf_aig_gateway_id: Option<String>,
 }
 
 fn default_provider() -> String { "openai".to_string() }
@@ -138,6 +141,7 @@ pub struct LlmModelConfig {
     pub api_base_url: String,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    pub cf_aig_gateway_id: Option<String>,
 }
 
 // ─────────────────────────────────────────────
@@ -325,6 +329,7 @@ impl Config {
                 api_base_url: e.api_base.clone(),
                 max_tokens: e.max_tokens,
                 temperature: e.temperature,
+                cf_aig_gateway_id: e.cf_aig_gateway_id.clone(),
             })
     }
 
@@ -381,6 +386,7 @@ impl Config {
                 api_base_url: e.api_base.clone(),
                 max_tokens: e.max_tokens,
                 temperature: e.temperature,
+                cf_aig_gateway_id: e.cf_aig_gateway_id.clone(),
             })
             .unwrap_or_else(|| LlmModelConfig {
                 model_purpose: purpose.to_string(),
@@ -480,6 +486,7 @@ mod tests {
                     enabled: true,
                     rpm: None, rpd: None, tpm: None, tpd: None,
                     context_window: Some("131k".to_string()),
+                    cf_aig_gateway_id: None,
                 },
                 ModelEntry {
                     model_name: "test-70b".to_string(),
@@ -492,6 +499,7 @@ mod tests {
                     enabled: true,
                     rpm: None, rpd: None, tpm: None, tpd: None,
                     context_window: None,
+                    cf_aig_gateway_id: None,
                 },
             ],
             agents: AgentsConfig {
@@ -608,6 +616,7 @@ mod tests {
                 enabled: true,
                 rpm: None, rpd: None, tpm: None, tpd: None,
                 context_window: None,
+                cf_aig_gateway_id: None,
             }],
             ..Default::default()
         };
@@ -663,6 +672,7 @@ mod tests {
                     enabled: true,
                     rpm: None, rpd: None, tpm: None, tpd: None,
                     context_window: None,
+                    cf_aig_gateway_id: None,
                 },
                 ModelEntry {
                     model_name: "fallback-model".to_string(),
@@ -675,6 +685,7 @@ mod tests {
                     enabled: true,
                     rpm: None, rpd: None, tpm: None, tpd: None,
                     context_window: None,
+                    cf_aig_gateway_id: None,
                 },
                 ModelEntry {
                     model_name: "global-model".to_string(),
@@ -687,6 +698,7 @@ mod tests {
                     enabled: true,
                     rpm: None, rpd: None, tpm: None, tpd: None,
                     context_window: None,
+                    cf_aig_gateway_id: None,
                 },
                 ModelEntry {
                     model_name: "disabled-model".to_string(),
@@ -699,6 +711,7 @@ mod tests {
                     enabled: false,
                     rpm: None, rpd: None, tpm: None, tpd: None,
                     context_window: None,
+                    cf_aig_gateway_id: None,
                 },
             ],
             agents: AgentsConfig {
