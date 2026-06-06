@@ -9,7 +9,6 @@ members = [
     "crates/rustyclaw-tools",
     "crates/rustyclaw-config",
     "crates/rustyclaw-storage",
-    "crates/rustyclaw-mcp",
     "crates/rustyclaw-summary-proto",
 ]
 
