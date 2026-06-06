@@ -270,7 +270,7 @@ impl LaneRegistry {
                                         if let Some(rag) = init_rag_engine(&active_config, &workspace_path) {
                                             pipeline.rag = Some(rag);
                                         }
-                                        match pipeline.execute_heartbeat(&workspace_path, &session_id, &heartbeat_prompt, &tool_registry).await {
+                                        match pipeline.execute_heartbeat(&workspace_path, &session_id, &heartbeat_prompt, &tool_registry, &db_path).await {
                                             Ok(response) => {
                                                 tracing::info!("Heartbeat LLM execution successful. Processing response...");
                                                 if let Ok(db) = rustyclaw_storage::DbManager::new(&db_path) {

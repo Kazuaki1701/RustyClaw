@@ -634,6 +634,7 @@ Rules:
         session_id: &str,
         user_message: &str,
         tool_registry: &ToolRegistry,
+        db_path: &Path,
     ) -> Result<LlmResponse> {
         let system_context = self.build_heartbeat_context(workspace_dir)?;
 
@@ -2566,5 +2567,14 @@ Keep it short.\n\
         registry.register(Arc::new(EchoTool) as Arc<dyn rig_core::tool::ToolDyn>);
         let defs = registry.tool_definitions().await;
         assert_eq!(defs[0].name, "echo");
+    }
+
+    // ── Task 1: execute_heartbeat db_path シグネチャ ──
+    #[tokio::test]
+    async fn test_execute_heartbeat_accepts_db_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("memory.db");
+        let _db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
+        let _: &std::path::Path = &db_path;
     }
 }
