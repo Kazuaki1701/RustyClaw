@@ -103,13 +103,31 @@ impl ProviderError {
     }
 }
 
-/// RateLimit エラーから GLOBAL_COOLDOWN を設定する共通ヘルパー。
-/// `GmnCliProvider` と `OpenAiCompatProvider` の両方から呼ぶことで、
-/// プロバイダーに関わらずグローバルクールダウンゲートが有効になる。
+pub fn resolve_provider_id(model: &LlmModelConfig) -> String {
+    let base = model.api_base_url.to_lowercase();
+    if base.contains("groq.com") {
+        "groq".to_string()
+    } else if base.contains("cloudflare.com") {
+        "cloudflare".to_string()
+    } else if base.contains("openai.com") {
+        "openai".to_string()
+    } else if base.contains("huggingface.co") {
+        "huggingface".to_string()
+    } else {
+        model.model_provider.clone()
+    }
+}
+
+/// RateLimit エラーからプロバイダごとのクールダウンを設定する共通ヘルパー。
+pub fn set_provider_cooldown_from_error(provider: &str, err: &ProviderError) {
+    let dur = err.reset_after().unwrap_or(std::time::Duration::from_secs(60));
+    set_provider_cooldown(provider, dur);
+}
+
+/// 後方互換性のためのグローバルクールダウン設定ヘルパー。
 pub fn set_global_cooldown_from_error(err: &ProviderError) {
-    let dur = err.reset_after().unwrap_or(Duration::from_secs(60));
-    let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
-    *lock = Some(std::time::Instant::now() + dur + Duration::from_secs(2));
+    let dur = err.reset_after().unwrap_or(std::time::Duration::from_secs(60));
+    set_provider_cooldown("global", dur);
 }
 
 fn get_workspace_dir() -> std::path::PathBuf {
@@ -421,7 +439,8 @@ impl LlmProvider for OpenAiCompatProvider {
             let error_text = response.text().await.unwrap_or_default();
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS || error_text.contains("insufficient_quota") {
                 let err = ProviderError::RateLimit(error_text);
-                set_global_cooldown_from_error(&err);
+                let provider_id = resolve_provider_id(&self.model);
+                set_provider_cooldown_from_error(&provider_id, &err);
                 return Err(err);
             }
             return Err(ProviderError::ExecutionFailed(format!("LLM API returned error status {}: {}", status, error_text)));
@@ -508,7 +527,8 @@ impl LlmProvider for OpenAiCompatProvider {
             let error_text = response.text().await.unwrap_or_default();
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS || error_text.contains("insufficient_quota") {
                 let err = ProviderError::RateLimit(error_text);
-                set_global_cooldown_from_error(&err);
+                let provider_id = resolve_provider_id(&self.model);
+                set_provider_cooldown_from_error(&provider_id, &err);
                 return Err(err);
             }
             return Err(ProviderError::ExecutionFailed(format!("LLM Stream API returned error status {}: {}", status, error_text)));
@@ -580,22 +600,45 @@ impl LlmProvider for OpenAiCompatProvider {
     }
 }
 
-static GLOBAL_COOLDOWN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+static PROVIDER_COOLDOWNS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> = std::sync::OnceLock::new();
 
-/// グローバルなクールダウンの残り時間を取得する。
-/// レート制限の解除待ち時間がある場合は `Some(Duration)` を返す。
-pub fn global_cooldown_remaining() -> Option<std::time::Duration> {
-    let cooldown = {
-        let lock = GLOBAL_COOLDOWN.lock().unwrap();
-        *lock
-    };
-    if let Some(reset_instant) = cooldown {
+fn get_cooldowns_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
+    PROVIDER_COOLDOWNS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// プロバイダごとのクールダウン残り時間を取得する。
+pub fn provider_cooldown_remaining(provider: &str) -> Option<std::time::Duration> {
+    let lock = get_cooldowns_map().lock().unwrap();
+    if let Some(&reset_instant) = lock.get(provider) {
         let now = std::time::Instant::now();
         if now < reset_instant {
             return Some(reset_instant - now);
         }
     }
     None
+}
+
+/// プロバイダごとのクールダウンを設定する。
+pub fn set_provider_cooldown(provider: &str, dur: std::time::Duration) {
+    let mut lock = get_cooldowns_map().lock().unwrap();
+    lock.insert(provider.to_string(), std::time::Instant::now() + dur + std::time::Duration::from_secs(2));
+}
+
+/// グローバルなクールダウンの残り時間を取得する（全プロバイダ中の最大残り時間）。
+/// 後方互換性およびダッシュボード表示のために維持。
+pub fn global_cooldown_remaining() -> Option<std::time::Duration> {
+    let lock = get_cooldowns_map().lock().unwrap();
+    let now = std::time::Instant::now();
+    let mut max_dur = None;
+    for reset_instant in lock.values() {
+        if now < *reset_instant {
+            let rem = *reset_instant - now;
+            if max_dur.is_none() || rem > max_dur.unwrap() {
+                max_dur = Some(rem);
+            }
+        }
+    }
+    max_dur
 }
 
 pub struct GmnCliProvider {
@@ -686,7 +729,7 @@ impl LlmProvider for GmnCliProvider {
         if !output.status.success() || combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
             if combined_err.contains("quota") || combined_err.contains("RESOURCE_EXHAUSTED") || combined_err.contains("429") || combined_err.contains("rate limited") {
                 let err = ProviderError::RateLimit(combined_err);
-                set_global_cooldown_from_error(&err);
+                set_provider_cooldown_from_error("gmn", &err);
                 return Err(err);
             }
             if !output.status.success() {
@@ -865,7 +908,7 @@ impl LlmProvider for GmnCliProvider {
             if (!status.success() || is_rate_limit) && !has_yielded {
                 if is_rate_limit {
                     let err = ProviderError::RateLimit(combined_err);
-                    set_global_cooldown_from_error(&err);
+                    set_provider_cooldown_from_error("gmn", &err);
                     Err(err)?;
                 } else {
                     Err(ProviderError::ExecutionFailed(format!("gmn CLI process exited with non-zero status: {:?}", status.code())))?;
@@ -1244,12 +1287,12 @@ mod tests {
 
         // set_global_cooldown_from_error がクールダウンをセットする
         {
-            let mut lock = GLOBAL_COOLDOWN.lock().unwrap();
-            *lock = None;
+            let mut lock = get_cooldowns_map().lock().unwrap();
+            lock.clear();
         }
         assert!(global_cooldown_remaining().is_none());
         set_global_cooldown_from_error(&ProviderError::RateLimit("Too Many Requests".to_string()));
-        assert!(global_cooldown_remaining().is_some(), "GLOBAL_COOLDOWN must be set after rate limit");
+        assert!(global_cooldown_remaining().is_some(), "global_cooldown_remaining must be set after rate limit");
 
         // Cloudflare RPM 429 (JSON body, no reset time) → default 60s
         let err_cf_rpm = ProviderError::RateLimit(r#"{"errors":[{"code":10014,"message":"Too Many Requests"}]}"#.to_string());

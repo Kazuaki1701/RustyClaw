@@ -2023,6 +2023,7 @@ dependencies = [
  "filetime",
  "futures-util",
  "gray_matter",
+ "regex",
  "reqwest",
  "rustyclaw-agent",
  "rustyclaw-channels",
