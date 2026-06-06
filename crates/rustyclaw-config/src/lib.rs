@@ -130,6 +130,9 @@ pub struct EmbeddingConfig {
     /// ダッシュボードチャット専用の RAG 検索上限件数（省略時は top_k を使用）
     #[serde(default)]
     pub dashboard_top_k: Option<usize>,
+    /// Discord チャット専用の RAG 検索上限件数（省略時は top_k を使用）
+    #[serde(default)]
+    pub discord_top_k: Option<usize>,
 }
 
 /// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
@@ -1028,6 +1031,19 @@ mod tests {
         let cfg: EmbeddingConfig =
             serde_json::from_str(r#"{"dashboard_top_k": 8}"#).unwrap();
         assert_eq!(cfg.dashboard_top_k, Some(8));
+    }
+
+    #[test]
+    fn test_embedding_config_discord_top_k_default() {
+        let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(cfg.discord_top_k.is_none(), "discord_top_k default should be None");
+    }
+
+    #[test]
+    fn test_embedding_config_discord_top_k_value() {
+        let cfg: EmbeddingConfig =
+            serde_json::from_str(r#"{"discord_top_k": 3}"#).unwrap();
+        assert_eq!(cfg.discord_top_k, Some(3));
     }
 
     #[test]
