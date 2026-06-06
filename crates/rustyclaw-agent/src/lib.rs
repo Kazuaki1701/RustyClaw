@@ -133,7 +133,7 @@ impl Pipeline {
     }
 
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
-        // 静的ブロック（SOUL/AGENTS/MEMORY/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
+        // 静的ブロック（SOUL/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
         // 動的な [now:] は末尾に置くことで毎回変わる部分がキャッシュ prefix を破壊しないようにする。
         let files = ["SOUL.md", "USER.md"];
         let mut context = String::new();
