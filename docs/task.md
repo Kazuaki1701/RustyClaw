@@ -16,7 +16,7 @@
 > 実測: Heartbeat が Groq 6,000 token 制限を 6,497 tokens で超過（17:23 ログ）。静的システムプロンプト（SOUL+MEMORY+HEARTBEAT = 14.2KB ≈ 3,540 tok）+ digest（≈ 750 tok）+ RAG 注入が主因。  
 > ISSUE-28〜30 の 3 施策を合わせると **▼1,700〜2,130 tokens** の削減見込み。優先度順に実施すること。
 
-- `[ ]` **ISSUE-28: Heartbeat — MEMORY.md を静的注入から RAG 注入へ切り替え**
+- `[x]` **ISSUE-28: Heartbeat — MEMORY.md を静的注入から RAG 注入へ切り替え**
   - 現状: `build_heartbeat_context` が MEMORY.md（4,529 B ≈ 1,130 tok）を毎回静的注入。最大の圧迫要因。
   - 修正: MEMORY.md を `ingest_static_documents` の対象に追加し、関連チャンクを RAG 経由で注入。`build_heartbeat_context` から MEMORY.md ロードを削除。
   - 期待効果: ▼約 1,130 tokens
@@ -28,18 +28,18 @@
   - 期待効果: ▼約 400〜600 tokens
   - 対象: `workspace/HEARTBEAT.md`（ファイル内容の圧縮）
 
-- `[ ]` **ISSUE-30: Heartbeat — RAG top_k を 5→2 に引き下げ**
+- `[x]` **ISSUE-30: Heartbeat — RAG top_k を 5→2 に引き下げ**
   - 現状: ISSUE-27 で追加した RAG 注入が config と同じ top_k=5 で動作。Heartbeat の固定 7 Step 実行には過剰。
   - 修正: `execute_heartbeat` 内の RAG 検索を top_k=2 に制限（定数または config の `heartbeat_top_k` フィールドとして追加）。
   - 期待効果: ▼約 200〜400 tokens
   - 対象: `crates/rustyclaw-agent/src/lib.rs`（`execute_heartbeat` の RAG 注入ブロック）
 
-- `[ ]` **ISSUE-31: 通常チャット — MEMORY.md を RAG 登録して動的注入へ切り替え**
+- `[x]` **ISSUE-31: 通常チャット — MEMORY.md を RAG 登録して動的注入へ切り替え**
   - 現状: `execute_with_tools` では MEMORY.md が静的注入なし・RAG 未登録のため長期記憶が届かない。Session Continuation（日またぎ時のみ）と session summary に依存。
   - 修正: MEMORY.md を `ingest_static_documents` の対象に追加（ISSUE-28 と共通実装）。関連チャンクが RAG 経由でシステムプロンプトに注入されるようにする。
   - 対象: `crates/rustyclaw-agent/src/lib.rs`（`ingest_static_documents`）
 
-- `[ ]` **ISSUE-32: config — embedding model 名を実態に合わせて修正**
+- `[x]` **ISSUE-32: config — embedding model 名を実態に合わせて修正**
   - 現状: `config.json` の `embedding.model` が `"text-embedding-bge-m3"` のまま。Phase 40-8 で `multilingual-e5-small`（384 次元）に変更済みだが config 未更新。LM Studio 側の実ロードモデルとの不整合リスク。
   - 修正: `model` を `"intfloat/multilingual-e5-small"` に変更。
   - 対象: `production/config/config.debug.json`、`config.release.json`
