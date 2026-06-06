@@ -1807,6 +1807,100 @@ fn resolve_category(session_id: &str) -> String {
     }
 }
 
+fn extract_stdout(tool_result: &str) -> &str {
+    const MARKER: &str = "--- STDOUT ---\n";
+    if let Some(start) = tool_result.find(MARKER) {
+        let after = &tool_result[start + MARKER.len()..];
+        let end = after.find("\n--- ").unwrap_or(after.len());
+        &after[..end]
+    } else {
+        tool_result
+    }
+}
+
+fn rebuild_tool_result(original: &str, new_stdout: &str) -> String {
+    const MARKER: &str = "--- STDOUT ---\n";
+    if let Some(start) = original.find(MARKER) {
+        let before = &original[..start + MARKER.len()];
+        let after = &original[start + MARKER.len()..];
+        let rest_start = after.find("\n--- ").unwrap_or(after.len());
+        let rest = &after[rest_start..];
+        format!("{}{}{}", before, new_stdout, rest)
+    } else {
+        new_stdout.to_string()
+    }
+}
+
+fn filter_seen_tool_result(
+    tool_name: &str,
+    call_args: &str,
+    tool_result: &str,
+    db: &rustyclaw_storage::DbManager,
+) -> String {
+    if tool_name != "run_workspace_script" {
+        return tool_result.to_string();
+    }
+    let args: serde_json::Value = serde_json::from_str(call_args).unwrap_or_default();
+    let script_name = args["script_name"].as_str().unwrap_or("");
+
+    let (category, id_field): (&str, &str) = if script_name.contains("gmail") {
+        ("gmail", "id")
+    } else if script_name.contains("calendar") {
+        ("calendar", "event_id")
+    } else {
+        return tool_result.to_string();
+    };
+
+    let stdout = extract_stdout(tool_result);
+
+    let items: serde_json::Value = match serde_json::from_str(stdout) {
+        Ok(v) => v,
+        Err(_) => return tool_result.to_string(),
+    };
+    let arr = match items.as_array() {
+        Some(a) => a.clone(),
+        None => return tool_result.to_string(),
+    };
+
+    let mut new_items: Vec<serde_json::Value> = Vec::new();
+    let mut seen_count: usize = 0;
+
+    for item in &arr {
+        if let Some(id) = item[id_field].as_str().filter(|s| !s.is_empty()) {
+            let item_id = format!("{}:{}", category, id);
+            if db.is_item_seen(&item_id).unwrap_or(false) {
+                seen_count += 1;
+            } else {
+                let _ = db.mark_item_seen(&item_id, category);
+                new_items.push(item.clone());
+            }
+        } else {
+            new_items.push(item.clone());
+        }
+    }
+
+    if seen_count == 0 {
+        return tool_result.to_string();
+    }
+
+    let new_json = serde_json::to_string_pretty(&serde_json::Value::Array(new_items))
+        .unwrap_or_else(|_| "[]".to_string());
+
+    let notice = if new_json.trim() == "[]" {
+        format!(
+            "No new {} items. ({} already seen item(s) were filtered.)",
+            category, seen_count
+        )
+    } else {
+        format!(
+            "{}\n// Note: {} already seen {} item(s) were filtered.",
+            new_json, seen_count, category
+        )
+    };
+
+    rebuild_tool_result(tool_result, &notice)
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2575,5 +2669,82 @@ Keep it short.\n\
         // Verify the function signature compiles with &Path for db_path (compile-time check)
         // This ensures the parameter was added to the signature correctly.
         let _ = Pipeline::execute_heartbeat;
+    }
+
+    // ── Task 2: filter_seen_tool_result ──
+    #[tokio::test]
+    async fn test_filter_seen_tool_result_gmail_first_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+
+        let tool_result = "--- STDOUT ---\n[{\"id\":\"msg1\",\"sender\":\"test@example.com\",\"subject\":\"Test\",\"date\":\"Mon\",\"snippet\":\"Hi\"}]\n--- EXIT STATUS ---\n0";
+        let call_args = r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh","args":["is:unread","5"]}"#;
+
+        let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
+        assert!(result.contains("msg1"), "First call: item should pass through");
+        assert!(db.is_item_seen("gmail:msg1").unwrap(), "Should be marked as seen after first call");
+    }
+
+    #[tokio::test]
+    async fn test_filter_seen_tool_result_gmail_already_seen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        db.mark_item_seen("gmail:msg1", "gmail").unwrap();
+
+        let tool_result = "--- STDOUT ---\n[{\"id\":\"msg1\",\"sender\":\"test@example.com\",\"subject\":\"Test\",\"date\":\"Mon\",\"snippet\":\"Hi\"}]\n--- EXIT STATUS ---\n0";
+        let call_args = r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh"}"#;
+
+        let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
+        assert!(!result.contains("\"msg1\""), "Already-seen item should be filtered out");
+        assert!(result.contains("already seen"), "Should indicate filtered items");
+    }
+
+    #[tokio::test]
+    async fn test_filter_seen_tool_result_calendar() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+
+        let stdout = r#"[{"event_id":"evt1","title":"Meeting","start":"2026-06-06T10:00:00+09:00","start_wday":"土","end":"2026-06-06T11:00:00+09:00","end_wday":"土"}]"#;
+        let tool_result = format!("--- STDOUT ---\n{}\n--- EXIT STATUS ---\n0", stdout);
+        let call_args = r#"{"script_name":"skills/calendar/scripts/calendar-ops.sh","args":["list"]}"#;
+
+        let result1 = filter_seen_tool_result("run_workspace_script", &call_args, &tool_result, &db);
+        assert!(result1.contains("evt1"));
+        assert!(db.is_item_seen("calendar:evt1").unwrap());
+
+        let result2 = filter_seen_tool_result("run_workspace_script", &call_args, &tool_result, &db);
+        assert!(!result2.contains("evt1"));
+    }
+
+    #[tokio::test]
+    async fn test_filter_seen_tool_result_non_script_passthrough() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+
+        let result = filter_seen_tool_result("web_fetch", "{}", "some content", &db);
+        assert_eq!(result, "some content");
+
+        let result2 = filter_seen_tool_result(
+            "run_workspace_script",
+            r#"{"script_name":"skills/weather/scripts/504_get-weather.sh"}"#,
+            "weather data",
+            &db,
+        );
+        assert_eq!(result2, "weather data");
+    }
+
+    #[tokio::test]
+    async fn test_filter_seen_tool_result_partial_seen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        db.mark_item_seen("gmail:msg1", "gmail").unwrap();
+
+        let tool_result = "--- STDOUT ---\n[{\"id\":\"msg1\",\"subject\":\"Old\"},{\"id\":\"msg2\",\"subject\":\"New\"}]\n--- EXIT STATUS ---\n0";
+        let call_args = r#"{"script_name":"skills/gmail/scripts/506_get-gmail.sh"}"#;
+
+        let result = filter_seen_tool_result("run_workspace_script", call_args, tool_result, &db);
+        assert!(!result.contains("\"msg1\""), "msg1 should be filtered (already seen)");
+        assert!(result.contains("msg2"), "msg2 should pass through (new)");
+        assert!(db.is_item_seen("gmail:msg2").unwrap());
     }
 }
