@@ -195,7 +195,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source
 |---|---|---|---|
 | `use_local_embedding` | `bool` | `false` | ローカル ONNX モデルで embedding を生成する |
 | `local_model_path` | `Option<String>` | `None` | ONNX モデルファイルのパス |
-| `discord_top_k` | `Option<usize>` | `None` | Discord RAG の top-k 件数 |
+| `channel_top_k` | `Option<usize>` | `None` | LINE / Discord / Dashboard チャット共通の RAG top-k 件数 |
 | `time_decay_half_life_days` | `Option<f64>` | `None` | RAG 検索結果の時間減衰 half-life（日数）。設定時は `search_similar_with_decay` を使用。未設定は従来挙動（後方互換）。例: `30.0` → 30日で combined_score が半減 |
 
 ### インデックス更新フロー

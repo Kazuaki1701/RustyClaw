@@ -127,9 +127,9 @@ pub struct EmbeddingConfig {
     /// Heartbeat は固定 Step を実行するだけなので top_k=5 は過剰（ISSUE-30）。
     #[serde(default)]
     pub heartbeat_top_k: Option<usize>,
-    /// Discord チャット専用の RAG 検索上限件数（省略時は top_k を使用）
+    /// LINE / Discord / Dashboard チャット共通の RAG 検索上限件数（省略時は top_k を使用）
     #[serde(default)]
-    pub discord_top_k: Option<usize>,
+    pub channel_top_k: Option<usize>,
     /// RAG 検索結果の時間減衰 half-life（日数）。
     /// 省略時は減衰なし（既存挙動を維持）。
     /// 例: 30.0 → 30日で combined_score が半減。
@@ -1023,16 +1023,16 @@ mod tests {
     }
 
     #[test]
-    fn test_embedding_config_discord_top_k_default() {
+    fn test_embedding_config_channel_top_k_default() {
         let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
-        assert!(cfg.discord_top_k.is_none(), "discord_top_k default should be None");
+        assert!(cfg.channel_top_k.is_none(), "channel_top_k default should be None");
     }
 
     #[test]
-    fn test_embedding_config_discord_top_k_value() {
+    fn test_embedding_config_channel_top_k_value() {
         let cfg: EmbeddingConfig =
-            serde_json::from_str(r#"{"discord_top_k": 3}"#).unwrap();
-        assert_eq!(cfg.discord_top_k, Some(3));
+            serde_json::from_str(r#"{"channel_top_k": 3}"#).unwrap();
+        assert_eq!(cfg.channel_top_k, Some(3));
     }
 
     #[test]

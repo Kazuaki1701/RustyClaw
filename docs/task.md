@@ -11,7 +11,7 @@
 
 > 実運用ログから発見されたバグ・要改善項目。優先度とは独立して管理し、次スプリントの実施案件を選択する。発見次第追記する。
 
-- `[ ]` **ISSUE-34: Discord RAG `history_for_rag` のエラーハンドリングを `history_messages` と統一**
+- `[x]` **ISSUE-34: Discord RAG `history_for_rag` のエラーハンドリングを `history_messages` と統一**
   - `execute_with_rig_agent` 内で `history_for_rag` ロード時に `unwrap_or_default()` を使用しているが、直後の `history_messages` ロードは `.context("Failed to load session history")?` で明示エラーを返す
   - 対象: `crates/rustyclaw-agent/src/lib.rs` の `history_for_rag` 変数（旧コミット 442a941 由来）
   - 対処: `unwrap_or_default()` を `.context(...)? ` パターンに統一、または RAG 専用として fail-open のまま `tracing::warn!` を追加
@@ -29,7 +29,7 @@
     - `[x]` heartbeat_top_k: 2→3（TPM 安全マージン確保）
     - `[x]` USER.md を ingest_static_documents の RAG コーパスに追加
   - `[x]` **Phase 43-B: RAG 最適化 Dashboard**
-  - `[ ]` **Phase 43-C: RAG 最適化 Discord**
+  - `[x]` **Phase 43-C: RAG 最適化 Discord**
 
 ---
 
