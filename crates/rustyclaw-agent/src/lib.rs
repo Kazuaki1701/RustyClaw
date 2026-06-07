@@ -774,11 +774,49 @@ Rules:
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
+                let step2_ctx = retrieve_rag_context_local(
+                    HEARTBEAT_STEP2_RAG_QUERY,
+                    &heartbeat_config,
+                    &client,
+                    db_path,
+                    hb_top_k,
+                )
+                .await;
+                if !step2_ctx.is_empty() {
+                    system_context.push_str("## Step 2 関連記憶\n");
+                    system_context.push_str(&step2_ctx);
+                }
+                let step6_ctx = retrieve_rag_context_local(
+                    HEARTBEAT_STEP6_RAG_QUERY,
+                    &heartbeat_config,
+                    &client,
+                    db_path,
+                    hb_top_k,
+                )
+                .await;
+                if !step6_ctx.is_empty() {
+                    system_context.push_str("## Step 6 関連記憶\n");
+                    system_context.push_str(&step6_ctx);
+                }
             }
         } else if let Some(ref rag) = self.rag {
             let rag_ctx = retrieve_rag_context(effective_rag, &heartbeat_config, rag, hb_top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
+            }
+            let step2_ctx =
+                retrieve_rag_context(HEARTBEAT_STEP2_RAG_QUERY, &heartbeat_config, rag, hb_top_k)
+                    .await;
+            if !step2_ctx.is_empty() {
+                system_context.push_str("## Step 2 関連記憶\n");
+                system_context.push_str(&step2_ctx);
+            }
+            let step6_ctx =
+                retrieve_rag_context(HEARTBEAT_STEP6_RAG_QUERY, &heartbeat_config, rag, hb_top_k)
+                    .await;
+            if !step6_ctx.is_empty() {
+                system_context.push_str("## Step 6 関連記憶\n");
+                system_context.push_str(&step6_ctx);
             }
         }
 
