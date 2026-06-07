@@ -1571,6 +1571,10 @@ pub struct UnifiedRagEngine {
     store: std::sync::Mutex<InMemoryVectorStore<String>>,
     /// id → source のマッピング（DB の source 列を保持）
     source_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    /// id → parent_id のマッピング
+    parent_map: std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
+    /// id → text のマッピング（親チャンクテキストのキャッシュも含む）
+    text_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     model: rustyclaw_providers::CloudflareEmbeddingModel,
 }
 
@@ -1579,6 +1583,8 @@ impl UnifiedRagEngine {
         Self {
             store: std::sync::Mutex::new(InMemoryVectorStore::default()),
             source_map: std::sync::Mutex::new(std::collections::HashMap::new()),
+            parent_map: std::sync::Mutex::new(std::collections::HashMap::new()),
+            text_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             model,
         }
     }
@@ -1588,19 +1594,25 @@ impl UnifiedRagEngine {
         let rows = db.load_all_embeddings_with_ids()?;
         let mut store = self.store.lock().unwrap();
         let mut smap = self.source_map.lock().unwrap();
+        let mut pmap = self.parent_map.lock().unwrap();
+        let mut tmap = self.text_map.lock().unwrap();
         *store = InMemoryVectorStore::default();
         smap.clear();
-        let documents: Vec<(String, String, OneOrMany<Embedding>)> = rows
-            .into_iter()
-            .map(|(id, source, text, vec_f32)| {
-                smap.insert(id.clone(), source);
+        pmap.clear();
+        tmap.clear();
+        let mut documents: Vec<(String, String, OneOrMany<Embedding>)> = Vec::new();
+        for (id, source, text, vec_f32, parent_id) in rows {
+            smap.insert(id.clone(), source);
+            pmap.insert(id.clone(), parent_id);
+            tmap.insert(id.clone(), text.clone());
+            if !vec_f32.is_empty() {
                 let emb = Embedding {
                     document: text.clone(),
                     vec: vec_f32.iter().map(|&x| x as f64).collect(),
                 };
-                (id, text, OneOrMany::one(emb))
-            })
-            .collect();
+                documents.push((id, text, OneOrMany::one(emb)));
+            }
+        }
         store.add_documents_with_ids(documents);
         Ok(())
     }
@@ -1613,21 +1625,34 @@ impl UnifiedRagEngine {
         _session_id: Option<&str>,
         text: &str,
         vec_f32: &[f32],
+        parent_id: Option<&str>,
     ) {
-        let emb = Embedding {
-            document: text.to_string(),
-            vec: vec_f32.iter().map(|&x| x as f64).collect(),
-        };
         let mut store = self.store.lock().unwrap();
-        store.add_documents_with_ids([(id.to_string(), text.to_string(), OneOrMany::one(emb))]);
+        if !vec_f32.is_empty() {
+            let emb = Embedding {
+                document: text.to_string(),
+                vec: vec_f32.iter().map(|&x| x as f64).collect(),
+            };
+            store.add_documents_with_ids([(id.to_string(), text.to_string(), OneOrMany::one(emb))]);
+        }
         self.source_map
             .lock()
             .unwrap()
             .insert(id.to_string(), source.to_string());
+        self.parent_map
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), parent_id.map(|s| s.to_string()));
+        self.text_map
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), text.to_string());
     }
 
     /// top_k 件の (source, text, score) を返す。
     /// source は DB の source カラムから取得（source_map 経由）。
+    /// 親子関係 (parent_id) が存在する場合は自動的に親チャンクのテキストに解決し、
+    /// 重複排除を行って返す。
     pub async fn search(
         &self,
         query_text: &str,
@@ -1647,27 +1672,30 @@ impl UnifiedRagEngine {
             .await
             .map_err(|e| anyhow::anyhow!("RAG search failed: {}", e))?;
 
-        // id → text のマッピングを取得
-        let text_map: std::collections::HashMap<String, String> = {
-            let store = self.store.lock().unwrap();
-            store
-                .iter()
-                .map(|(id, (text, _))| (id.clone(), text.clone()))
-                .collect()
-        };
-
         let smap = self.source_map.lock().unwrap();
-        Ok(id_scores
-            .into_iter()
-            .filter_map(|(score, id)| {
-                let source = smap.get(&id).cloned().unwrap_or_else(|| {
-                    tracing::warn!("UnifiedRagEngine::search: source not found for id={}", id);
-                    "unknown".to_string()
-                });
-                let text = text_map.get(&id)?.clone();
-                Some((source, text, score))
-            })
-            .collect())
+        let pmap = self.parent_map.lock().unwrap();
+        let tmap = self.text_map.lock().unwrap();
+
+        let mut results = Vec::new();
+        let mut seen_texts = std::collections::HashSet::new();
+        for (score, id) in id_scores {
+            let source = smap.get(&id).cloned().unwrap_or_else(|| {
+                tracing::warn!("UnifiedRagEngine::search: source not found for id={}", id);
+                "unknown".to_string()
+            });
+            let text = if let Some(Some(parent_id)) = pmap.get(&id) {
+                tmap.get(parent_id).cloned().unwrap_or_else(|| {
+                    tmap.get(&id).cloned().unwrap_or_default()
+                })
+            } else {
+                tmap.get(&id).cloned().unwrap_or_default()
+            };
+
+            if !text.is_empty() && seen_texts.insert(text.clone()) {
+                results.push((source, text, score));
+            }
+        }
+        Ok(results)
     }
 
     pub fn len(&self) -> usize {
@@ -1749,6 +1777,96 @@ pub(crate) fn chunk_static_document(file_name: &str, content: &str) -> Vec<Strin
     chunks
 }
 
+pub struct HierarchicalChunk {
+    pub parent_text: String,
+    pub children: Vec<String>,
+}
+
+pub(crate) fn chunk_document_hierarchical(file_name: &str, content: &str) -> Vec<HierarchicalChunk> {
+    let mut sections = Vec::new();
+    let mut current_header = String::new();
+    let mut current_body = String::new();
+    let mut document_title = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("# ") {
+            document_title = trimmed.trim_start_matches("#").trim().to_string();
+        } else if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
+            let body = current_body.trim().to_string();
+            if !body.is_empty() {
+                sections.push((current_header.clone(), body));
+            }
+            current_header = trimmed.to_string();
+            current_body.clear();
+        } else {
+            current_body.push_str(line);
+            current_body.push('\n');
+        }
+    }
+    let body = current_body.trim().to_string();
+    if !body.is_empty() {
+        sections.push((current_header.clone(), body));
+    }
+
+    if sections.is_empty() && !content.trim().is_empty() {
+        sections.push((String::new(), content.trim().to_string()));
+    }
+
+    let mut result = Vec::new();
+    for (header, body) in sections {
+        let parent_title = if header.is_empty() {
+            if document_title.is_empty() {
+                file_name.to_string()
+            } else {
+                format!("{} > General", document_title)
+            }
+        } else {
+            if document_title.is_empty() {
+                format!("{} > {}", file_name, header)
+            } else {
+                format!("{} > {} > {}", file_name, document_title, header)
+            }
+        };
+        let parent_text = format!("[{}]\n{}", parent_title, body);
+
+        let mut children = Vec::new();
+        let mut current_child = String::new();
+        for line in body.lines() {
+            let line_trimmed = line.trim();
+            if line_trimmed.is_empty() {
+                continue;
+            }
+
+            if line_trimmed.starts_with("- ") || line_trimmed.starts_with("* ") {
+                if !current_child.is_empty() {
+                    children.push(format!("[{}]\n{}", parent_title, current_child.trim()));
+                    current_child.clear();
+                }
+                children.push(format!("[{}]\n{}", parent_title, line_trimmed));
+            } else {
+                if !current_child.is_empty() {
+                    current_child.push('\n');
+                }
+                current_child.push_str(line);
+                if current_child.len() >= 200 {
+                    children.push(format!("[{}]\n{}", parent_title, current_child.trim()));
+                    current_child.clear();
+                }
+            }
+        }
+        if !current_child.is_empty() {
+            children.push(format!("[{}]\n{}", parent_title, current_child.trim()));
+        }
+
+        result.push(HierarchicalChunk {
+            parent_text,
+            children,
+        });
+    }
+    result
+}
+
 pub(crate) enum EmbedClientKind {
     Remote(rustyclaw_providers::CloudflareEmbeddingClient),
     Local(rustyclaw_providers::LocalEmbeddingClient),
@@ -1785,7 +1903,7 @@ fn make_embed_client(config: &Config) -> Option<EmbedClientKind> {
     ))
 }
 
-/// workspace_dir 内の AGENTS.md および skills/*.md をチャンク化し、
+/// workspace_dir 内の AGENTS.md, USER.md, skills/*.md, memory/logs/*.md, memory/summaries/*.md, patrol/findings.md をチャンク化し、
 /// ハッシュ差分がある場合のみ memory.db に embedding を保存する。Fail-open。
 pub async fn ingest_static_documents(
     workspace_dir: &std::path::Path,
@@ -1814,8 +1932,10 @@ pub async fn ingest_static_documents(
         tracing::warn!("ingest_static_documents: migration error: {}", e);
     }
 
-    // スキャン対象ファイル: AGENTS.md + USER.md + skills/**/*.md (1階層サブディレクトリを含む)
+    // スキャン対象ファイル: AGENTS.md + USER.md + skills/**/*.md + memory/logs/*.md (直近14日) + memory/summaries/*.md + patrol/findings.md
     let mut files = vec![workspace_dir.join("AGENTS.md"), workspace_dir.join("USER.md")];
+    
+    // skills
     let skills_dir = workspace_dir.join("skills");
     if let Ok(entries) = std::fs::read_dir(&skills_dir) {
         let mut skill_files: Vec<_> = Vec::new();
@@ -1824,7 +1944,6 @@ pub async fn ingest_static_documents(
             if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
                 skill_files.push(path);
             } else if path.is_dir() {
-                // skills/<name>/*.md を1階層掘り下げてスキャン (ISSUE-26)
                 if let Ok(sub_entries) = std::fs::read_dir(&path) {
                     for sub_entry in sub_entries.flatten() {
                         let sub_path = sub_entry.path();
@@ -1841,13 +1960,54 @@ pub async fn ingest_static_documents(
         files.extend(skill_files);
     }
 
+    // memory/logs (直近14日間のみインジェスト)
+    let logs_dir = workspace_dir.join("memory").join("logs");
+    let now_utc = chrono::Utc::now().date_naive();
+    if let Ok(entries) = std::fs::read_dir(&logs_dir) {
+        let mut log_files = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if let Ok(date) = chrono::NaiveDate::parse_from_str(stem, "%Y-%m-%d") {
+                        if (now_utc - date).num_days() <= 14 {
+                            log_files.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        log_files.sort();
+        files.extend(log_files);
+    }
+
+    // memory/summaries
+    let summaries_dir = workspace_dir.join("memory").join("summaries");
+    if let Ok(entries) = std::fs::read_dir(&summaries_dir) {
+        let mut summary_files = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                summary_files.push(path);
+            }
+        }
+        summary_files.sort();
+        files.extend(summary_files);
+    }
+
+    // patrol/findings.md
+    let findings_path = workspace_dir.join("patrol").join("findings.md");
+    if findings_path.is_file() {
+        files.push(findings_path);
+    }
+
     use sha2::{Digest, Sha256};
     for file_path in files {
         let content = match std::fs::read_to_string(&file_path) {
             Ok(c) => c,
             Err(_) => continue,
         };
-        // workspace_dir からの相対パスをキーにしてサブディレクトリ間の衝突を防ぐ (ISSUE-26)
+        // workspace_dir からの相対パスをキーにする
         let file_name: String = file_path
             .strip_prefix(workspace_dir)
             .ok()
@@ -1879,55 +2039,103 @@ pub async fn ingest_static_documents(
             "ingest_static_documents: '{}' changed, ingesting...",
             file_name
         );
-        let chunks = chunk_static_document(&file_name, &content);
-        if chunks.is_empty() {
-            continue;
-        }
+
+        let is_hierarchical = file_name == "AGENTS.md"
+            || file_name == "USER.md"
+            || file_name.starts_with("skills/")
+            || file_name.starts_with("memory/logs/")
+            || file_name.starts_with("memory/summaries/");
 
         let source_id = format!("doc:{}", file_name);
-        if let Err(e) = db.delete_embeddings_by_source(&source_id) {
-            tracing::warn!(
-                "ingest_static_documents: delete error for '{}': {}",
-                file_name,
-                e
-            );
-            continue;
-        }
 
-        let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
-        match client.embed(&text_refs).await {
-            Ok(embeddings) => {
-                if embeddings.len() != chunks.len() {
-                    tracing::warn!(
-                        "ingest_static_documents: chunk/embedding count mismatch ({} vs {}) for '{}', proceeding with zip",
-                        chunks.len(),
-                        embeddings.len(),
-                        file_name
-                    );
-                }
-                let saved = embeddings.len().min(chunks.len());
-                for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-                    let id = format!("doc-{}-{}", file_name.replace(['.', '/', '\\'], "_"), i);
-                    if let Err(e) = db.upsert_embedding(&id, &source_id, None, chunk, emb) {
-                        tracing::warn!("ingest_static_documents: upsert error: {}", e);
-                    }
-                }
-                tracing::info!(
-                    "ingest_static_documents: ingested {} chunks from '{}'",
-                    saved,
-                    file_name
-                );
-            }
-            Err(e) => {
+        if is_hierarchical {
+            let h_chunks = chunk_document_hierarchical(&file_name, &content);
+            if let Err(e) = db.delete_embeddings_by_source(&source_id) {
                 tracing::warn!(
-                    "ingest_static_documents: embed API error for '{}': {}",
+                    "ingest_static_documents: delete error for '{}': {}",
                     file_name,
                     e
                 );
-                // ハッシュを空にリセットして次回再試行を促す
-                let _ = db.check_and_update_doc_state(&file_name, "");
+                continue;
+            }
+
+            for (p_idx, h_chunk) in h_chunks.iter().enumerate() {
+                let parent_id = format!("doc-{}-p-{}", file_name.replace(['.', '/', '\\'], "_"), p_idx);
+                // 親チャンクを upsert (ベクトルは空、parent_id も None)
+                if let Err(e) = db.upsert_embedding(&parent_id, &source_id, None, &h_chunk.parent_text, &[], None) {
+                    tracing::warn!("ingest_static_documents: parent upsert error: {}", e);
+                    continue;
+                }
+
+                if !h_chunk.children.is_empty() {
+                    let text_refs: Vec<&str> = h_chunk.children.iter().map(|s| s.as_str()).collect();
+                    match client.embed(&text_refs).await {
+                        Ok(embeddings) => {
+                            for (c_idx, (child_text, emb)) in h_chunk.children.iter().zip(embeddings.iter()).enumerate() {
+                                let child_id = format!("doc-{}-c-{}-{}", file_name.replace(['.', '/', '\\'], "_"), p_idx, c_idx);
+                                if let Err(e) = db.upsert_embedding(&child_id, &source_id, None, child_text, emb, Some(&parent_id)) {
+                                    tracing::warn!("ingest_static_documents: child upsert error: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "ingest_static_documents: child embed API error for '{}': {}",
+                                file_name,
+                                e
+                            );
+                            let _ = db.check_and_update_doc_state(&file_name, "");
+                        }
+                    }
+                }
+            }
+        } else {
+            // フラットチャンキング
+            let chunks = chunk_static_document(&file_name, &content);
+            if chunks.is_empty() {
+                continue;
+            }
+
+            if let Err(e) = db.delete_embeddings_by_source(&source_id) {
+                tracing::warn!(
+                    "ingest_static_documents: delete error for '{}': {}",
+                    file_name,
+                    e
+                );
+                continue;
+            }
+
+            let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
+            match client.embed(&text_refs).await {
+                Ok(embeddings) => {
+                    let saved = embeddings.len().min(chunks.len());
+                    for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                        let id = format!("doc-{}-{}", file_name.replace(['.', '/', '\\'], "_"), i);
+                        if let Err(e) = db.upsert_embedding(&id, &source_id, None, chunk, emb, None) {
+                            tracing::warn!("ingest_static_documents: upsert error: {}", e);
+                        }
+                    }
+                    tracing::info!(
+                        "ingest_static_documents: ingested {} chunks from '{}'",
+                        saved,
+                        file_name
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "ingest_static_documents: embed API error for '{}': {}",
+                        file_name,
+                        e
+                    );
+                    let _ = db.check_and_update_doc_state(&file_name, "");
+                }
             }
         }
+    }
+
+    // 古いログ (memory/logs/*.md) embedding のクレンジング
+    if let Err(e) = db.delete_old_log_embeddings(14) {
+        tracing::warn!("ingest_static_documents: log TTL cleanup error: {}", e);
     }
 }
 
@@ -1963,20 +2171,11 @@ pub async fn ingest_memory_md(
             return;
         }
     };
-    let chunks = chunk_memory_md(&content);
-    if chunks.is_empty() {
+    let h_chunks = chunk_document_hierarchical("MEMORY.md", &content);
+    if h_chunks.is_empty() {
         tracing::debug!("ingest_memory_md: no chunks found in MEMORY.md");
         return;
     }
-
-    let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
-    let embeddings = match client.embed(&text_refs).await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("ingest_memory_md: embedding API error: {}", e);
-            return;
-        }
-    };
 
     let db = match rustyclaw_storage::DbManager::new(db_path) {
         Ok(d) => d,
@@ -1985,29 +2184,44 @@ pub async fn ingest_memory_md(
             return;
         }
     };
-    if embeddings.len() != chunks.len() {
-        tracing::warn!(
-            "ingest_memory_md: chunk/embedding count mismatch ({} vs {}), proceeding with zip",
-            chunks.len(),
-            embeddings.len()
-        );
-    }
     if let Err(e) = db.delete_embeddings_by_source("memory") {
         tracing::warn!("ingest_memory_md: failed to delete old embeddings: {}", e);
         return;
     }
-    for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-        let id = format!("memory::{}", i);
-        if let Err(e) = db.upsert_embedding(&id, "memory", None, chunk, emb) {
-            tracing::warn!("ingest_memory_md: failed to upsert {}: {}", id, e);
+
+    for (p_idx, h_chunk) in h_chunks.iter().enumerate() {
+        let parent_id = format!("memory-p-{}", p_idx);
+        if let Err(e) = db.upsert_embedding(&parent_id, "memory", None, &h_chunk.parent_text, &[], None) {
+            tracing::warn!("ingest_memory_md: parent upsert error: {}", e);
+            continue;
         }
         if let Some(rag) = rag_engine {
-            rag.add_one(&id, "memory", None, chunk, emb);
+            rag.add_one(&parent_id, "memory", None, &h_chunk.parent_text, &[], None);
+        }
+
+        if !h_chunk.children.is_empty() {
+            let text_refs: Vec<&str> = h_chunk.children.iter().map(|s| s.as_str()).collect();
+            match client.embed(&text_refs).await {
+                Ok(embeddings) => {
+                    for (c_idx, (child_text, emb)) in h_chunk.children.iter().zip(embeddings.iter()).enumerate() {
+                        let child_id = format!("memory-c-{}-{}", p_idx, c_idx);
+                        if let Err(e) = db.upsert_embedding(&child_id, "memory", None, child_text, emb, Some(&parent_id)) {
+                            tracing::warn!("ingest_memory_md: child upsert error: {}", e);
+                        }
+                        if let Some(rag) = rag_engine {
+                            rag.add_one(&child_id, "memory", None, child_text, emb, Some(&parent_id));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("ingest_memory_md: child embed API error: {}", e);
+                }
+            }
         }
     }
     tracing::info!(
-        "ingest_memory_md: ingested {} chunks from MEMORY.md",
-        chunks.len()
+        "ingest_memory_md: ingested {} hierarchical chunks from MEMORY.md",
+        h_chunks.len()
     );
 }
 
@@ -2050,6 +2264,7 @@ pub(crate) async fn ingest_session_summary(
         Some(session_id),
         &text_short,
         &embeddings[0],
+        None,
     ) {
         tracing::warn!("ingest_session_summary: upsert error: {}", e);
         return;
@@ -2061,6 +2276,7 @@ pub(crate) async fn ingest_session_summary(
             Some(session_id),
             &text_short,
             &embeddings[0],
+            None,
         );
     }
     let ttl_days = config
@@ -3232,7 +3448,7 @@ Keep it short.\n\
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("memory.db");
         let db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
-        db.upsert_embedding("memory::0", "memory", None, "大森駅周辺", &[1.0f32; 4])
+        db.upsert_embedding("memory::0", "memory", None, "大森駅周辺", &[1.0f32; 4], None)
             .unwrap();
         db.upsert_embedding(
             "session::s1",
@@ -3240,6 +3456,7 @@ Keep it short.\n\
             Some("s1"),
             "RAG 検証完了",
             &[0.5f32; 4],
+            None,
         )
         .unwrap();
 
@@ -3249,6 +3466,61 @@ Keep it short.\n\
         let engine = UnifiedRagEngine::new(model);
         engine.rebuild_from_db(&db).unwrap();
         assert_eq!(engine.len(), 2);
+    }
+
+    #[test]
+    fn test_hierarchical_chunking_and_retrieval() {
+        // 1. chunk_document_hierarchical の検証
+        let md = "# Doc Title\n\n## Section A\n- bullet 1\n- bullet 2\n\n## Section B\n- bullet 3";
+        let h_chunks = chunk_document_hierarchical("test.md", md);
+        
+        assert_eq!(h_chunks.len(), 2);
+        assert_eq!(h_chunks[0].children.len(), 2);
+        assert_eq!(h_chunks[1].children.len(), 1);
+        assert!(h_chunks[0].parent_text.contains("Section A"));
+        assert!(h_chunks[0].children[0].contains("bullet 1"));
+
+        // 2. DB を経由した親子解決の検証
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("memory.db");
+        let db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
+
+        let parent_id = "p1";
+        let child_id1 = "c1";
+        let child_id2 = "c2";
+        let source_id = "doc:test.md";
+
+        // 親チャンク (embeddingは空)
+        db.upsert_embedding(parent_id, source_id, None, "PARENT TEXT SECTION A", &[], None).unwrap();
+        // 子チャンク (類似検索用embeddingを付与)
+        db.upsert_embedding(child_id1, source_id, None, "CHILD BULLET 1", &[1.0, 0.0], Some(parent_id)).unwrap();
+        db.upsert_embedding(child_id2, source_id, None, "CHILD BULLET 2", &[0.9, 0.1], Some(parent_id)).unwrap();
+
+        // 類似検索を実行 (クエリ [1.0, 0.0] -> c1, c2 が近い)
+        let results = db.search_similar_with_source(&[1.0, 0.0], 5, 0.5).unwrap();
+        
+        // 2つの子チャンクがヒットするが、resolved_text はいずれも "PARENT TEXT SECTION A" になっていること
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].1, "PARENT TEXT SECTION A");
+        assert_eq!(results[1].1, "PARENT TEXT SECTION A");
+
+        // 3. UnifiedRagEngine での検索と重複排除の検証
+        let client = rustyclaw_providers::CloudflareEmbeddingClient::new("http://127.0.0.1:1", "dummy");
+        let model = rustyclaw_providers::CloudflareEmbeddingModel::new(client, 2);
+        let engine = UnifiedRagEngine::new(model);
+        engine.rebuild_from_db(&db).unwrap();
+
+        // engine にはベクトルを持つ子チャンクの 2 件のみがインデックス登録される (親は embedding が空なので除外)
+        assert_eq!(engine.len(), 2);
+
+        // クエリ検索 (ダミーの HTTP クライアントを使用するため、mocking されている top_n_ids をテストできるように in-memory 検索で検証)
+        let smap = engine.source_map.lock().unwrap();
+        let pmap = engine.parent_map.lock().unwrap();
+        let tmap = engine.text_map.lock().unwrap();
+
+        assert_eq!(smap.len(), 3); // p1, c1, c2
+        assert_eq!(pmap.get("c1").cloned().flatten().unwrap(), "p1");
+        assert_eq!(tmap.get("p1").unwrap().as_str(), "PARENT TEXT SECTION A");
     }
 
     #[test]
