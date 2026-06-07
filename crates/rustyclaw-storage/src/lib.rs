@@ -362,6 +362,10 @@ impl DbManager {
         threshold: f32,
         half_life_days: f64,
     ) -> Result<Vec<(String, String, f64)>> {
+        if half_life_days <= 0.0 {
+            return Ok(vec![]);
+        }
+        let threshold = threshold as f64;
         let now_utc = chrono::Utc::now();
         let mut stmt = self
             .conn
@@ -384,7 +388,7 @@ impl DbManager {
             .filter_map(|(source, text, blob, created_at_str)| {
                 let emb = Self::deserialize_embedding(&blob);
                 let sim = Self::cosine_similarity(query_vec, &emb) as f64;
-                if sim < threshold as f64 {
+                if sim < threshold {
                     return None;
                 }
                 let age_days = chrono::DateTime::parse_from_rfc3339(&created_at_str)
