@@ -1259,13 +1259,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 .context("Failed to load session history")?
         };
 
-        // discord_top_k 優先、未設定時はグローバル top_k にフォールバック
+        // channel_top_k 優先、未設定時はグローバル top_k にフォールバック
         let top_k = self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
-        let discord_top_k = self
+        let channel_top_k = self
             .config
             .embedding
             .as_ref()
-            .and_then(|e| e.discord_top_k)
+            .and_then(|e| e.channel_top_k)
             .unwrap_or(top_k);
 
         // RAG クエリ: 直近 N ターン会話 + 現在メッセージ（cron: は raw_user_message のみ）
@@ -1285,13 +1285,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             if let Some(client) = make_embed_client(&self.config) {
                 let db_path = workspace_dir.join("memory.db");
                 let rag_ctx =
-                    retrieve_rag_context_local(&rag_query, &self.config, &client, &db_path, discord_top_k).await;
+                    retrieve_rag_context_local(&rag_query, &self.config, &client, &db_path, channel_top_k).await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(&rag_query, &self.config, rag, discord_top_k).await;
+            let rag_ctx = retrieve_rag_context(&rag_query, &self.config, rag, channel_top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
