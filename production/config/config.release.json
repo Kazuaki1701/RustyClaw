@@ -286,9 +286,10 @@
     "use_local_embedding": true,
     "api_endpoint": "http://192.168.1.110:1234/v1/embeddings",
     "api_key": "lm-studio",
-    "model": "text-embedding-bge-m3",
+    "model": "intfloat/multilingual-e5-small",
     "dimensions": 384,
     "top_k": 5,
+    "heartbeat_top_k": 2,
     "similarity_threshold": 0.60,
     "session_summary_ttl_days": 7
   },

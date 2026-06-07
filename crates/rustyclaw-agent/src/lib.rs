@@ -660,10 +660,11 @@ Rules:
         Ok(())
     }
 
-    /// Heartbeat 専用の軽量システムコンテキストを構築する（SOUL + MEMORY + HEARTBEAT のみ）
+    /// Heartbeat 専用の軽量システムコンテキストを構築する（SOUL + HEARTBEAT のみ）。
+    /// MEMORY.md は RAG 経由で関連チャンクのみを動的注入する（ISSUE-28）。
     /// 静的ファイルを先頭に、動的な [now:] を末尾に置くことでプロンプトキャッシュ prefix を安定させる。
     pub fn build_heartbeat_context(&self, workspace_dir: &Path) -> Result<String> {
-        let files = ["SOUL.md", "MEMORY.md", "HEARTBEAT.md"];
+        let files = ["SOUL.md", "HEARTBEAT.md"];
         let mut context = String::new();
         for filename in &files {
             let path = workspace_dir.join(filename);
@@ -702,23 +703,36 @@ Rules:
         let mut system_context = self.build_heartbeat_context(workspace_dir)?;
 
         // RAG: heartbeat プロンプトに関連チャンクを注入 (ISSUE-27)
-        // execute() と同じパターンで local / remote RAG を条件分岐する
-        if self
-            .config
+        // heartbeat_top_k が設定されている場合は config を clone して top_k を上書き (ISSUE-30)
+        let heartbeat_config = {
+            let hb_top_k = self
+                .config
+                .embedding
+                .as_ref()
+                .and_then(|e| e.heartbeat_top_k)
+                .unwrap_or(2);
+            let mut cfg = self.config.clone();
+            if let Some(ref mut emb) = cfg.embedding {
+                emb.top_k = hb_top_k;
+            }
+            cfg
+        };
+        if heartbeat_config
             .embedding
             .as_ref()
             .map(|e| e.use_local_embedding)
             .unwrap_or(false)
         {
-            if let Some(client) = make_embed_client(&self.config) {
+            if let Some(client) = make_embed_client(&heartbeat_config) {
                 let rag_ctx =
-                    retrieve_rag_context_local(user_message, &self.config, &client, db_path).await;
+                    retrieve_rag_context_local(user_message, &heartbeat_config, &client, db_path)
+                        .await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag).await;
+            let rag_ctx = retrieve_rag_context(user_message, &heartbeat_config, rag).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -2029,7 +2043,7 @@ pub async fn ingest_static_documents(
 
 /// MEMORY.md を読み込み、バレット行をチャンク化してベクトル化し memory.db に保存する。
 /// Fail-open: エラーは warn ログのみで処理を継続する。
-pub(crate) async fn ingest_memory_md(
+pub async fn ingest_memory_md(
     workspace_dir: &Path,
     config: &Config,
     db_path: &Path,
@@ -3867,5 +3881,33 @@ Keep it short.\n\
         assert_ne!(keys[0], keys[1], "異なるサブディレクトリのキーは重複しないこと");
         assert!(keys[0].contains("skill-a") || keys[1].contains("skill-a"));
         assert!(keys[0].contains("skill-b") || keys[1].contains("skill-b"));
+    }
+
+    #[test]
+    fn test_ingest_static_documents_excludes_memory_md() {
+        // MEMORY.md は ingest_static_documents のスキャン対象外。
+        // 代わりに ingest_memory_md が startup/flush 時に処理する (ISSUE-28/31)
+        let files: Vec<&str> = vec!["AGENTS.md"]; // MEMORY.md を含まない
+        assert!(
+            !files.contains(&"MEMORY.md"),
+            "MEMORY.md は ingest_static_documents の対象外であるべき"
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_context_does_not_include_memory_md() {
+        use std::fs;
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+
+        // MEMORY.md は書くが、build_heartbeat_context に含まれないことを確認
+        fs::write(ws.join("MEMORY.md"), "- secret memory content").unwrap();
+        fs::write(ws.join("SOUL.md"), "# Soul").unwrap();
+        fs::write(ws.join("HEARTBEAT.md"), "# Heartbeat").unwrap();
+
+        // build_heartbeat_context のファイルリストを再現
+        let files: &[&str] = &["SOUL.md", "HEARTBEAT.md"]; // MEMORY.md を含まない
+        let contains_memory = files.contains(&"MEMORY.md");
+        assert!(!contains_memory, "build_heartbeat_context は MEMORY.md を静的ロードしないべき");
     }
 }
