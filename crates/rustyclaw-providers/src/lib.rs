@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use rig_core::OneOrMany;
+use rig_core::client::CompletionClient;
+use rig_core::completion::CompletionModel;
+use rig_core::completion::CompletionRequest;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
@@ -324,16 +328,45 @@ pub trait LlmProvider: Send + Sync {
 }
 
 pub struct OpenAiCompatProvider {
-    client: reqwest::Client,
+    client: rig_core::providers::openai::CompletionsClient,
     model: LlmModelConfig,
 }
 
 impl OpenAiCompatProvider {
     pub fn new(model: LlmModelConfig) -> Self {
-        let client = reqwest::Client::builder()
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let mut headers = HeaderMap::new();
+
+        if let Some(gateway_id) = &model.cf_aig_gateway_id {
+            if let Ok(val) = HeaderValue::from_str(gateway_id) {
+                headers.insert("cf-aig-gateway-id", val);
+            }
+            if model.api_base_url.contains("gateway.ai.cloudflare.com") {
+                let auth_header = format!("Bearer {}", model.api_key);
+                if let Ok(val) = HeaderValue::from_str(&auth_header) {
+                    headers.insert("cf-aig-authorization", val);
+                }
+            }
+        } else if model.api_base_url.contains("gateway.ai.cloudflare.com") {
+            let auth_header = format!("Bearer {}", model.api_key);
+            if let Ok(val) = HeaderValue::from_str(&auth_header) {
+                headers.insert("cf-aig-authorization", val);
+            }
+        }
+
+        let reqwest_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(900))
+            .default_headers(headers)
             .build()
             .expect("Failed to build reqwest HTTP client with rustls");
+
+        let client = rig_core::providers::openai::CompletionsClient::builder()
+            .api_key(&model.api_key)
+            .base_url(&model.api_base_url)
+            .http_client(reqwest_client)
+            .build()
+            .expect("Failed to build rig CompletionsClient");
+
         Self { client, model }
     }
 
@@ -347,92 +380,6 @@ impl OpenAiCompatProvider {
     }
 }
 
-#[derive(Debug, Serialize)]
-struct OpenAiMessage<'a> {
-    role: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<&'a [ToolCall]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<&'a str>,
-}
-
-#[derive(Debug, Serialize)]
-struct OpenAiTool {
-    r#type: String, // always "function"
-    function: OpenAiFunction,
-}
-
-#[derive(Debug, Serialize)]
-struct OpenAiFunction {
-    name: String,
-    description: String,
-    parameters: serde_json::Value,
-}
-
-#[derive(Debug, Serialize)]
-struct OpenAiRequest<'a> {
-    model: &'a str,
-    messages: Vec<OpenAiMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<OpenAiTool>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiUsage {
-    #[serde(default)]
-    prompt_tokens: u32,
-    #[serde(default)]
-    completion_tokens: u32,
-    #[serde(default)]
-    total_tokens: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiResponse {
-    choices: Vec<OpenAiChoice>,
-    #[serde(default)]
-    usage: Option<OpenAiUsage>,
-    #[serde(default)]
-    model: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiChoice {
-    message: OpenAiMessageResponse,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiMessageResponse {
-    role: String,
-    content: Option<String>,
-    tool_calls: Option<Vec<ToolCall>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiStreamResponse {
-    choices: Vec<OpenAiStreamChoice>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiStreamChoice {
-    delta: OpenAiDelta,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiDelta {
-    content: Option<String>,
-}
-
 #[async_trait]
 impl LlmProvider for OpenAiCompatProvider {
     async fn complete(
@@ -441,140 +388,104 @@ impl LlmProvider for OpenAiCompatProvider {
         tools: &[ToolDef],
         opts: &CompletionOptions,
     ) -> std::result::Result<LlmResponse, ProviderError> {
-        let url = format!("{}/chat/completions", self.model.api_base_url);
+        let resolved_model = self.resolve_model(&opts.model);
+        let rig_messages = provider_messages_to_rig(messages);
+        let chat_history = if rig_messages.is_empty() {
+            OneOrMany::one(rig_core::completion::Message::user(""))
+        } else {
+            OneOrMany::many(rig_messages).unwrap()
+        };
 
-        let openai_messages: Vec<OpenAiMessage> = messages
+        let rig_tools: Vec<rig_core::completion::ToolDefinition> = tools
             .iter()
-            .map(|msg| OpenAiMessage {
-                role: &msg.role,
-                content: if msg.content.is_empty() && msg.tool_calls.is_some() {
-                    None
-                } else {
-                    Some(&msg.content)
-                },
-                name: msg.name.as_deref(),
-                tool_calls: msg.tool_calls.as_deref(),
-                tool_call_id: msg.tool_call_id.as_deref(),
+            .map(|t| rig_core::completion::ToolDefinition {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                parameters: t.parameters.clone(),
             })
             .collect();
 
-        let openai_tools = if tools.is_empty() {
-            None
-        } else {
-            Some(
-                tools
-                    .iter()
-                    .map(|t| OpenAiTool {
+        let model = self.client.completion_model(&resolved_model);
+
+        let request = CompletionRequest {
+            preamble: None,
+            chat_history,
+            tools: rig_tools,
+            temperature: opts.temperature.map(|t| t as f64),
+            max_tokens: opts.max_tokens.map(|t| t as u64),
+            documents: vec![],
+            model: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        tracing::info!("Sending LLM request to OpenAI compat API (via rig-core) for model: {}", resolved_model);
+
+        let response = model
+            .completion(request)
+            .await
+            .map_err(|e| {
+                let err_str = e.to_string();
+                if err_str.contains("insufficient_quota") || err_str.contains("rate_limit") || err_str.contains("429") {
+                    let err = ProviderError::RateLimit(err_str);
+                    let provider_id = resolve_provider_id(&self.model);
+                    set_provider_cooldown_from_error(&provider_id, &err);
+                    err
+                } else {
+                    ProviderError::ExecutionFailed(err_str)
+                }
+            })?;
+
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        use rig_core::completion::message::AssistantContent;
+        for c in response.choice.iter() {
+            match c {
+                AssistantContent::Text(t) => {
+                    content.push_str(&t.text);
+                }
+                AssistantContent::ToolCall(tc) => {
+                    tool_calls.push(ToolCall {
+                        id: tc.id.clone(),
                         r#type: "function".to_string(),
-                        function: OpenAiFunction {
-                            name: t.name.clone(),
-                            description: t.description.clone(),
-                            parameters: t.parameters.clone(),
+                        function: FunctionCall {
+                            name: tc.function.name.clone(),
+                            arguments: tc.function.arguments.to_string(),
                         },
-                    })
-                    .collect(),
-            )
-        };
-
-        let resolved_model = self.resolve_model(&opts.model);
-        let request_body = OpenAiRequest {
-            model: &resolved_model,
-            messages: openai_messages,
-            max_tokens: opts.max_tokens.or(self.model.max_tokens),
-            temperature: opts.temperature.or(self.model.temperature),
-            stream: None,
-            tools: openai_tools,
-        };
-
-        tracing::info!("Sending LLM request to OpenAI compat API at {}", url);
-
-        let mut req = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.model.api_key));
-        if let Some(gateway_id) = &self.model.cf_aig_gateway_id {
-            req = req.header("cf-aig-gateway-id", gateway_id);
-            if url.contains("gateway.ai.cloudflare.com") {
-                req = req.header(
-                    "cf-aig-authorization",
-                    format!("Bearer {}", self.model.api_key),
-                );
+                    });
+                }
+                _ => {}
             }
-        } else if url.contains("gateway.ai.cloudflare.com") {
-            req = req.header(
-                "cf-aig-authorization",
-                format!("Bearer {}", self.model.api_key),
-            );
         }
+        let tool_calls_opt = if tool_calls.is_empty() { None } else { Some(tool_calls) };
 
-        let response = req
-            .json(&request_body)
-            .send()
-            .await
-            .context("HTTP POST request failed during LLM call")?;
+        let prompt_tokens = response.usage.input_tokens as u32;
+        let completion_tokens = response.usage.output_tokens as u32;
+        let total_tokens = response.usage.total_tokens as u32;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                || error_text.contains("insufficient_quota")
-            {
-                let err = ProviderError::RateLimit(error_text);
-                let provider_id = resolve_provider_id(&self.model);
-                set_provider_cooldown_from_error(&provider_id, &err);
-                return Err(err);
-            }
-            return Err(ProviderError::ExecutionFailed(format!(
-                "LLM API returned error status {}: {}",
-                status, error_text
-            )));
-        }
-
-        let neurons_from_header = response
-            .headers()
-            .get("cf-ai-neurons")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<f64>().ok());
-        if let Some(neurons) = neurons_from_header {
-            tracing::info!("CF Neurons header received: {}", neurons);
-            record_neuron_usage(neurons);
-        }
-
-        let resp_data: OpenAiResponse = response
-            .json()
-            .await
-            .context("Failed to parse LLM JSON response")?;
-
-        if neurons_from_header.is_none() && url.contains("cloudflare.com")
-            && let Some(usage) = &resp_data.usage
-            && (usage.prompt_tokens > 0 || usage.completion_tokens > 0)
+        if self.model.api_base_url.contains("cloudflare.com")
+            && (prompt_tokens > 0 || completion_tokens > 0)
         {
-            let model_name = resp_data.model.as_deref().unwrap_or(&resolved_model);
-            let neurons =
-                calc_cf_neurons(model_name, usage.prompt_tokens, usage.completion_tokens);
+            let neurons = calc_cf_neurons(&resolved_model, prompt_tokens, completion_tokens);
             tracing::info!(
                 "CF Neurons calculated: {:.2} (prompt={}, completion={}, model={})",
                 neurons,
-                usage.prompt_tokens,
-                usage.completion_tokens,
-                model_name
+                prompt_tokens,
+                completion_tokens,
+                resolved_model
             );
             record_neuron_usage(neurons);
         }
 
-        let choice = resp_data
-            .choices
-            .first()
-            .context("LLM returned empty choices in response")?;
-
         let res = LlmResponse {
-            content: choice.message.content.clone().unwrap_or_default(),
-            role: choice.message.role.clone(),
-            tool_calls: choice.message.tool_calls.clone(),
-            prompt_tokens: resp_data.usage.as_ref().map(|u| u.prompt_tokens),
-            completion_tokens: resp_data.usage.as_ref().map(|u| u.completion_tokens),
-            total_tokens: resp_data.usage.as_ref().map(|u| u.total_tokens),
-            model_used: resp_data.model.clone(),
+            content,
+            role: "assistant".to_string(),
+            tool_calls: tool_calls_opt,
+            prompt_tokens: Some(prompt_tokens),
+            completion_tokens: Some(completion_tokens),
+            total_tokens: Some(total_tokens),
+            model_used: Some(resolved_model.clone()),
             provider_id: Some(resolve_provider_id(&self.model)),
         };
 
@@ -599,95 +510,49 @@ impl LlmProvider for OpenAiCompatProvider {
         Pin<Box<dyn Stream<Item = std::result::Result<StreamChunk, ProviderError>> + Send>>,
         ProviderError,
     > {
-        let url = format!("{}/chat/completions", self.model.api_base_url);
-
-        let openai_messages: Vec<OpenAiMessage> = messages
-            .iter()
-            .map(|msg| OpenAiMessage {
-                role: &msg.role,
-                content: if msg.content.is_empty() && msg.tool_calls.is_some() {
-                    None
-                } else {
-                    Some(&msg.content)
-                },
-                name: msg.name.as_deref(),
-                tool_calls: msg.tool_calls.as_deref(),
-                tool_call_id: msg.tool_call_id.as_deref(),
-            })
-            .collect();
-
         let resolved_model = self.resolve_model(&opts.model);
-        let request_body = OpenAiRequest {
-            model: &resolved_model,
-            messages: openai_messages,
-            max_tokens: opts.max_tokens.or(self.model.max_tokens),
-            temperature: opts.temperature.or(self.model.temperature),
-            stream: Some(true),
-            tools: None,
+        let rig_messages = provider_messages_to_rig(messages);
+        let chat_history = if rig_messages.is_empty() {
+            OneOrMany::one(rig_core::completion::Message::user(""))
+        } else {
+            OneOrMany::many(rig_messages).unwrap()
+        };
+
+        let model = self.client.completion_model(&resolved_model);
+
+        let request = CompletionRequest {
+            preamble: None,
+            chat_history,
+            tools: vec![],
+            temperature: opts.temperature.map(|t| t as f64),
+            max_tokens: opts.max_tokens.map(|t| t as u64),
+            documents: vec![],
+            model: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
         };
 
         tracing::info!(
-            "Sending streaming LLM request to OpenAI compat API at {}",
-            url
+            "Sending streaming LLM request to OpenAI compat API (via rig-core) for model: {}",
+            resolved_model
         );
 
-        let mut req = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.model.api_key));
-        if let Some(gateway_id) = &self.model.cf_aig_gateway_id {
-            req = req.header("cf-aig-gateway-id", gateway_id);
-            if url.contains("gateway.ai.cloudflare.com") {
-                req = req.header(
-                    "cf-aig-authorization",
-                    format!("Bearer {}", self.model.api_key),
-                );
-            }
-        } else if url.contains("gateway.ai.cloudflare.com") {
-            req = req.header(
-                "cf-aig-authorization",
-                format!("Bearer {}", self.model.api_key),
-            );
-        }
-
-        let response = req
-            .json(&request_body)
-            .send()
+        let mut res = model
+            .stream(request)
             .await
-            .context("HTTP POST stream request failed during LLM call")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                || error_text.contains("insufficient_quota")
-            {
-                let err = ProviderError::RateLimit(error_text);
-                let provider_id = resolve_provider_id(&self.model);
-                set_provider_cooldown_from_error(&provider_id, &err);
-                return Err(err);
-            }
-            return Err(ProviderError::ExecutionFailed(format!(
-                "LLM Stream API returned error status {}: {}",
-                status, error_text
-            )));
-        }
-
-        if let Some(neurons_header) = response.headers().get("cf-ai-neurons") {
-            if let Ok(neurons_str) = neurons_header.to_str() {
-                tracing::info!("CF Neurons header received (stream): {}", neurons_str);
-                if let Ok(neurons) = neurons_str.parse::<f64>() {
-                    record_neuron_usage(neurons);
+            .map_err(|e| {
+                let err_str = e.to_string();
+                if err_str.contains("insufficient_quota") || err_str.contains("rate_limit") || err_str.contains("429") {
+                    let err = ProviderError::RateLimit(err_str);
+                    let provider_id = resolve_provider_id(&self.model);
+                    set_provider_cooldown_from_error(&provider_id, &err);
+                    err
+                } else {
+                    ProviderError::ExecutionFailed(err_str)
                 }
-            }
-        } else if url.contains("cloudflare.com") {
-            tracing::debug!(
-                "CF stream call completed but cf-ai-neurons header not present in response"
-            );
-        }
+            })?;
 
-        let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
         let resolved_model_clone = resolved_model.clone();
         let resolved_category = opts
             .category
@@ -698,36 +563,14 @@ impl LlmProvider for OpenAiCompatProvider {
 
         let output_stream = async_stream::try_stream! {
             let mut full_response_content = String::new();
-            while let Some(chunk_res) = stream.next().await {
-                let chunk = chunk_res.context("Error reading byte chunk from stream")?;
-                let chunk_str = std::str::from_utf8(&chunk)
-                    .context("Failed to parse SSE bytes as UTF-8 string")?;
-
-                buffer.push_str(chunk_str);
-
-                while let Some(pos) = buffer.find('\n') {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data == "[DONE]" {
-                            break;
-                        }
-
-                        if let Ok(parsed) = serde_json::from_str::<OpenAiStreamResponse>(data)
-                            && let Some(choice) = parsed.choices.first()
-                            && let Some(content) = &choice.delta.content
-                        {
-                            full_response_content.push_str(content);
-                            yield StreamChunk {
-                                content: content.clone(),
-                            };
-                        }
-                    }
+            use rig_core::streaming::StreamedAssistantContent;
+            while let Some(chunk_res) = res.next().await {
+                let chunk = chunk_res.map_err(|e| ProviderError::ExecutionFailed(e.to_string()))?;
+                if let StreamedAssistantContent::Text(t) = chunk {
+                    full_response_content.push_str(&t.text);
+                    yield StreamChunk {
+                        content: t.text.clone(),
+                    };
                 }
             }
             let llm_res = LlmResponse {
@@ -1932,12 +1775,22 @@ mod tests {
         let server_task = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
+                    \"id\": \"chatcmpl-123\",\
+                    \"object\": \"chat.completion\",\
+                    \"created\": 1677652288,\
+                    \"model\": \"gpt-4o-mini\",\
                     \"choices\": [{\
+                        \"index\": 0,\
                         \"message\": {\
                             \"role\": \"assistant\",\
                             \"content\": \"Hello response!\"\
-                        }\
-                    }]\
+                        },\
+                        \"finish_reason\": \"stop\"\
+                    }],\
+                    \"usage\": {\
+                        \"prompt_tokens\": 9,\
+                        \"total_tokens\": 21\
+                    }\
                 }";
                 let _ = socket.write_all(response.as_bytes()).await;
             }
@@ -2096,7 +1949,12 @@ mod tests {
         let server_task = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
+                    \"id\": \"chatcmpl-123\",\
+                    \"object\": \"chat.completion\",\
+                    \"created\": 1677652288,\
+                    \"model\": \"gpt-4o-mini\",\
                     \"choices\": [{\
+                        \"index\": 0,\
                         \"message\": {\
                             \"role\": \"assistant\",\
                             \"content\": \"Hello, using tool now.\",\
@@ -2108,8 +1966,13 @@ mod tests {
                                     \"arguments\": \"{\\\"a\\\": 2, \\\"b\\\": 3}\"\
                                 }\
                             }]\
-                        }\
-                    }]\
+                        },\
+                        \"finish_reason\": \"tool_calls\"\
+                    }],\
+                    \"usage\": {\
+                        \"prompt_tokens\": 9,\
+                        \"total_tokens\": 21\
+                    }\
                 }";
                 let _ = socket.write_all(response.as_bytes()).await;
             }
@@ -2155,7 +2018,7 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_xyz");
         assert_eq!(calls[0].function.name, "add");
-        assert_eq!(calls[0].function.arguments, "{\"a\": 2, \"b\": 3}");
+        assert_eq!(calls[0].function.arguments, "{\"a\":2,\"b\":3}");
 
         let _ = server_task.await;
         Ok(())

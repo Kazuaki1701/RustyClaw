@@ -2836,12 +2836,22 @@ mod tests {
         let server_task = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
+                    \"id\": \"chatcmpl-123\",\
+                    \"object\": \"chat.completion\",\
+                    \"created\": 1677652288,\
+                    \"model\": \"gpt-4o-mini\",\
                     \"choices\": [{\
+                        \"index\": 0,\
                         \"message\": {\
                             \"role\": \"assistant\",\
                             \"content\": \"I am a robot.\"\
-                        }\
-                    }]\
+                        },\
+                        \"finish_reason\": \"stop\"\
+                    }],\
+                    \"usage\": {\
+                        \"prompt_tokens\": 9,\
+                        \"total_tokens\": 21\
+                    }\
                 }";
                 let _ = socket.write_all(response.as_bytes()).await;
             }
@@ -2918,12 +2928,22 @@ mod tests {
         let server_task = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\
+                    \"id\": \"chatcmpl-123\",\
+                    \"object\": \"chat.completion\",\
+                    \"created\": 1677652288,\
+                    \"model\": \"gpt-4o-mini\",\
                     \"choices\": [{\
+                        \"index\": 0,\
                         \"message\": {\
                             \"role\": \"assistant\",\
                             \"content\": \"cron response\"\
-                        }\
-                    }]\
+                        },\
+                        \"finish_reason\": \"stop\"\
+                    }],\
+                    \"usage\": {\
+                        \"prompt_tokens\": 9,\
+                        \"total_tokens\": 21\
+                    }\
                 }";
                 let _ = socket.write_all(response.as_bytes()).await;
             }
