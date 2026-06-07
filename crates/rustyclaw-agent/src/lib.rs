@@ -739,7 +739,7 @@ Rules:
             .embedding
             .as_ref()
             .and_then(|e| e.heartbeat_top_k)
-            .unwrap_or(2);
+            .unwrap_or(3);
         let heartbeat_config = {
             let mut cfg = self.config.clone();
             if let Some(ref mut emb) = cfg.embedding {
@@ -2035,8 +2035,8 @@ pub async fn ingest_static_documents(
         tracing::warn!("ingest_static_documents: migration error: {}", e);
     }
 
-    // スキャン対象ファイル: AGENTS.md + skills/**/*.md (1階層サブディレクトリを含む)
-    let mut files = vec![workspace_dir.join("AGENTS.md")];
+    // スキャン対象ファイル: AGENTS.md + USER.md + skills/**/*.md (1階層サブディレクトリを含む)
+    let mut files = vec![workspace_dir.join("AGENTS.md"), workspace_dir.join("USER.md")];
     let skills_dir = workspace_dir.join("skills");
     if let Ok(entries) = std::fs::read_dir(&skills_dir) {
         let mut skill_files: Vec<_> = Vec::new();
