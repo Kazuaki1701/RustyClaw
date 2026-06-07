@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (最新の真実 - コードと同期中)  
-> **最終更新日**: 2026-06-06  
+> **最終更新日**: 2026-06-07  
 > **対象コード**: `crates/rustyclaw-storage/` の最新実装
 
 ## 1. ワークスペース構造
@@ -156,3 +156,48 @@ pub async fn atomic_write<P: AsRef<Path>>(path: P, data: &[u8]) -> Result<()> {
     Ok(())
 }
 ```
+
+---
+
+## 6. ローカル Embedding インデックス
+
+### `memory_embeddings` テーブルスキーマ
+
+```sql
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+    id         TEXT PRIMARY KEY,
+    source     TEXT NOT NULL,
+    session_id TEXT,
+    text_content TEXT NOT NULL,
+    embedding  BLOB NOT NULL,       -- f32 配列（Little Endian バイト列）
+    created_at TEXT NOT NULL        -- RFC 3339 形式
+);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source
+    ON memory_embeddings(source);
+```
+
+| `source` 値 | 内容 |
+|---|---|
+| `memory` | MEMORY.md のチャンク（`ingest_memory_md` により更新） |
+| `session` | セッション要約（`ingest_session_summary` により追加、TTL 管理あり） |
+| `doc:{filename}` | 任意ドキュメント（将来拡張用） |
+
+### RAG 検索関数
+
+| 関数 | 用途 |
+|---|---|
+| `search_similar_with_source(query, top_k, threshold)` | コサイン類似度のみでランキング（デフォルト） |
+| `search_similar_with_decay(query, top_k, threshold, half_life_days)` | `combined_score = cosine_sim × 0.5^(age_days / half_life_days)` で時間減衰リランキング |
+
+### `EmbeddingConfig` 設定パラメータ
+
+| パラメータ | 型 | デフォルト | 説明 |
+|---|---|---|---|
+| `use_local_embedding` | `bool` | `false` | ローカル ONNX モデルで embedding を生成する |
+| `local_model_path` | `Option<String>` | `None` | ONNX モデルファイルのパス |
+| `discord_top_k` | `Option<usize>` | `None` | Discord RAG の top-k 件数 |
+| `time_decay_half_life_days` | `Option<f64>` | `None` | RAG 検索結果の時間減衰 half-life（日数）。設定時は `search_similar_with_decay` を使用。未設定は従来挙動（後方互換）。例: `30.0` → 30日で combined_score が半減 |
+
+### インデックス更新フロー
+
+MEMORY.md の変更は `flush_memory()` → `ingest_memory_md()` の連鎖により即時再インデックスされます（イベント駆動、バッチ不要）。セッション要約は `ingest_session_summary()` でセッション完了後に非同期インデックス登録されます。

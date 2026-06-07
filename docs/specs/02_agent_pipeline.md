@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (最新の真実 - コードと同期中)  
-> **最終更新日**: 2026-06-06  
+> **最終更新日**: 2026-06-07  
 > **対象コード**: `rustyclaw-agent`, `rustyclaw-providers` の最新実装
 
 ## 1. Pipeline の 4 ステージ
@@ -24,6 +24,7 @@
   - セッション会話履歴（`ConversationHistory`）の取得とトークン上限チェック。**※ `cron:` から始まるセッションIDの場合は履歴のロードをスキップし、完全にステートレスとして扱うことでコンテキストの無限の肥大化を防止します。**
   - 必要に応じた会話履歴の圧縮（`compact_if_needed`）。
   - 日またぎの文脈復元（`Session Continuation`）や自発メッセージ（`Proactive Posts`）の注入。
+  - **ローカル RAG 検索**（`retrieve_rag_context_local`）: `use_local_embedding: true` 時に SQLite の `memory_embeddings` テーブルに対してコサイン類似度検索を実行。`time_decay_half_life_days` が設定されている場合は時間減衰リランキング（`search_similar_with_decay`）を適用し直近の記憶を優先する。
 - アウトプット：LLM APIに送信可能な形式の `Vec<Message>`。
 
 ### ② CallLLM (LLMの呼び出し)
