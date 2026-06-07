@@ -1916,37 +1916,39 @@ impl UnifiedRagEngine {
 /// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
 pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
     let mut chunks: Vec<String> = Vec::new();
-    let mut current: Option<String> = None;
+    let mut current_section = "General".to_string();
+    let mut current_bullets: Vec<String> = Vec::new();
+    let mut current_len: usize = 0;
+    const MAX_CHUNK: usize = 800;
 
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-            if let Some(prev) = current.take() {
-                chunks.push(prev);
+        if trimmed.starts_with('#') {
+            if !current_bullets.is_empty() {
+                chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
+                current_bullets.clear();
+                current_len = 0;
             }
-            current = Some(trimmed.to_string());
-        } else if !trimmed.is_empty()
-            && !trimmed.starts_with('#')
-            && let Some(ref mut cur) = current
-        {
-            cur.push(' ');
-            cur.push_str(trimmed);
+            let section = trimmed.trim_start_matches('#').trim().to_string();
+            current_section = if section.is_empty() {
+                "General".to_string()
+            } else {
+                section
+            };
+        } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            if current_len + trimmed.len() + 1 > MAX_CHUNK && !current_bullets.is_empty() {
+                chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
+                current_bullets.clear();
+                current_len = 0;
+            }
+            current_len += trimmed.len() + 1;
+            current_bullets.push(trimmed.to_string());
         }
     }
-    if let Some(last) = current {
-        chunks.push(last);
+    if !current_bullets.is_empty() {
+        chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
     }
-    chunks
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            if s.len() > 512 {
-                s.chars().take(512).collect::<String>()
-            } else {
-                s
-            }
-        })
-        .collect()
+    chunks.into_iter().filter(|s| !s.is_empty()).collect()
 }
 
 /// 静的マークダウンを `##` / `###` 見出し単位でチャンク分割する。
@@ -3360,25 +3362,94 @@ Keep it short.\n\
     fn test_chunk_memory_md_basic() {
         let content = "# Memory\n\n- First bullet\n- Second bullet\n  continued\n- Third bullet";
         let chunks = chunk_memory_md(content);
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0], "- First bullet");
-        assert!(chunks[1].contains("Second bullet"));
-        assert_eq!(chunks[2], "- Third bullet");
+        // 3バレットが800bytes以内なので1チャンクに結合される
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].starts_with("[Memory]"), "got: {}", chunks[0]);
+        assert!(chunks[0].contains("First bullet"));
+        assert!(chunks[0].contains("Second bullet"));
+        assert!(chunks[0].contains("Third bullet"));
     }
 
     #[test]
-    fn test_chunk_memory_md_truncates_long() {
-        let long = format!("- {}", "x".repeat(600));
+    fn test_chunk_memory_md_long_bullet_single_chunk() {
+        // 600 bytes のバレット1件は単独でチャンクになる（800 以内）
+        let long = format!("- {}", "x".repeat(597));
         let chunks = chunk_memory_md(&long);
         assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].len() <= 512);
+        assert!(chunks[0].starts_with("[General]"), "got: {}", chunks[0]);
     }
 
     #[test]
-    fn test_chunk_memory_md_skips_headers() {
-        let content = "# Title\n\n## Section\n\n- bullet one\n- bullet two";
+    fn test_chunk_memory_md_section_boundary() {
+        // セクションをまたぐバレットは別チャンクになる
+        let content = "## Section A\n\n- bullet a\n\n## Section B\n\n- bullet b";
         let chunks = chunk_memory_md(content);
         assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].starts_with("[Section A]"), "got: {}", chunks[0]);
+        assert!(chunks[1].starts_with("[Section B]"), "got: {}", chunks[1]);
+    }
+
+    #[test]
+    fn test_chunk_memory_md_section_prefix() {
+        let content = "## User Preferences\n\n- First bullet\n- Second bullet";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(chunks.len(), 1);
+        assert!(
+            chunks[0].starts_with("[User Preferences]"),
+            "expected [User Preferences] prefix, got: {}",
+            chunks[0]
+        );
+        assert!(chunks[0].contains("First bullet"));
+        assert!(chunks[0].contains("Second bullet"));
+    }
+
+    #[test]
+    fn test_chunk_memory_md_adjacent_bullets_merged() {
+        let content = "## Section\n\n- bullet one\n- bullet two\n- bullet three";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(
+            chunks.len(),
+            1,
+            "adjacent bullets within 800 bytes should be merged"
+        );
+        assert!(chunks[0].contains("bullet one"));
+        assert!(chunks[0].contains("bullet two"));
+        assert!(chunks[0].contains("bullet three"));
+    }
+
+    #[test]
+    fn test_chunk_memory_md_split_on_overflow() {
+        // 各バレット 298 bytes × 3 = 894 bytes → 800 を超えるので分割される
+        let long_bullet = format!("- {}", "x".repeat(295));
+        let content = format!(
+            "## Section\n\n{}\n{}\n{}",
+            long_bullet, long_bullet, long_bullet
+        );
+        let chunks = chunk_memory_md(&content);
+        assert!(
+            chunks.len() >= 2,
+            "should split when total exceeds 800 bytes, got {} chunk(s)",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            assert!(
+                chunk.starts_with("[Section]"),
+                "each chunk must carry section prefix, got: {}",
+                &chunk[..chunk.len().min(30)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_chunk_memory_md_no_section_uses_general() {
+        let content = "- bullet without any section header";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(chunks.len(), 1);
+        assert!(
+            chunks[0].starts_with("[General]"),
+            "no-section content must use [General] prefix, got: {}",
+            chunks[0]
+        );
     }
 
     #[test]
