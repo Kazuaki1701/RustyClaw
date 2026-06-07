@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-07 (Phase 41-1・Phase 42・ISSUE-33 をアーカイブ)  
+> **最終更新日**: 2026-06-07 (Phase 43-B 完了)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md`、(Phase 28b-4 / ISSUE-26 / ISSUE-27 / Phase 40-8) は `docs/archive/tasks/2026-06-06-completed-phase28b4-issue26-27-phase40-8.md`、(ISSUE-28〜32) は `docs/archive/tasks/2026-06-07-completed-issues-28-to-32.md`、(Phase 41-1 / Phase 42 / ISSUE-33) は `docs/archive/tasks/2026-06-07-completed-phase41-phase42-issue33.md` に保存
 
 ---
@@ -28,7 +28,7 @@
     - `[x]` flush_memory: Δ 閾値 6→3、5000 byte 上限廃止、truncate_70_20 廃止
     - `[x]` heartbeat_top_k: 2→3（TPM 安全マージン確保）
     - `[x]` USER.md を ingest_static_documents の RAG コーパスに追加
-  - `[ ]` **Phase 43-B: RAG 最適化 Dashboard**
+  - `[x]` **Phase 43-B: RAG 最適化 Dashboard**
   - `[ ]` **Phase 43-C: RAG 最適化 Discord**
 
 ---
@@ -201,13 +201,20 @@ _(現時点では空)_
 
 #### ローカル RAG 活用の拡大アイデア
 
-- `[ ]` **パーソナルノート（Obsidian等）の脳内同期**
-  - ローカルの Obsidian ノートフォルダをスキャンし、過去のメモやメモ間の関連情報を対話内で自在に検索・参照可能にする。
-- `[ ]` **Patrol 収集データの蓄積とナレッジベース化**
-  - Patrol が巡回して取得した GitHub 更新や RSS ニュースの生ログをローカル RAG に蓄積し、後から「今週あった〇〇に関する変化」などの要約や横断検索を行えるようにする。
-- `[ ]` **技術ドキュメントや PDF 仕様書の辞書化**
-  - APIリファレンスやシステム設計書、PDF製品マニュアル等をローカル配置し、コーディングやシステム運用支援時のハルシネーションを極小化する。
-- `[ ]` **プライバシー情報のセーフティゲート（一次処理）としての活用**
-  - Vitals センサーから取得する健康データや機密設定などをローカル RAG 内で匿名化・要約し、外部 LLM API へのデータ露出を最小限に防ぐゲートキーパーとして機能させる。
+> [!NOTE]
+> **RPi4環境（RAM 8GB、ローカル embedding）での稼働考慮**:  
+> 計算負荷やインジェスト負荷を最小限に抑え、実運用環境（常駐ボット・チャット監視）で効果が極めて高い項目に絞り込んでいます。開発仕様書や開発規約（`ai-rules.md` / `docs/specs/`）はインジェスト対象外とします。
+
+##### 1. トークン削減と指示追従性を高める 「動的ルール適用 RAG（RAG-based Guardrails）」
+- `[ ]` **実運用ルールの動的適用（RAG-based Guardrailsによるシステムプロンプト最適化）**
+  - 増加するスキル仕様（`skills/**/*.md`）やユーザー固有の対応ルール（`USER.md`）を RAG に置き、現在の会話に関連する特定の運用ルールのみを動的にシステムプロンプトに注入することで、トークン削減と指示追従性を両立する。
+
+##### 2. 精度と文脈保持を両立させる 「階層型 RAG（Parent-Child Chunking）」
+- `[ ]` **階層型 RAG（Parent-Child Chunking）の導入**
+  - 検索用の細かい「子チャンク（100-300文字）」でベクトル検索し、ヒット時に文脈を保持した「親チャンク（1000-3000文字）」を引き出す。`skills/**/*.md` や長期記憶 (`MEMORY.md`) の検索において、メタデータと SQLite の親子リレーション拡張だけで完結するため、推論負荷を増やさずに実運用でのスキル実行成功率を高める。
+
+##### 3. エラー解決を自動学習する 「自己進化型 RAG（RAG Flywheel）」
+- `[ ]` **実運用インシデント＆ソリューション・ナレッジベース（RAGフライホイール）**
+  - 本番稼働時の外部コマンド実行エラーや外部 API（気象、Discord等）の呼び出しエラーが発生した際、その解決プロセス（自動リトライやフォールバック手順）を自動的に RAG へ登録。次回同様のエラーを検知した際、事前に解決策をロードしてシステムダウンを防止する。エラー発生・解決時のみ embedding を生成するため、定常負荷は増えない。
 
 
