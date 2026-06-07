@@ -76,4 +76,14 @@ tempfile*
 
 .worktrees/
 /production/fastembed_cache/
-.claude/settings.json .claude/settings.local.json .claude/worktrees
+
+# Claude Code local settings (non-shareable)
+.claude/settings.json
+.claude/settings.local.json
+.claude/worktrees/
+
+# Antigravity CLI — CLAUDE.md のミラーコピー（ローカル生成物）
+.antigravity.md
+
+# Patrol runtime log（サービスが常時追記するため追跡しない）
+/production/workspace/patrol/findings.md
