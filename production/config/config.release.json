@@ -289,7 +289,6 @@
     "model": "intfloat/multilingual-e5-small",
     "dimensions": 384,
     "top_k": 5,
-    "dashboard_top_k": 8,
     "heartbeat_top_k": 2,
     "similarity_threshold": 0.60,
     "session_summary_ttl_days": 7
