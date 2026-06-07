@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去の計画書 - 開発完了済み)  
+> **完了日**: 2026-06-07  
+> **備考**: 最新の動作仕様については、`docs/specs/` 配下の最新仕様書を参照してください。
+
 # Dashboard チャット RAG 活用設計書
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -9,7 +14,7 @@
 **Architecture:** 既存の session summary / RAG 機構を最大限流用し、新規インフラなしで実現する。
 
 **関連 ADR:** `docs/adr/001-dashboard-rag-approach-c-hybrid.md`  
-**実装計画書:** `docs/plans/2026-06-07-dashboard-rag-implementation.md`
+**実装計画書:** `docs/archive/plans/2026-06-07-dashboard-rag-implementation.md`
 
 ---
 

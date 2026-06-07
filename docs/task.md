@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-07 (Phase 41-1 登録: Dashboard チャット RAG 活用)  
+> **最終更新日**: 2026-06-07 (ISSUE-33 登録: Discord チャット向け RAG 改善)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md`、(Phase 28b-4 / ISSUE-26 / ISSUE-27 / Phase 40-8) は `docs/archive/tasks/2026-06-06-completed-phase28b4-issue26-27-phase40-8.md`、(ISSUE-28〜32) は `docs/archive/tasks/2026-06-07-completed-issues-28-to-32.md` に保存
 
 ---
@@ -11,7 +11,10 @@
 
 > 実運用ログから発見されたバグ・要改善項目。優先度とは独立して管理し、次スプリントの実施案件を選択する。発見次第追記する。
 
-_(現時点では空)_
+- `[ ]` **ISSUE-33: Discord チャット向け RAG 改善 — クエリ拡張 + discord_top_k** (#13)
+  - 案A: `execute_with_rig_agent` のクエリを直近 2〜3 ターン会話 + ユーザーメッセージに拡張
+  - 案B: `EmbeddingConfig` に `discord_top_k: Option<usize>` を追加（heartbeat_top_k と同パターン）
+  - 対象: `crates/rustyclaw-config/src/lib.rs`、`crates/rustyclaw-agent/src/lib.rs`、`production/config/*.json`
 
 ---
 
@@ -19,9 +22,9 @@ _(現時点では空)_
 
 > 実装状況により今後の計画に与える影響が大きい案件。
 
-- `[ ]` **Phase 41-1: Dashboard チャット RAG 活用（アプローチ C ハイブリッド）**
-  - 設計書: [2026-06-07-dashboard-rag-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-07-dashboard-rag-design.md)
-  - 計画書: [2026-06-07-dashboard-rag-implementation.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-07-dashboard-rag-implementation.md)
+- `[x]` **Phase 41-1: Dashboard チャット RAG 活用（アプローチ C ハイブリッド）** (#12)
+  - 設計書: [2026-06-07-dashboard-rag-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/plans/2026-06-07-dashboard-rag-design.md)
+  - 計画書: [2026-06-07-dashboard-rag-implementation.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/plans/2026-06-07-dashboard-rag-implementation.md)
   - ADR: [001-dashboard-rag-approach-c-hybrid.md](file:///home/kazuaki/Projects/RustyClaw/docs/adr/001-dashboard-rag-approach-c-hybrid.md)
 
 ---
@@ -202,4 +205,12 @@ _(現時点では空)_
   - APIリファレンスやシステム設計書、PDF製品マニュアル等をローカル配置し、コーディングやシステム運用支援時のハルシネーションを極小化する。
 - `[ ]` **プライバシー情報のセーフティゲート（一次処理）としての活用**
   - Vitals センサーから取得する健康データや機密設定などをローカル RAG 内で匿名化・要約し、外部 LLM API へのデータ露出を最小限に防ぐゲートキーパーとして機能させる。
+
+- `[ ]` **Heartbeat RAG 精度・効率の最適化（コンテキスト保護と記憶検索の高度化）**
+  - **検索クエリの最適化**: `heartbeat-digest.md` 等から検索に価値のあるキーワードやトピックのみを抽出し、ベクトル検索の焦点ボケを防止
+  - **オンデマンド・ステップ別 RAG**: Heartbeat の各 Step（スケジュール、天気、エラー点検等）の実行時に必要な知識のみを動的・個別に検索注入
+  - **プロンプトキャッシュの最適化**: 静的指示と動的RAG結果の境界を整理し、プロンプトキャッシュ（Anthropic等）のヒット率を最大化
+  - **時間減衰リランキング**: 検索結果に経過時間に応じたペナルティ/ブーストを付与し、直近の重要なエラーやサマリーを優先的に認識可能にする
+  - **イベント駆動インデックス同期**: 自発作業での `MEMORY.md` などの更新時に部分再インデックスを即時実行し、記憶の同期遅延をゼロ化
+
 

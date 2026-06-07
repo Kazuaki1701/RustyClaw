@@ -1,6 +1,11 @@
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去の計画書 - 開発完了済み)  
+> **完了日**: 2026-06-07  
+> **備考**: 最新の動作仕様については、`docs/specs/` 配下の最新仕様書を参照してください。
+
 # Dashboard チャット RAG 活用 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Dashboard チャットが Heartbeat 結果・cron セッションサマリー・過去の Dashboard 会話を RAG 経由で参照できるようにし、実運用の報告に対して会話するユースケースを支援する。
 
@@ -8,7 +13,7 @@
 
 **Tech Stack:** Rust 2024 edition, chrono 0.4（既存依存）, serde_json, std::fs（同期読み込み）
 
-**関連設計書:** `docs/plans/2026-06-07-dashboard-rag-design.md`  
+**関連設計書:** `docs/archive/plans/2026-06-07-dashboard-rag-design.md`  
 **関連 ADR:** `docs/adr/001-dashboard-rag-approach-c-hybrid.md`
 
 ---
@@ -32,7 +37,7 @@
 **Files:**
 - Modify: `crates/rustyclaw-config/src/lib.rs:97-126`（`EmbeddingConfig` 構造体）
 
-- [ ] **Step 1: 既存の失敗テストを確認**
+- [x] **Step 1: 既存の失敗テストを確認**
 
   現時点で `test_embedding_config_defaults` は `dashboard_top_k` を知らないため、新フィールドを追加後も既存テストが通ることを確認するためにまず現状を記録する。
   
@@ -41,7 +46,7 @@
   ```
   Expected: すべて PASS（変更前の状態確認）
 
-- [ ] **Step 2: 失敗テストを先に書く**
+- [x] **Step 2: 失敗テストを先に書く**
 
   `crates/rustyclaw-config/src/lib.rs` のテストセクション（`#[cfg(test)]` ブロック）に追加:
 
@@ -60,14 +65,14 @@
   }
   ```
 
-- [ ] **Step 3: テストが失敗することを確認**
+- [x] **Step 3: テストが失敗することを確認**
 
   ```bash
   cargo test -p rustyclaw-config -- test_embedding_config_dashboard_top_k 2>&1
   ```
   Expected: `error[E0560]: struct ... has no field named dashboard_top_k`（フィールド未定義）
 
-- [ ] **Step 4: `EmbeddingConfig` にフィールドを追加**
+- [x] **Step 4: `EmbeddingConfig` にフィールドを追加**
 
   `crates/rustyclaw-config/src/lib.rs` の `EmbeddingConfig` 構造体末尾（`use_local_embedding` の後）に追加:
 
@@ -88,7 +93,7 @@
   }
   ```
 
-- [ ] **Step 5: テストが通ることを確認してコミット**
+- [x] **Step 5: テストが通ることを確認してコミット**
 
   ```bash
   cargo test -p rustyclaw-config -- test_embedding_config 2>&1
@@ -108,7 +113,7 @@
 - Modify: `production/config/config.debug.json:291-300`（`embedding` オブジェクト）
 - Modify: `production/config/config.release.json`（同箇所）
 
-- [ ] **Step 1: config.debug.json の `embedding` セクションに追加**
+- [x] **Step 1: config.debug.json の `embedding` セクションに追加**
 
   現在:
   ```json
@@ -141,11 +146,11 @@
   }
   ```
 
-- [ ] **Step 2: config.release.json にも同様に追加**
+- [x] **Step 2: config.release.json にも同様に追加**
 
   `production/config/config.release.json` の `embedding` セクションに `"dashboard_top_k": 8,` を `top_k` の直後に追加する（debug.json と同じ手順）。
 
-- [ ] **Step 3: JSON パース検証**
+- [x] **Step 3: JSON パース検証**
 
   ```bash
   python3 -m json.tool production/config/config.debug.json > /dev/null && echo OK
@@ -153,7 +158,7 @@
   ```
   Expected: 両方とも `OK`
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
   ```bash
   git add production/config/config.debug.json production/config/config.release.json
@@ -167,14 +172,14 @@
 **Files:**
 - Modify: `crates/rustyclaw-gateway/src/health.rs:432`（`/chat` ハンドラ）
 
-- [ ] **Step 1: 変更箇所を確認**
+- [x] **Step 1: 変更箇所を確認**
 
   ```bash
   grep -n "http-dashboard" crates/rustyclaw-gateway/src/health.rs
   ```
   Expected: `432:  let session_id = "http-dashboard".to_string();` の行が表示される
 
-- [ ] **Step 2: 修正を適用**
+- [x] **Step 2: 修正を適用**
 
   変更前:
   ```rust
@@ -189,7 +194,7 @@
 
   `chrono` はすでに `crates/rustyclaw-gateway/Cargo.toml` に依存関係として記載されているため、`Cargo.toml` の変更は不要。
 
-- [ ] **Step 3: ビルドで確認してコミット**
+- [x] **Step 3: ビルドで確認してコミット**
 
   ```bash
   cargo build -p rustyclaw-gateway 2>&1 | tail -5
@@ -208,14 +213,14 @@
 **Files:**
 - Modify: `crates/rustyclaw-agent/src/lib.rs`（`execute_with_tools` 関数、`build_system_context` 呼び出し直後）
 
-- [ ] **Step 1: 挿入位置を確認**
+- [x] **Step 1: 挿入位置を確認**
 
   ```bash
   grep -n "build_system_context\|get_session_continuation" crates/rustyclaw-agent/src/lib.rs | head -10
   ```
   Expected: `execute_with_tools` 内の `build_system_context` 呼び出し行（約 1156 行）が表示される
 
-- [ ] **Step 2: heartbeat-digest 注入ブロックを追加**
+- [x] **Step 2: heartbeat-digest 注入ブロックを追加**
 
   `execute_with_tools` 内の `build_system_context` 呼び出しブロック（`get_session_continuation_context` の直後、RAG 注入の前）に以下を追加:
 
@@ -252,7 +257,7 @@
   // RAG: ユーザーメッセージに関連する記憶を動的注入
   ```
 
-- [ ] **Step 3: ビルドで確認してコミット**
+- [x] **Step 3: ビルドで確認してコミット**
 
   ```bash
   cargo build -p rustyclaw-agent 2>&1 | tail -5
@@ -271,7 +276,7 @@
 **Files:**
 - Modify: `crates/rustyclaw-agent/src/lib.rs`（`retrieve_rag_context`, `retrieve_rag_context_local`, `execute_with_tools`, `execute_heartbeat`）
 
-- [ ] **Step 1: `retrieve_rag_context` に `top_k: usize` 引数を追加**
+- [x] **Step 1: `retrieve_rag_context` に `top_k: usize` 引数を追加**
 
   現在（約 line 2231）:
   ```rust
@@ -295,7 +300,7 @@
       // `let top_k = ...` の行を削除し、引数の top_k をそのまま使用
   ```
 
-- [ ] **Step 2: `retrieve_rag_context_local` に `top_k: usize` 引数を追加**
+- [x] **Step 2: `retrieve_rag_context_local` に `top_k: usize` 引数を追加**
 
   現在（約 line 2270）:
   ```rust
@@ -321,7 +326,7 @@
       // `let top_k = ...` の行を削除し、引数の top_k をそのまま使用
   ```
 
-- [ ] **Step 3: `execute_with_tools` の呼び出し元を更新（dashboard_top_k 適用）**
+- [x] **Step 3: `execute_with_tools` の呼び出し元を更新（dashboard_top_k 適用）**
 
   `execute_with_tools` の RAG 注入ブロック直前（Task 4 で追加した digest 注入の後）に `effective_top_k` を計算し、各呼び出しに渡す:
 
@@ -388,7 +393,7 @@
   }
   ```
 
-- [ ] **Step 4: `execute_heartbeat` の呼び出し元を更新（標準 top_k を使用）**
+- [x] **Step 4: `execute_heartbeat` の呼び出し元を更新（標準 top_k を使用）**
 
   `execute_heartbeat` 内（約 line 714-725）の呼び出しに `top_k` を追加:
 
@@ -413,7 +418,7 @@
       let rag_ctx = retrieve_rag_context(user_message, &self.config, rag, hb_top_k).await;
   ```
 
-- [ ] **Step 5: ビルドと clippy で確認**
+- [x] **Step 5: ビルドと clippy で確認**
 
   ```bash
   cargo build -p rustyclaw-agent 2>&1 | tail -10
@@ -421,7 +426,7 @@
   ```
   Expected: コンパイル成功、clippy エラーなし
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
   ```bash
   git add crates/rustyclaw-agent/src/lib.rs
@@ -435,14 +440,14 @@
 **Files:**
 - Modify: `crates/rustyclaw-gateway/src/lib.rs`（`Ok(response)` ブロック、`bus.publish(AgentResponse)` の直後）
 
-- [ ] **Step 1: 挿入位置を確認**
+- [x] **Step 1: 挿入位置を確認**
 
   ```bash
   grep -n "AgentResponse\|channel_id: channel_id" crates/rustyclaw-gateway/src/lib.rs | head -10
   ```
   Expected: 約 line 702 に `bus.publish(SystemEvent::AgentResponse {` が表示される
 
-- [ ] **Step 2: ホワイトリスト定数と publish ブロックを追加**
+- [x] **Step 2: ホワイトリスト定数と publish ブロックを追加**
 
   `crates/rustyclaw-gateway/src/lib.rs` の先頭付近の定数定義エリア（モジュールレベル）にホワイトリスト定数を追加:
 
@@ -492,7 +497,7 @@
   }
   ```
 
-- [ ] **Step 3: ビルドと clippy で確認**
+- [x] **Step 3: ビルドと clippy で確認**
 
   ```bash
   cargo build -p rustyclaw-gateway 2>&1 | tail -10
@@ -500,7 +505,7 @@
   ```
   Expected: コンパイル成功、clippy エラーなし
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
   ```bash
   git add crates/rustyclaw-gateway/src/lib.rs
@@ -513,21 +518,21 @@
 
 **Files:** なし（検証のみ）
 
-- [ ] **Step 1: フル workspace ビルド**
+- [x] **Step 1: フル workspace ビルド**
 
   ```bash
   cargo build --workspace 2>&1 | tail -15
   ```
   Expected: `Finished dev [unoptimized + debuginfo] target(s) in ...s`（エラーなし）
 
-- [ ] **Step 2: cargo clippy（全ターゲット）**
+- [x] **Step 2: cargo clippy（全ターゲット）**
 
   ```bash
   cargo clippy --all-targets 2>&1 | grep -E "^error|^warning\[" | head -20
   ```
   Expected: エラーなし（未使用変数 warning があれば修正）
 
-- [ ] **Step 3: テスト実行**
+- [x] **Step 3: テスト実行**
 
   ```bash
   cargo test --workspace 2>&1 | tail -20
@@ -540,21 +545,21 @@
 
 **Files:** なし（デプロイ・検証のみ）
 
-- [ ] **Step 1: aarch64 クロスビルド**
+- [x] **Step 1: aarch64 クロスビルド**
 
   ```bash
   cargo build --release --target aarch64-unknown-linux-gnu 2>&1 | tail -10
   ```
   Expected: `Finished release [optimized] target(s) in ...s`
 
-- [ ] **Step 2: rp1 にデプロイ**
+- [x] **Step 2: rp1 にデプロイ**
 
   ```bash
   ./deploy.sh
   ```
   （`deploy.sh` は `docs/README.md §4` 参照。`production/deploy.sh` を実行することで rp1 へ転送・再起動される）
 
-- [ ] **Step 3: 起動ログ確認**
+- [x] **Step 3: 起動ログ確認**
 
   ```bash
   ssh rp1 "journalctl -u rustyclaw -n 50 --no-pager"
@@ -564,7 +569,7 @@
   - `ingest_static_documents` 完了ログ（doc: チャンク登録）
   - エラーなし
 
-- [ ] **Step 4: Dashboard チャットで動作確認**
+- [x] **Step 4: Dashboard チャットで動作確認**
 
   ブラウザで Dashboard の CHAT パネルを開き（`http://rp1:8080`）、以下のメッセージを送信:
   - 「今日の KaraKeep 推薦は？」
@@ -582,14 +587,14 @@
 **Files:**
 - Modify: `docs/specs/06_dashboard_spec.md`（session_id セクション・RAG 構成の追記）
 
-- [ ] **Step 1: 更新内容を適用**
+- [x] **Step 1: 更新内容を適用**
 
   `06_dashboard_spec.md` に以下のセクションを追記・更新する:
   - **session_id**: `"http-dashboard"` （固定）→ `"http-dashboard-YYYYMMDD"` （日付ローテーション）
   - **RAG 注入**: heartbeat-digest.md の動的注入（Dashboard 専用）、cron セッションサマリー RAG 化
   - **top_k**: Dashboard は `dashboard_top_k: 8`（通常 `top_k: 5`）
 
-- [ ] **Step 2: コミット**
+- [x] **Step 2: コミット**
 
   ```bash
   git add docs/specs/06_dashboard_spec.md
