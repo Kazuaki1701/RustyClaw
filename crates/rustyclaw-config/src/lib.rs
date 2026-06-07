@@ -127,9 +127,6 @@ pub struct EmbeddingConfig {
     /// Heartbeat は固定 Step を実行するだけなので top_k=5 は過剰（ISSUE-30）。
     #[serde(default)]
     pub heartbeat_top_k: Option<usize>,
-    /// ダッシュボードチャット専用の RAG 検索上限件数（省略時は top_k を使用）
-    #[serde(default)]
-    pub dashboard_top_k: Option<usize>,
     /// Discord チャット専用の RAG 検索上限件数（省略時は top_k を使用）
     #[serde(default)]
     pub discord_top_k: Option<usize>,
@@ -1023,19 +1020,6 @@ mod tests {
         let json_without = r#"{"enabled": true}"#;
         let cfg2: EmbeddingConfig = serde_json::from_str(json_without).unwrap();
         assert_eq!(cfg2.heartbeat_top_k, None);
-    }
-
-    #[test]
-    fn test_embedding_config_dashboard_top_k_default() {
-        let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
-        assert!(cfg.dashboard_top_k.is_none(), "dashboard_top_k default should be None");
-    }
-
-    #[test]
-    fn test_embedding_config_dashboard_top_k_value() {
-        let cfg: EmbeddingConfig =
-            serde_json::from_str(r#"{"dashboard_top_k": 8}"#).unwrap();
-        assert_eq!(cfg.dashboard_top_k, Some(8));
     }
 
     #[test]
