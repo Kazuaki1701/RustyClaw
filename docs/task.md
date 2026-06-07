@@ -2,8 +2,8 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-07 (Phase 43-B 完了)  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md`、(Phase 28b-4 / ISSUE-26 / ISSUE-27 / Phase 40-8) は `docs/archive/tasks/2026-06-06-completed-phase28b4-issue26-27-phase40-8.md`、(ISSUE-28〜32) は `docs/archive/tasks/2026-06-07-completed-issues-28-to-32.md`、(Phase 41-1 / Phase 42 / ISSUE-33) は `docs/archive/tasks/2026-06-07-completed-phase41-phase42-issue33.md` に保存
+> **最終更新日**: 2026-06-07 (Phase 43 完了)  
+> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md`、(Phase 28b-4 / ISSUE-26 / ISSUE-27 / Phase 40-8) は `docs/archive/tasks/2026-06-06-completed-phase28b4-issue26-27-phase40-8.md`、(ISSUE-28〜32) は `docs/archive/tasks/2026-06-07-completed-issues-28-to-32.md`、(Phase 41-1 / Phase 42 / ISSUE-33) は `docs/archive/tasks/2026-06-07-completed-phase41-phase42-issue33.md`、(Phase 43 / ISSUE-34) は `docs/archive/tasks/2026-06-07-completed-phase43-issue34.md` に保存
 
 ---
 
@@ -11,25 +11,11 @@
 
 > 実運用ログから発見されたバグ・要改善項目。優先度とは独立して管理し、次スプリントの実施案件を選択する。発見次第追記する。
 
-- `[x]` **ISSUE-34: Discord RAG `history_for_rag` のエラーハンドリングを `history_messages` と統一**
-  - `execute_with_rig_agent` 内で `history_for_rag` ロード時に `unwrap_or_default()` を使用しているが、直後の `history_messages` ロードは `.context("Failed to load session history")?` で明示エラーを返す
-  - 対象: `crates/rustyclaw-agent/src/lib.rs` の `history_for_rag` 変数（旧コミット 442a941 由来）
-  - 対処: `unwrap_or_default()` を `.context(...)? ` パターンに統一、または RAG 専用として fail-open のまま `tracing::warn!` を追加
-
 ---
 
 ## 優先課題
 
 > 実装状況により今後の計画に与える影響が大きい案件。
-
-- `[ ]` **Phase 43: RAG 最適化（旧 Context 削減策の廃止）**
-  - `[x]` **Phase 43-A: RAG 最適化 Heartbeat**
-    - `[x]` chunk_memory_md: section prefix + 隣接バレット結合（800 chars）
-    - `[x]` flush_memory: Δ 閾値 6→3、5000 byte 上限廃止、truncate_70_20 廃止
-    - `[x]` heartbeat_top_k: 2→3（TPM 安全マージン確保）
-    - `[x]` USER.md を ingest_static_documents の RAG コーパスに追加
-  - `[x]` **Phase 43-B: RAG 最適化 Dashboard**
-  - `[x]` **Phase 43-C: RAG 最適化 Discord**
 
 ---
 
@@ -216,5 +202,11 @@ _(現時点では空)_
 ##### 3. エラー解決を自動学習する 「自己進化型 RAG（RAG Flywheel）」
 - `[ ]` **実運用インシデント＆ソリューション・ナレッジベース（RAGフライホイール）**
   - 本番稼働時の外部コマンド実行エラーや外部 API（気象、Discord等）の呼び出しエラーが発生した際、その解決プロセス（自動リトライやフォールバック手順）を自動的に RAG へ登録。次回同様のエラーを検知した際、事前に解決策をロードしてシステムダウンを防止する。エラー発生・解決時のみ embedding を生成するため、定常負荷は増えない。
+
+##### 4. ユーザー知的支援（セカンドブレイン RAG）
+- `[ ]` **KaraKeep ブックマークのインデックス化と API 同期**
+  - KaraKeep サーバーから定時バッチでブックマーク（タイトル・タグ・URL）を取得してインジェスト。対話中に「保存した記事」を自然言語で検索・提示可能にする。テキスト量が少ないため RPi4 への負荷も極めて低い。
+- `[ ]` **Obsidian 特定フォルダの増分インジェストとパーソナルナレッジ参照**
+  - Obsidian の指定ディレクトリ（または `#rag` タグ付きノート）をスキャン。RPi4 の CPU 負荷集中を避けるため、深夜のアイドル時間帯に差分のみを増分 embedding してセカンドブレイン化する。
 
 
