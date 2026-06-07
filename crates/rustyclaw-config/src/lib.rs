@@ -133,6 +133,11 @@ pub struct EmbeddingConfig {
     /// Discord チャット専用の RAG 検索上限件数（省略時は top_k を使用）
     #[serde(default)]
     pub discord_top_k: Option<usize>,
+    /// RAG 検索結果の時間減衰 half-life（日数）。
+    /// 省略時は減衰なし（既存挙動を維持）。
+    /// 例: 30.0 → 30日で combined_score が半減。
+    #[serde(default)]
+    pub time_decay_half_life_days: Option<f64>,
 }
 
 /// JSON 文字列 "foo" と JSON 配列 ["foo", "bar"] の両方をデシリアライズできる enum。
@@ -1072,5 +1077,23 @@ mod tests {
             std::env::remove_var("EMBED_ENDPOINT_TEST");
             std::env::remove_var("EMBED_KEY_TEST");
         }
+    }
+
+    #[test]
+    fn test_embedding_config_time_decay_half_life_days_default_none() {
+        let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(
+            cfg.time_decay_half_life_days.is_none(),
+            "time_decay_half_life_days default must be None"
+        );
+    }
+
+    #[test]
+    fn test_embedding_config_time_decay_half_life_days_set() {
+        let cfg: EmbeddingConfig =
+            serde_json::from_str(r#"{"time_decay_half_life_days": 30.0}"#).unwrap();
+        assert!(
+            (cfg.time_decay_half_life_days.unwrap() - 30.0).abs() < 1e-9
+        );
     }
 }
