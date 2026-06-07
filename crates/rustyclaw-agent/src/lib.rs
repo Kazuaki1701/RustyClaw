@@ -756,7 +756,6 @@ Rules:
             }
             cfg
         };
-        // Phase 42-A: rag_query が指定された場合はそちらを使用、未指定時は user_message にフォールバック
         let effective_rag = rag_query.unwrap_or(user_message);
         if heartbeat_config
             .embedding
