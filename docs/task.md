@@ -11,7 +11,7 @@
 
 > 実運用ログから発見されたバグ・要改善項目。優先度とは独立して管理し、次スプリントの実施案件を選択する。発見次第追記する。
 
-- `[ ]` **ISSUE-33: Discord チャット向け RAG 改善 — クエリ拡張 + discord_top_k** (#13)
+- `[x]` **ISSUE-33: Discord チャット向け RAG 改善 — クエリ拡張 + discord_top_k** (#13)
   - 案A: `execute_with_rig_agent` のクエリを直近 2〜3 ターン会話 + ユーザーメッセージに拡張
   - 案B: `EmbeddingConfig` に `discord_top_k: Option<usize>` を追加（heartbeat_top_k と同パターン）
   - 対象: `crates/rustyclaw-config/src/lib.rs`、`crates/rustyclaw-agent/src/lib.rs`、`production/config/*.json`
