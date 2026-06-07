@@ -491,8 +491,8 @@ impl Pipeline {
             return Ok(());
         }
 
-        // delta >= 6（≒3ターン）かつ前回から 15 分以上経過した場合のみ実行
-        const DELTA_THRESHOLD: usize = 6;
+        // delta >= 3（≒1.5ターン）かつ前回から 15 分以上経過した場合のみ実行
+        const DELTA_THRESHOLD: usize = 3;
         const MIN_INTERVAL_MINS: i64 = 15;
 
         let count_key = format!("flush_count_{}", session_id);
@@ -579,7 +579,6 @@ You are a memory manager. Given the current MEMORY.md and a recent conversation,
 1. Produce a fully rewritten MEMORY.md that:
    - Incorporates important new facts, decisions, preferences, and learnings from the conversation
    - Removes outdated or redundant information
-   - Stays strictly under 5KB (≤ 5000 characters)
    - Uses concise, factual bullet points under clear headings
    - If nothing new is worth adding and the existing content is fine, output it unchanged
 
@@ -595,7 +594,6 @@ Output using exactly these delimiters (no extra text outside them):
 
 Rules:
 - Never truncate mid-sentence inside ---NEW_MEMORY---.
-- Keep MEMORY.md total under 5000 characters.
 - Write in the same language as the existing MEMORY.md content.
 ";
 
@@ -648,17 +646,7 @@ Rules:
             extract_delimited_block(&response_text, "---DAILY_LOG---", "---END_DAILY_LOG---");
 
         // 1. MEMORY.md の全書き換え (fail-open)
-        if let Some(content) = new_memory {
-            // LLM が 5KB を超えて返した場合のフェイルセーフとして 70/20 トランケート
-            let final_content = if content.len() > 5000 {
-                tracing::warn!(
-                    actual_bytes = content.len(),
-                    "memory flush: LLM returned oversized MEMORY.md, truncating"
-                );
-                truncate_70_20(&content, 5000)
-            } else {
-                content
-            };
+        if let Some(final_content) = new_memory {
             if let Err(e) =
                 rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()).await
             {
@@ -751,7 +739,7 @@ Rules:
             .embedding
             .as_ref()
             .and_then(|e| e.heartbeat_top_k)
-            .unwrap_or(2);
+            .unwrap_or(3);
         let heartbeat_config = {
             let mut cfg = self.config.clone();
             if let Some(ref mut emb) = cfg.embedding {
@@ -1916,37 +1904,39 @@ impl UnifiedRagEngine {
 /// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
 pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
     let mut chunks: Vec<String> = Vec::new();
-    let mut current: Option<String> = None;
+    let mut current_section = "General".to_string();
+    let mut current_bullets: Vec<String> = Vec::new();
+    let mut current_len: usize = 0;
+    const MAX_CHUNK: usize = 800;
 
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-            if let Some(prev) = current.take() {
-                chunks.push(prev);
+        if trimmed.starts_with('#') {
+            if !current_bullets.is_empty() {
+                chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
+                current_bullets.clear();
+                current_len = 0;
             }
-            current = Some(trimmed.to_string());
-        } else if !trimmed.is_empty()
-            && !trimmed.starts_with('#')
-            && let Some(ref mut cur) = current
-        {
-            cur.push(' ');
-            cur.push_str(trimmed);
+            let section = trimmed.trim_start_matches('#').trim().to_string();
+            current_section = if section.is_empty() {
+                "General".to_string()
+            } else {
+                section
+            };
+        } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            if current_len + trimmed.len() + 1 > MAX_CHUNK && !current_bullets.is_empty() {
+                chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
+                current_bullets.clear();
+                current_len = 0;
+            }
+            current_len += trimmed.len() + 1;
+            current_bullets.push(trimmed.to_string());
         }
     }
-    if let Some(last) = current {
-        chunks.push(last);
+    if !current_bullets.is_empty() {
+        chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
     }
-    chunks
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            if s.len() > 512 {
-                s.chars().take(512).collect::<String>()
-            } else {
-                s
-            }
-        })
-        .collect()
+    chunks.into_iter().filter(|s| !s.is_empty()).collect()
 }
 
 /// 静的マークダウンを `##` / `###` 見出し単位でチャンク分割する。
@@ -2045,8 +2035,8 @@ pub async fn ingest_static_documents(
         tracing::warn!("ingest_static_documents: migration error: {}", e);
     }
 
-    // スキャン対象ファイル: AGENTS.md + skills/**/*.md (1階層サブディレクトリを含む)
-    let mut files = vec![workspace_dir.join("AGENTS.md")];
+    // スキャン対象ファイル: AGENTS.md + USER.md + skills/**/*.md (1階層サブディレクトリを含む)
+    let mut files = vec![workspace_dir.join("AGENTS.md"), workspace_dir.join("USER.md")];
     let skills_dir = workspace_dir.join("skills");
     if let Ok(entries) = std::fs::read_dir(&skills_dir) {
         let mut skill_files: Vec<_> = Vec::new();
@@ -3356,25 +3346,94 @@ Keep it short.\n\
     fn test_chunk_memory_md_basic() {
         let content = "# Memory\n\n- First bullet\n- Second bullet\n  continued\n- Third bullet";
         let chunks = chunk_memory_md(content);
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0], "- First bullet");
-        assert!(chunks[1].contains("Second bullet"));
-        assert_eq!(chunks[2], "- Third bullet");
+        // 3バレットが800bytes以内なので1チャンクに結合される
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].starts_with("[Memory]"), "got: {}", chunks[0]);
+        assert!(chunks[0].contains("First bullet"));
+        assert!(chunks[0].contains("Second bullet"));
+        assert!(chunks[0].contains("Third bullet"));
     }
 
     #[test]
-    fn test_chunk_memory_md_truncates_long() {
-        let long = format!("- {}", "x".repeat(600));
+    fn test_chunk_memory_md_long_bullet_single_chunk() {
+        // 600 bytes のバレット1件は単独でチャンクになる（800 以内）
+        let long = format!("- {}", "x".repeat(597));
         let chunks = chunk_memory_md(&long);
         assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].len() <= 512);
+        assert!(chunks[0].starts_with("[General]"), "got: {}", chunks[0]);
     }
 
     #[test]
-    fn test_chunk_memory_md_skips_headers() {
-        let content = "# Title\n\n## Section\n\n- bullet one\n- bullet two";
+    fn test_chunk_memory_md_section_boundary() {
+        // セクションをまたぐバレットは別チャンクになる
+        let content = "## Section A\n\n- bullet a\n\n## Section B\n\n- bullet b";
         let chunks = chunk_memory_md(content);
         assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].starts_with("[Section A]"), "got: {}", chunks[0]);
+        assert!(chunks[1].starts_with("[Section B]"), "got: {}", chunks[1]);
+    }
+
+    #[test]
+    fn test_chunk_memory_md_section_prefix() {
+        let content = "## User Preferences\n\n- First bullet\n- Second bullet";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(chunks.len(), 1);
+        assert!(
+            chunks[0].starts_with("[User Preferences]"),
+            "expected [User Preferences] prefix, got: {}",
+            chunks[0]
+        );
+        assert!(chunks[0].contains("First bullet"));
+        assert!(chunks[0].contains("Second bullet"));
+    }
+
+    #[test]
+    fn test_chunk_memory_md_adjacent_bullets_merged() {
+        let content = "## Section\n\n- bullet one\n- bullet two\n- bullet three";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(
+            chunks.len(),
+            1,
+            "adjacent bullets within 800 bytes should be merged"
+        );
+        assert!(chunks[0].contains("bullet one"));
+        assert!(chunks[0].contains("bullet two"));
+        assert!(chunks[0].contains("bullet three"));
+    }
+
+    #[test]
+    fn test_chunk_memory_md_split_on_overflow() {
+        // 各バレット 298 bytes × 3 = 894 bytes → 800 を超えるので分割される
+        let long_bullet = format!("- {}", "x".repeat(295));
+        let content = format!(
+            "## Section\n\n{}\n{}\n{}",
+            long_bullet, long_bullet, long_bullet
+        );
+        let chunks = chunk_memory_md(&content);
+        assert!(
+            chunks.len() >= 2,
+            "should split when total exceeds 800 bytes, got {} chunk(s)",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            assert!(
+                chunk.starts_with("[Section]"),
+                "each chunk must carry section prefix, got: {}",
+                &chunk[..chunk.len().min(30)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_chunk_memory_md_no_section_uses_general() {
+        let content = "- bullet without any section header";
+        let chunks = chunk_memory_md(content);
+        assert_eq!(chunks.len(), 1);
+        assert!(
+            chunks[0].starts_with("[General]"),
+            "no-section content must use [General] prefix, got: {}",
+            chunks[0]
+        );
     }
 
     #[test]
