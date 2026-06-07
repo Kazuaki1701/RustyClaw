@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-07 (Phase 43 完了)  
+> **最終更新日**: 2026-06-08 (ISSUE-26 完了)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。
 
 ---
@@ -13,7 +13,7 @@
 
 ---
 
-- `[ ]` **ISSUE-26: Heartbeat エージェントが 5ステップのループ上限に達して毎回クラッシュするバグの修正**
+- `[x]` **ISSUE-26: Heartbeat エージェントが 5ステップのループ上限に達して毎回クラッシュするバグの修正** (#20)
   - **症状**: 30分ごとの Heartbeat patrol 実行時、`list_family` や `get-gmail` などのツールを繰り返し呼び出し続け、最大ループ数（5回）を超過して `Heartbeat agent loop exceeded maximum step limit of 5` で終了する。
   - **原因**: `trim_heartbeat_messages` による対話履歴のトリミング（最新の1世代以外を捨てる）により、エージェントが「過去に確認済みであること」を忘れてしまい、無限にツールの再実行を繰り返している可能性が高い。
   - **対策案**: `trim_heartbeat_messages` の廃止または履歴保持件数の緩和、および新規データがない場合に速やかに `HEARTBEAT_OK` で終了させるプロンプト制御の強化。
