@@ -1709,6 +1709,7 @@ impl UnifiedRagEngine {
 
 /// MEMORY.md のバレット行を 1件 1チャンクに分割する。
 /// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
+#[allow(dead_code)]
 pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
     let mut chunks: Vec<String> = Vec::new();
     let mut current_section = "General".to_string();
@@ -1943,15 +1944,13 @@ pub async fn ingest_static_documents(
             let path = entry.path();
             if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
                 skill_files.push(path);
-            } else if path.is_dir() {
-                if let Ok(sub_entries) = std::fs::read_dir(&path) {
-                    for sub_entry in sub_entries.flatten() {
-                        let sub_path = sub_entry.path();
-                        if sub_path.is_file()
-                            && sub_path.extension().is_some_and(|ext| ext == "md")
-                        {
-                            skill_files.push(sub_path);
-                        }
+            } else if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                for sub_entry in sub_entries.flatten() {
+                    let sub_path = sub_entry.path();
+                    if sub_path.is_file()
+                        && sub_path.extension().is_some_and(|ext| ext == "md")
+                    {
+                        skill_files.push(sub_path);
                     }
                 }
             }
@@ -1967,14 +1966,15 @@ pub async fn ingest_static_documents(
         let mut log_files = Vec::new();
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if let Ok(date) = chrono::NaiveDate::parse_from_str(stem, "%Y-%m-%d") {
-                        if (now_utc - date).num_days() <= 14 {
-                            log_files.push(path);
-                        }
-                    }
-                }
+            let is_valid = path.is_file()
+                && path.extension().is_some_and(|ext| ext == "md")
+                && path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|stem| chrono::NaiveDate::parse_from_str(stem, "%Y-%m-%d").ok())
+                    .map(|date| (now_utc - date).num_days() <= 14)
+                    .unwrap_or(false);
+            if is_valid {
+                log_files.push(path);
             }
         }
         log_files.sort();
