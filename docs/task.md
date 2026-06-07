@@ -34,7 +34,7 @@
 
 > Phase 40 完了済み: 40-2（rig-core Tool 直接実装）・40-3（RAG 長期記憶）・40-5（Unified RAG）・40-6（rmcp 移行・ReAct ループ一本化）・40-7（Static Docs RAG）。
 
-- `[ ]` **40-1: `rustyclaw-providers` の rig-core Provider への置き換え**
+- `[x]` **40-1: `rustyclaw-providers` の rig-core Provider への置き換え** (#22)
   - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
 
 - `[ ]` **40-4: 宣言的 `AgentBuilder` の導入**
