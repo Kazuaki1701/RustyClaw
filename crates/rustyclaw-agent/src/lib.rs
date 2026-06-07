@@ -1431,11 +1431,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         {
             system_context.push_str(&continuation);
         }
-        // ヒストリを RAG クエリ構築に先立ってロード（cron: は空）
-        let history_for_rag: Vec<rustyclaw_providers::Message> = if session_id.starts_with("cron:") {
+        // セッション履歴のロード（RAG クエリ構築にも使用するため先行ロード）
+        let history_messages = if session_id.starts_with("cron:") {
             Vec::new()
         } else {
-            logger.load_history(session_id).unwrap_or_default()
+            logger
+                .load_history(session_id)
+                .context("Failed to load session history")?
         };
 
         // discord_top_k 優先、未設定時はグローバル top_k にフォールバック
@@ -1451,7 +1453,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let rag_query = if session_id.starts_with("cron:") {
             raw_user_message.to_string()
         } else {
-            build_discord_rag_query(&history_for_rag, raw_user_message)
+            build_discord_rag_query(&history_messages, raw_user_message)
         };
 
         if self
@@ -1475,15 +1477,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 system_context.push_str(&rag_ctx);
             }
         }
-
-        // セッション履歴のロード
-        let history_messages = if session_id.starts_with("cron:") {
-            Vec::new()
-        } else {
-            logger
-                .load_history(session_id)
-                .context("Failed to load session history")?
-        };
         let cleaned_history =
             self.process_proactive_posts(session_id, history_messages, &mut system_context);
         let mut history = ConversationHistory::new(cleaned_history);
