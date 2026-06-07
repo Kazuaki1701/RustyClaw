@@ -48,6 +48,10 @@ fn build_discord_rag_query(history: &[rustyclaw_providers::Message], raw_user_me
 }
 
 const HEARTBEAT_RAG_TAIL_LINES: usize = 10;
+const HEARTBEAT_STEP2_RAG_QUERY: &str =
+    "user interests hobbies routine habits long-term memory";
+const HEARTBEAT_STEP6_RAG_QUERY: &str =
+    "errors bugs pending tasks todo improvements";
 
 pub fn build_heartbeat_rag_query(digest: &str) -> String {
     let lines: Vec<&str> = digest.lines().collect();
@@ -770,11 +774,49 @@ Rules:
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
+                let step2_ctx = retrieve_rag_context_local(
+                    HEARTBEAT_STEP2_RAG_QUERY,
+                    &heartbeat_config,
+                    &client,
+                    db_path,
+                    hb_top_k,
+                )
+                .await;
+                if !step2_ctx.is_empty() {
+                    system_context.push_str("## Step 2 関連記憶\n");
+                    system_context.push_str(&step2_ctx);
+                }
+                let step6_ctx = retrieve_rag_context_local(
+                    HEARTBEAT_STEP6_RAG_QUERY,
+                    &heartbeat_config,
+                    &client,
+                    db_path,
+                    hb_top_k,
+                )
+                .await;
+                if !step6_ctx.is_empty() {
+                    system_context.push_str("## Step 6 関連記憶\n");
+                    system_context.push_str(&step6_ctx);
+                }
             }
         } else if let Some(ref rag) = self.rag {
             let rag_ctx = retrieve_rag_context(effective_rag, &heartbeat_config, rag, hb_top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
+            }
+            let step2_ctx =
+                retrieve_rag_context(HEARTBEAT_STEP2_RAG_QUERY, &heartbeat_config, rag, hb_top_k)
+                    .await;
+            if !step2_ctx.is_empty() {
+                system_context.push_str("## Step 2 関連記憶\n");
+                system_context.push_str(&step2_ctx);
+            }
+            let step6_ctx =
+                retrieve_rag_context(HEARTBEAT_STEP6_RAG_QUERY, &heartbeat_config, rag, hb_top_k)
+                    .await;
+            if !step6_ctx.is_empty() {
+                system_context.push_str("## Step 6 関連記憶\n");
+                system_context.push_str(&step6_ctx);
             }
         }
 
@@ -4048,6 +4090,27 @@ mod heartbeat_rag_tests {
     fn test_build_heartbeat_rag_query_prefix() {
         let result = build_heartbeat_rag_query("some content");
         assert!(result.starts_with("recent errors tasks memory updates: "));
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_step_rag_tests {
+    use super::*;
+
+    #[test]
+    fn test_heartbeat_step2_rag_query_value() {
+        assert_eq!(
+            HEARTBEAT_STEP2_RAG_QUERY,
+            "user interests hobbies routine habits long-term memory"
+        );
+    }
+
+    #[test]
+    fn test_heartbeat_step6_rag_query_value() {
+        assert_eq!(
+            HEARTBEAT_STEP6_RAG_QUERY,
+            "errors bugs pending tasks todo improvements"
+        );
     }
 }
 
