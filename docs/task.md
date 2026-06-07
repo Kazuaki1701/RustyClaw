@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-07 (ISSUE-33 登録: Discord チャット向け RAG 改善)  
+> **最終更新日**: 2026-06-07 (ISSUE-34 登録: Discord RAG history_for_rag エラーハンドリング統一)  
 > **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md`、(Phase 28b-4 / ISSUE-26 / ISSUE-27 / Phase 40-8) は `docs/archive/tasks/2026-06-06-completed-phase28b4-issue26-27-phase40-8.md`、(ISSUE-28〜32) は `docs/archive/tasks/2026-06-07-completed-issues-28-to-32.md` に保存
 
 ---
@@ -10,6 +10,11 @@
 ## バグ修正
 
 > 実運用ログから発見されたバグ・要改善項目。優先度とは独立して管理し、次スプリントの実施案件を選択する。発見次第追記する。
+
+- `[ ]` **ISSUE-34: Discord RAG `history_for_rag` のエラーハンドリングを `history_messages` と統一**
+  - `execute_with_rig_agent` 内で `history_for_rag` ロード時に `unwrap_or_default()` を使用しているが、直後の `history_messages` ロードは `.context("Failed to load session history")?` で明示エラーを返す
+  - 対象: `crates/rustyclaw-agent/src/lib.rs` の `history_for_rag` 変数（旧コミット 442a941 由来）
+  - 対処: `unwrap_or_default()` を `.context(...)? ` パターンに統一、または RAG 専用として fail-open のまま `tracing::warn!` を追加
 
 - `[x]` **ISSUE-33: Discord チャット向け RAG 改善 — クエリ拡張 + discord_top_k** (#13)
   - 案A: `execute_with_rig_agent` のクエリを直近 2〜3 ターン会話 + ユーザーメッセージに拡張
