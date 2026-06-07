@@ -4021,25 +4021,29 @@ mod heartbeat_rag_tests {
             .collect::<Vec<_>>()
             .join("\n");
         let result = build_heartbeat_rag_query(&digest);
-        assert!(result.starts_with("recent errors tasks memory updates: "));
-        assert!(result.contains("line1"));
-        assert!(result.contains("line10"));
+        assert_eq!(
+            result,
+            format!("recent errors tasks memory updates: {}", digest),
+            "all 10 lines should be retained"
+        );
     }
 
     #[test]
     fn test_build_heartbeat_rag_query_truncates_old_lines() {
-        // 11行: 最古の line1 は除外され line2〜line11 のみ残る
         let digest = (1..=11)
             .map(|i| format!("line{i}"))
             .collect::<Vec<_>>()
             .join("\n");
+        let expected_tail = (2..=11)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let result = build_heartbeat_rag_query(&digest);
-        assert!(result.starts_with("recent errors tasks memory updates: "));
-        // Check that line1 (standalone) is not present, but lines 2-11 are.
-        // We check for newline or start of string to avoid matching within "line10", "line11"
-        assert!(!result.contains("\nline1\n") && !result.starts_with("recent errors tasks memory updates: line1\n"), "line1 should be truncated");
-        assert!(result.contains("line2"));
-        assert!(result.contains("line11"));
+        assert_eq!(
+            result,
+            format!("recent errors tasks memory updates: {}", expected_tail),
+            "line1 should be truncated, only line2..line11 retained"
+        );
     }
 
     #[test]
