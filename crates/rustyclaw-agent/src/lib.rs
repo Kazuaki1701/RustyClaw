@@ -491,8 +491,8 @@ impl Pipeline {
             return Ok(());
         }
 
-        // delta >= 6（≒3ターン）かつ前回から 15 分以上経過した場合のみ実行
-        const DELTA_THRESHOLD: usize = 6;
+        // delta >= 3（≒1.5ターン）かつ前回から 15 分以上経過した場合のみ実行
+        const DELTA_THRESHOLD: usize = 3;
         const MIN_INTERVAL_MINS: i64 = 15;
 
         let count_key = format!("flush_count_{}", session_id);
@@ -579,7 +579,6 @@ You are a memory manager. Given the current MEMORY.md and a recent conversation,
 1. Produce a fully rewritten MEMORY.md that:
    - Incorporates important new facts, decisions, preferences, and learnings from the conversation
    - Removes outdated or redundant information
-   - Stays strictly under 5KB (≤ 5000 characters)
    - Uses concise, factual bullet points under clear headings
    - If nothing new is worth adding and the existing content is fine, output it unchanged
 
@@ -595,7 +594,6 @@ Output using exactly these delimiters (no extra text outside them):
 
 Rules:
 - Never truncate mid-sentence inside ---NEW_MEMORY---.
-- Keep MEMORY.md total under 5000 characters.
 - Write in the same language as the existing MEMORY.md content.
 ";
 
@@ -648,17 +646,7 @@ Rules:
             extract_delimited_block(&response_text, "---DAILY_LOG---", "---END_DAILY_LOG---");
 
         // 1. MEMORY.md の全書き換え (fail-open)
-        if let Some(content) = new_memory {
-            // LLM が 5KB を超えて返した場合のフェイルセーフとして 70/20 トランケート
-            let final_content = if content.len() > 5000 {
-                tracing::warn!(
-                    actual_bytes = content.len(),
-                    "memory flush: LLM returned oversized MEMORY.md, truncating"
-                );
-                truncate_70_20(&content, 5000)
-            } else {
-                content
-            };
+        if let Some(final_content) = new_memory {
             if let Err(e) =
                 rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()).await
             {
