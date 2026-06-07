@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> **ステータス**: `[HISTORICAL]` (過去の計画書 - 開発完了済み)
+> **完了日**: 2026-06-07
+> **備考**: 最新の動作仕様については、`docs/specs/04_heartbeat_spec.md` を参照してください。
+
 # Phase 43-A RAG 最適化 Heartbeat Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

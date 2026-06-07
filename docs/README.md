@@ -37,7 +37,7 @@ docs/
 │   └── 92_picoclaw_comparison.md  # PicoClaw とのアーキテクチャ・機能比較仕様
 │
 ├── plans/                     # 【開発中】実装前または現在進行中の「個別実装計画書」
-│   └── 2026-06-06-local-embedding-complete-rag-unification.md # ローカルEmbedding・完全RAG一元化計画
+│   └── YYYY-MM-DD-<機能名>.md  # 現在進行中の計画書（ファイル名は Phase に応じて変動）
 │
 ├── review/                    # 【点検・レビュー】コードレビュー、ログ点検、実行検証記録（現在は空）
 │
