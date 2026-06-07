@@ -47,6 +47,15 @@ fn build_discord_rag_query(history: &[rustyclaw_providers::Message], raw_user_me
     parts.join("\n")
 }
 
+const HEARTBEAT_RAG_TAIL_LINES: usize = 10;
+
+pub fn build_heartbeat_rag_query(digest: &str) -> String {
+    let lines: Vec<&str> = digest.lines().collect();
+    let start = lines.len().saturating_sub(HEARTBEAT_RAG_TAIL_LINES);
+    let tail = lines[start..].join("\n");
+    format!("recent errors tasks memory updates: {}", tail)
+}
+
 pub struct Pipeline {
     config: Config,
     provider: Box<dyn LlmProvider>,
@@ -726,6 +735,7 @@ Rules:
         workspace_dir: &Path,
         session_id: &str,
         user_message: &str,
+        rag_query: Option<&str>,
         tool_registry: &ToolRegistry,
         db_path: &Path,
     ) -> Result<LlmResponse> {
@@ -746,6 +756,7 @@ Rules:
             }
             cfg
         };
+        let effective_rag = rag_query.unwrap_or(user_message);
         if heartbeat_config
             .embedding
             .as_ref()
@@ -754,14 +765,14 @@ Rules:
         {
             if let Some(client) = make_embed_client(&heartbeat_config) {
                 let rag_ctx =
-                    retrieve_rag_context_local(user_message, &heartbeat_config, &client, db_path, hb_top_k)
+                    retrieve_rag_context_local(effective_rag, &heartbeat_config, &client, db_path, hb_top_k)
                         .await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &heartbeat_config, rag, hb_top_k).await;
+            let rag_ctx = retrieve_rag_context(effective_rag, &heartbeat_config, rag, hb_top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -3978,6 +3989,65 @@ Keep it short.\n\
         let files: &[&str] = &["SOUL.md", "HEARTBEAT.md"]; // MEMORY.md を含まない
         let contains_memory = files.contains(&"MEMORY.md");
         assert!(!contains_memory, "build_heartbeat_context は MEMORY.md を静的ロードしないべき");
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_rag_tests {
+    use super::*;
+
+    #[test]
+    fn test_build_heartbeat_rag_query_empty() {
+        let result = build_heartbeat_rag_query("");
+        assert_eq!(result, "recent errors tasks memory updates: ");
+    }
+
+    #[test]
+    fn test_build_heartbeat_rag_query_fewer_than_10_lines() {
+        let digest = "line1\nline2\nline3";
+        let result = build_heartbeat_rag_query(digest);
+        assert_eq!(
+            result,
+            "recent errors tasks memory updates: line1\nline2\nline3"
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_rag_query_exactly_10_lines() {
+        let digest = (1..=10)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = build_heartbeat_rag_query(&digest);
+        assert_eq!(
+            result,
+            format!("recent errors tasks memory updates: {}", digest),
+            "all 10 lines should be retained"
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_rag_query_truncates_old_lines() {
+        let digest = (1..=11)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let expected_tail = (2..=11)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = build_heartbeat_rag_query(&digest);
+        assert_eq!(
+            result,
+            format!("recent errors tasks memory updates: {}", expected_tail),
+            "line1 should be truncated, only line2..line11 retained"
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_rag_query_prefix() {
+        let result = build_heartbeat_rag_query("some content");
+        assert!(result.starts_with("recent errors tasks memory updates: "));
     }
 }
 

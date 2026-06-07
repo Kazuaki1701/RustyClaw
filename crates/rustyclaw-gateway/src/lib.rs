@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rustyclaw_agent::{Pipeline, UnifiedRagEngine};
+use rustyclaw_agent::{build_heartbeat_rag_query, Pipeline, UnifiedRagEngine};
 use rustyclaw_channels::{Channel, DiscordConnector};
 use rustyclaw_config::Config;
 use std::collections::HashMap;
@@ -285,6 +285,7 @@ impl LaneRegistry {
                             prompt_parts.push(format!("Recent activity digest:\n{}", digest));
 
                             let heartbeat_prompt = prompt_parts.join("\n\n");
+                            let heartbeat_rag_query = build_heartbeat_rag_query(&digest);
 
                             let mut attempt = 0;
                             let max_attempts = 3;
@@ -327,6 +328,7 @@ impl LaneRegistry {
                                                 &workspace_path,
                                                 &session_id,
                                                 &heartbeat_prompt,
+                                                Some(&heartbeat_rag_query),
                                                 &tool_registry,
                                                 &db_path,
                                             )
