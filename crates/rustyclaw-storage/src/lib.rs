@@ -12,7 +12,7 @@ use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 pub mod search;
 pub use search::SearchIndexManager;
 
-type EmbeddingRow = (String, String, String, Vec<f32>);
+pub type EmbeddingRow = (String, String, String, Vec<f32>, Option<String>);
 
 // ==============================================================================
 // 0. パスロック管理 (Path Lock Manager)
@@ -117,7 +117,8 @@ impl DbManager {
                 session_id TEXT,
                 text_content TEXT NOT NULL,
                 embedding BLOB NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                parent_id TEXT DEFAULT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source
                 ON memory_embeddings(source);
@@ -138,6 +139,7 @@ impl DbManager {
             "ALTER TABLE usage ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'unknown'",
             "ALTER TABLE usage ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE usage ADD COLUMN provider_id TEXT",
+            "ALTER TABLE memory_embeddings ADD COLUMN parent_id TEXT DEFAULT NULL",
         ] {
             let _ = self.conn.execute(stmt, []);
         }
@@ -165,15 +167,16 @@ impl DbManager {
         session_id: Option<&str>,
         text_content: &str,
         embedding: &[f32],
+        parent_id: Option<&str>,
     ) -> Result<()> {
         let blob = Self::serialize_embedding(embedding);
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO memory_embeddings
-             (id, source, session_id, text_content, embedding, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![id, source, session_id, text_content, blob, now],
+              (id, source, session_id, text_content, embedding, created_at, parent_id)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![id, source, session_id, text_content, blob, now, parent_id],
             )
             .context("Failed to upsert embedding")?;
         Ok(())
@@ -199,11 +202,11 @@ impl DbManager {
         Ok(out)
     }
 
-    /// (id, source, text_content, embedding) の全行を返す。UnifiedRagEngine の rebuild に使用。
+    /// (id, source, text_content, embedding, parent_id) の全行を返す。UnifiedRagEngine の rebuild に使用。
     pub fn load_all_embeddings_with_ids(&self) -> Result<Vec<EmbeddingRow>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, source, text_content, embedding FROM memory_embeddings")
+            .prepare("SELECT id, source, text_content, embedding, parent_id FROM memory_embeddings")
             .context("Failed to prepare load_all_embeddings_with_ids")?;
         let rows = stmt
             .query_map([], |row| {
@@ -211,15 +214,30 @@ impl DbManager {
                 let source: String = row.get(1)?;
                 let text: String = row.get(2)?;
                 let blob: Vec<u8> = row.get(3)?;
-                Ok((id, source, text, blob))
+                let parent_id: Option<String> = row.get(4)?;
+                Ok((id, source, text, blob, parent_id))
             })
             .context("Failed to query embeddings")?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, source, text, blob) = row.context("Failed to read row")?;
-            out.push((id, source, text, Self::deserialize_embedding(&blob)));
+            let (id, source, text, blob, parent_id) = row.context("Failed to read row")?;
+            out.push((id, source, text, Self::deserialize_embedding(&blob), parent_id));
         }
         Ok(out)
+    }
+
+    pub fn get_embedding_text_by_id(&self, id: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT text_content FROM memory_embeddings WHERE id = ?1")
+            .context("Failed to prepare get_embedding_text_by_id")?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            let text: String = row.get(0)?;
+            Ok(Some(text))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn delete_embeddings_by_source(&self, source: &str) -> Result<()> {
@@ -237,11 +255,24 @@ impl DbManager {
         self.conn
             .execute(
                 "DELETE FROM memory_embeddings
-             WHERE source = 'session'
-               AND created_at < datetime('now', ?1)",
+              WHERE source = 'session'
+                AND created_at < datetime('now', ?1)",
                 rusqlite::params![format!("-{} days", keep_days)],
             )
             .context("Failed to delete old session embeddings")?;
+        Ok(())
+    }
+
+    /// source が 'doc:memory/logs/%' の embedding のうち keep_days 日より古いものを削除する。
+    pub fn delete_old_log_embeddings(&self, keep_days: u32) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM memory_embeddings
+              WHERE source LIKE 'doc:memory/logs/%'
+                AND created_at < datetime('now', ?1)",
+                rusqlite::params![format!("-{} days", keep_days)],
+            )
+            .context("Failed to delete old log embeddings")?;
         Ok(())
     }
 
@@ -318,7 +349,8 @@ impl DbManager {
     }
 
     /// クエリベクトルに近い記憶を (source, text_content, score) 形式で返す。
-    /// 既存の search_similar_memories と異なり source 列も含む。
+    /// 既存 of search_similar_memories と異なり source 列も含む。
+    /// 親子関係 (parent_id) が存在する場合は自動的に親チャンクのテキストに解決して返す。
     pub fn search_similar_with_source(
         &self,
         query_vec: &[f32],
@@ -327,7 +359,11 @@ impl DbManager {
     ) -> Result<Vec<(String, String, f64)>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT source, text_content, embedding FROM memory_embeddings")
+            .prepare(
+                "SELECT c.source, COALESCE(p.text_content, c.text_content) AS resolved_text, c.embedding \
+                 FROM memory_embeddings c \
+                 LEFT JOIN memory_embeddings p ON c.parent_id = p.id"
+            )
             .context("search_similar_with_source: prepare failed")?;
         let rows = stmt
             .query_map([], |row| {
@@ -357,6 +393,7 @@ impl DbManager {
     /// threshold は cosine_sim に適用（relevance ゲート）。
     /// combined_score = cosine_sim * 0.5^(age_days / half_life_days)
     /// created_at の parse 失敗は fail-open（age_days = 0.0 → decay なし）。
+    /// 親子関係 (parent_id) が存在する場合は自動的に親チャンクのテキストに解決して返す。
     pub fn search_similar_with_decay(
         &self,
         query_vec: &[f32],
@@ -372,7 +409,9 @@ impl DbManager {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT source, text_content, embedding, created_at FROM memory_embeddings",
+                "SELECT c.source, COALESCE(p.text_content, c.text_content) AS resolved_text, c.embedding, c.created_at \
+                 FROM memory_embeddings c \
+                 LEFT JOIN memory_embeddings p ON c.parent_id = p.id"
             )
             .context("search_similar_with_decay: prepare failed")?;
         let rows = stmt
@@ -1149,7 +1188,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = DbManager::new(tmp.path().join("test.db")).unwrap();
         let emb: Vec<f32> = vec![0.1, 0.2, 0.3];
-        db.upsert_embedding("id1", "memory", None, "hello world", &emb)
+        db.upsert_embedding("id1", "memory", None, "hello world", &emb, None)
             .unwrap();
         let rows = db.load_all_embeddings().unwrap();
         assert_eq!(rows.len(), 1);
@@ -1210,10 +1249,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = DbManager::new(tmp.path().join("test.db")).unwrap();
         // (1, 0, 0) = "hello" に近いベクトル
-        db.upsert_embedding("a", "memory", None, "hello", &[1.0, 0.0, 0.0])
+        db.upsert_embedding("a", "memory", None, "hello", &[1.0, 0.0, 0.0], None)
             .unwrap();
         // (0, 1, 0) = "world" は直交
-        db.upsert_embedding("b", "memory", None, "world", &[0.0, 1.0, 0.0])
+        db.upsert_embedding("b", "memory", None, "world", &[0.0, 1.0, 0.0], None)
             .unwrap();
 
         // クエリ (1, 0, 0) → threshold 0.9 → "hello" のみヒット
@@ -1229,17 +1268,17 @@ mod tests {
     fn test_load_all_embeddings_with_ids() {
         let dir = tempfile::tempdir().unwrap();
         let db = DbManager::new(dir.path().join("t.db").to_str().unwrap()).unwrap();
-        db.upsert_embedding("m0", "memory", None, "text A", &[1.0f32, 0.0])
+        db.upsert_embedding("m0", "memory", None, "text A", &[1.0f32, 0.0], None)
             .unwrap();
-        db.upsert_embedding("s0", "session", Some("ses-1"), "text B", &[0.0f32, 1.0])
+        db.upsert_embedding("s0", "session", Some("ses-1"), "text B", &[0.0f32, 1.0], None)
             .unwrap();
 
         let rows = db.load_all_embeddings_with_ids().unwrap();
         assert_eq!(rows.len(), 2);
-        let ids: Vec<&str> = rows.iter().map(|(id, _, _, _)| id.as_str()).collect();
+        let ids: Vec<&str> = rows.iter().map(|(id, _, _, _, _)| id.as_str()).collect();
         assert!(ids.contains(&"m0"));
         assert!(ids.contains(&"s0"));
-        let (_, src, _, _) = rows.iter().find(|(id, _, _, _)| id == "m0").unwrap();
+        let (_, src, _, _, _) = rows.iter().find(|(id, _, _, _, _)| id == "m0").unwrap();
         assert_eq!(src, "memory");
     }
 
@@ -1252,9 +1291,9 @@ mod tests {
              VALUES('old','session','s-old','old',X'00000000','2020-01-01T00:00:00Z')",
             [],
         ).unwrap();
-        db.upsert_embedding("new", "session", Some("s-new"), "new", &[0.0f32])
+        db.upsert_embedding("new", "session", Some("s-new"), "new", &[0.0f32], None)
             .unwrap();
-        db.upsert_embedding("mem", "memory", None, "keep", &[0.0f32])
+        db.upsert_embedding("mem", "memory", None, "keep", &[0.0f32], None)
             .unwrap();
 
         db.delete_old_session_embeddings(30).unwrap();
@@ -1317,7 +1356,7 @@ mod tests {
     fn test_detect_stored_embedding_dims_1024() {
         let db = DbManager::new(":memory:").unwrap();
         let fake = vec![0.0f32; 1024];
-        db.upsert_embedding("id1", "test", None, "hello", &fake)
+        db.upsert_embedding("id1", "test", None, "hello", &fake, None)
             .unwrap();
         assert_eq!(db.detect_stored_embedding_dims(), Some(1024));
     }
@@ -1326,7 +1365,7 @@ mod tests {
     fn test_detect_stored_embedding_dims_384() {
         let db = DbManager::new(":memory:").unwrap();
         let fake = vec![0.0f32; 384];
-        db.upsert_embedding("id1", "test", None, "hello", &fake)
+        db.upsert_embedding("id1", "test", None, "hello", &fake, None)
             .unwrap();
         assert_eq!(db.detect_stored_embedding_dims(), Some(384));
     }
@@ -1335,7 +1374,7 @@ mod tests {
     fn test_migrate_embedding_dims_not_needed() {
         let db = DbManager::new(":memory:").unwrap();
         let fake = vec![0.0f32; 384];
-        db.upsert_embedding("id1", "test", None, "text", &fake)
+        db.upsert_embedding("id1", "test", None, "text", &fake, None)
             .unwrap();
         // 既に 384 次元 → マイグレーション不要
         let migrated = db.migrate_embedding_dims_if_needed(384).unwrap();
@@ -1348,7 +1387,7 @@ mod tests {
         let db = DbManager::new(":memory:").unwrap();
         // 1024 次元のダミーデータを投入
         let fake_1024 = vec![0.0f32; 1024];
-        db.upsert_embedding("id1", "test", None, "text", &fake_1024)
+        db.upsert_embedding("id1", "test", None, "text", &fake_1024, None)
             .unwrap();
         db.check_and_update_doc_state("AGENTS.md", "abc123")
             .unwrap();
@@ -1387,11 +1426,11 @@ mod tests {
         let v1 = vec![1.0f32, 0.0, 0.0]; // source="doc:AGENTS.md"
         let v2 = vec![0.0f32, 1.0, 0.0]; // source="memory"
         let v3 = vec![0.9f32, 0.1, 0.0]; // source="doc:SKILL.md" (v1 に近い)
-        db.upsert_embedding("id1", "doc:AGENTS.md", None, "agents text", &v1)
+        db.upsert_embedding("id1", "doc:AGENTS.md", None, "agents text", &v1, None)
             .unwrap();
-        db.upsert_embedding("id2", "memory", None, "memory text", &v2)
+        db.upsert_embedding("id2", "memory", None, "memory text", &v2, None)
             .unwrap();
-        db.upsert_embedding("id3", "doc:SKILL.md", None, "skill text", &v3)
+        db.upsert_embedding("id3", "doc:SKILL.md", None, "skill text", &v3, None)
             .unwrap();
 
         // クエリ = v1 方向 → v1, v3 が近い
@@ -1410,9 +1449,9 @@ mod tests {
         let db = DbManager::new(":memory:").unwrap();
         let v1 = vec![1.0f32, 0.0];
         let v2 = vec![0.0f32, 1.0]; // 直交 → score = 0.0
-        db.upsert_embedding("id1", "doc:A", None, "text A", &v1)
+        db.upsert_embedding("id1", "doc:A", None, "text A", &v1, None)
             .unwrap();
-        db.upsert_embedding("id2", "doc:B", None, "text B", &v2)
+        db.upsert_embedding("id2", "doc:B", None, "text B", &v2, None)
             .unwrap();
 
         let query = vec![1.0f32, 0.0];

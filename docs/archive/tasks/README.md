@@ -7,6 +7,7 @@
 
 | 完了日 | 対象フェーズ / ISSUE | アーカイブファイルへのリンク |
 | :--- | :--- | :--- |
+| 2026-06-07 | Phase 43-D / Phase 43-E | [2026-06-07-completed-phase43de-rag.md](2026-06-07-completed-phase43de-rag.md) |
 | 2026-06-07 | Phase 43 / ISSUE-34 | [completed-phase43-issue34.md](completed-phase43-issue34.md) |
 | 2026-06-07 | Phase 41-1 / Phase 42 / ISSUE-33 | [completed-phase41-phase42-issue33.md](completed-phase41-phase42-issue33.md) |
 | 2026-06-07 | ISSUE-28〜32 | [completed-issues-28-to-32.md](completed-issues-28-to-32.md) |
