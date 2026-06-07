@@ -704,7 +704,7 @@ Rules:
 
     /// Heartbeat 専用の軽量システムコンテキストを構築する（SOUL + HEARTBEAT のみ）。
     /// MEMORY.md は RAG 経由で関連チャンクのみを動的注入する（ISSUE-28）。
-    /// 静的ファイルを先頭に、動的な [now:] を末尾に置くことでプロンプトキャッシュ prefix を安定させる。
+    /// 静的ファイルのみを返す。動的な [now:] は呼び出し元 execute_heartbeat で追加する。
     pub fn build_heartbeat_context(&self, workspace_dir: &Path) -> Result<String> {
         let files = ["SOUL.md", "HEARTBEAT.md"];
         let mut context = String::new();
@@ -727,9 +727,6 @@ Rules:
                 Self::strip_comments(&content)
             ));
         }
-        // 動的ブロック（現在時刻）は末尾に配置
-        let now = chrono::Local::now();
-        context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
         Ok(context)
     }
 
@@ -744,6 +741,8 @@ Rules:
         db_path: &Path,
     ) -> Result<LlmResponse> {
         let mut system_context = self.build_heartbeat_context(workspace_dir)?;
+        let now = chrono::Local::now();
+        system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
 
         // RAG: heartbeat プロンプトに関連チャンクを注入 (ISSUE-27)
         // heartbeat_top_k が設定されている場合は config を clone して top_k を上書き (ISSUE-30)
@@ -4031,6 +4030,26 @@ Keep it short.\n\
         let files: &[&str] = &["SOUL.md", "HEARTBEAT.md"]; // MEMORY.md を含まない
         let contains_memory = files.contains(&"MEMORY.md");
         assert!(!contains_memory, "build_heartbeat_context は MEMORY.md を静的ロードしないべき");
+    }
+
+    #[test]
+    fn test_build_heartbeat_context_is_static() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::write(ws.join("SOUL.md"), "# Soul").unwrap();
+        std::fs::write(ws.join("HEARTBEAT.md"), "# Heartbeat").unwrap();
+
+        let config = make_test_config_with_url("http://localhost");
+        let flush_sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, flush_sem);
+        let context = pipeline.build_heartbeat_context(ws).unwrap();
+
+        assert!(context.contains("# SOUL.md"));
+        assert!(context.contains("# HEARTBEAT.md"));
+        assert!(
+            !context.contains("[now: "),
+            "build_heartbeat_context must not include [now:] — dynamic content belongs in execute_heartbeat"
+        );
     }
 }
 
