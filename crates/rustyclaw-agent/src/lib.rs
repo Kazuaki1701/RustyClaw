@@ -2429,7 +2429,15 @@ pub(crate) async fn retrieve_rag_context_local(
         .as_ref()
         .map(|e| e.similarity_threshold)
         .unwrap_or(0.60);
-    match db.search_similar_with_source(&embeddings[0], top_k, threshold) {
+    let half_life = config
+        .embedding
+        .as_ref()
+        .and_then(|e| e.time_decay_half_life_days);
+    let search_result = match half_life {
+        Some(hl) => db.search_similar_with_decay(&embeddings[0], top_k, threshold, hl),
+        None => db.search_similar_with_source(&embeddings[0], top_k, threshold),
+    };
+    match search_result {
         Ok(results) if !results.is_empty() => {
             tracing::debug!("retrieve_rag_context_local: {} hits", results.len());
             format_rag_context(&results)

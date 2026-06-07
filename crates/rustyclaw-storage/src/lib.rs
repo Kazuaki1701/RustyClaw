@@ -351,6 +351,63 @@ impl DbManager {
         Ok(scored)
     }
 
+    /// コサイン類似度に時間減衰係数を乗じた combined_score でリランキングする。
+    /// threshold は cosine_sim に適用（relevance ゲート）。
+    /// combined_score = cosine_sim * 0.5^(age_days / half_life_days)
+    /// created_at の parse 失敗は fail-open（age_days = 0.0 → decay なし）。
+    pub fn search_similar_with_decay(
+        &self,
+        query_vec: &[f32],
+        top_k: usize,
+        threshold: f32,
+        half_life_days: f64,
+    ) -> Result<Vec<(String, String, f64)>> {
+        if half_life_days <= 0.0 {
+            return Ok(vec![]);
+        }
+        let threshold = threshold as f64;
+        let now_utc = chrono::Utc::now();
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT source, text_content, embedding, created_at FROM memory_embeddings",
+            )
+            .context("search_similar_with_decay: prepare failed")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let source: String = row.get(0)?;
+                let text: String = row.get(1)?;
+                let blob: Vec<u8> = row.get(2)?;
+                let created_at: String = row.get(3)?;
+                Ok((source, text, blob, created_at))
+            })
+            .context("search_similar_with_decay: query failed")?;
+
+        let mut scored: Vec<(String, String, f64)> = rows
+            .filter_map(|r| r.ok())
+            .filter_map(|(source, text, blob, created_at_str)| {
+                let emb = Self::deserialize_embedding(&blob);
+                let sim = Self::cosine_similarity(query_vec, &emb) as f64;
+                if sim < threshold {
+                    return None;
+                }
+                let age_days = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                    .map(|dt| {
+                        let secs = (now_utc - dt.to_utc()).num_seconds().max(0) as f64;
+                        secs / 86400.0
+                    })
+                    .unwrap_or(0.0);
+                let factor = 0.5_f64.powf(age_days / half_life_days);
+                let combined = sim * factor;
+                Some((source, text, combined))
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        Ok(scored)
+    }
+
     /// コサイン類似度を計算する
     /// 同じ次元数・ノンゼロのベクトルが必須。不正な場合は 0.0 を返す。
     pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -1362,5 +1419,95 @@ mod tests {
         // v2 は直交 (score=0) なので threshold 0.5 未満 → 除外
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "doc:A");
+    }
+
+    #[test]
+    fn test_search_similar_with_decay_newer_ranks_higher() {
+        let db = DbManager::new(":memory:").unwrap();
+        let v = vec![1.0f32, 0.0, 0.0];
+        let blob = DbManager::serialize_embedding(&v);
+
+        // 新しいチャンク (recent)
+        db.conn
+            .execute(
+                "INSERT INTO memory_embeddings (id, source, session_id, text_content, embedding, created_at)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+                rusqlite::params!["new", "memory", "new text", blob.clone(), "2026-06-06T00:00:00+00:00"],
+            )
+            .unwrap();
+
+        // 古いチャンク (old)
+        db.conn
+            .execute(
+                "INSERT INTO memory_embeddings (id, source, session_id, text_content, embedding, created_at)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+                rusqlite::params!["old", "memory", "old text", blob, "2020-01-01T00:00:00+00:00"],
+            )
+            .unwrap();
+
+        // 同じクエリベクトルで検索。half_life = 30日 → 古い方は大幅ペナルティ
+        let results = db
+            .search_similar_with_decay(&v, 2, 0.5, 30.0)
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        // new text が先頭
+        assert_eq!(results[0].1, "new text", "newer item should rank first");
+        // combined_score は降順
+        assert!(results[0].2 >= results[1].2, "scores should be descending");
+    }
+
+    #[test]
+    fn test_search_similar_with_decay_threshold_filters() {
+        let db = DbManager::new(":memory:").unwrap();
+        let v1 = vec![1.0f32, 0.0];
+        let v2 = vec![0.0f32, 1.0]; // 直交 → cosine = 0.0 → threshold 未満
+        let blob1 = DbManager::serialize_embedding(&v1);
+        let blob2 = DbManager::serialize_embedding(&v2);
+
+        db.conn
+            .execute(
+                "INSERT INTO memory_embeddings (id, source, session_id, text_content, embedding, created_at)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+                rusqlite::params!["r", "memory", "relevant", blob1, "2026-06-06T00:00:00+00:00"],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO memory_embeddings (id, source, session_id, text_content, embedding, created_at)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+                rusqlite::params!["u", "memory", "unrelated", blob2, "2026-06-06T00:00:00+00:00"],
+            )
+            .unwrap();
+
+        let results = db
+            .search_similar_with_decay(&v1, 5, 0.5, 30.0)
+            .unwrap();
+
+        // 直交ベクトルは cosine=0.0 < threshold 0.5 → 除外
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "relevant");
+    }
+
+    #[test]
+    fn test_search_similar_with_decay_invalid_created_at_does_not_panic() {
+        let db = DbManager::new(":memory:").unwrap();
+        let v = vec![1.0f32, 0.0];
+        let blob = DbManager::serialize_embedding(&v);
+
+        db.conn
+            .execute(
+                "INSERT INTO memory_embeddings (id, source, session_id, text_content, embedding, created_at)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+                rusqlite::params!["x", "memory", "text", blob, "not-a-valid-date"],
+            )
+            .unwrap();
+
+        // parse 失敗 → fail-open（age_days = 0.0、decay なし）
+        let results = db
+            .search_similar_with_decay(&v, 5, 0.5, 30.0)
+            .unwrap();
+
+        assert_eq!(results.len(), 1, "item with invalid created_at still returned");
     }
 }
