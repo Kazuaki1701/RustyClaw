@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
 > **最終更新日**: 2026-06-07 (Phase 43 完了)  
-> **アーカイブ**: 完了済みフェーズ (Phase 2〜19) は `docs/archive/tasks/2026-05-30-completed-phases-2-to-19.md`、(Phase 20, 21, 28, 旧31) は `docs/archive/tasks/2026-05-31-completed-phases-20-21-28-31.md`、(Phase 29, 32, 34, 35, 35b) は `docs/archive/tasks/2026-06-02-completed-phases-29-32-34-35-35b.md`、(Phase 24, 36, 38) は `docs/archive/tasks/2026-06-04-completed-phases-24-36-38.md`、(Phase 40 バグ修正・40-2/3/5/6/7 完了・Phase 25/28b 完了項目) は `docs/archive/tasks/2026-06-06-completed-phase40-bugs-subtasks.md`、(Phase 28b-4 / ISSUE-26 / ISSUE-27 / Phase 40-8) は `docs/archive/tasks/2026-06-06-completed-phase28b4-issue26-27-phase40-8.md`、(ISSUE-28〜32) は `docs/archive/tasks/2026-06-07-completed-issues-28-to-32.md`、(Phase 41-1 / Phase 42 / ISSUE-33) は `docs/archive/tasks/2026-06-07-completed-phase41-phase42-issue33.md`、(Phase 43 / ISSUE-34) は `docs/archive/tasks/2026-06-07-completed-phase43-issue34.md` に保存
+> **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。
 
 ---
 
@@ -103,24 +103,7 @@
 #### Phase 27: ハウスクリーニング、ディスク容量保護と Cron 拡張
 
 - `[ ]` **1. ディスク空き容量監視と SSD 保護の導入**
-  - 定期実行時に USB SSD の空き容量をチェックし、残り容量が 5% 以下になった際に Discord 等へ警告アラートを投げる保護タスクの実装。
-
-- `[ ]` **2. Cron セッションおよびログの自動プルーニングの実装**
-  - 古い `cron:` 実行ログやセッションファイルを自動消去するクリーンアップ機構の実装。
-  - 対象: `crates/rustyclaw-gateway/src/cron.rs`
-
-- `[ ]` **3. 1回限り (at / deleteAfterRun) jobの自動削除サポート**
-  - 実行完了後に `cron.json` から自身のジョブ定義を自動削除し、アトミックに更新保存。
-
-#### Phase 28b 残: ダッシュボード精度・起動最適化のフォローアップ
-> 出典: 2026-05-31 の Phase 28 実機検証（`gateway --no-agent` 起動ログ点検）で判明した改善候補。
-
-- `[ ]` **2. Gateway 起動時の設定ロード遅延（約11秒）の短縮検討**
-  - `Initializing daemon` から `loaded configuration` まで約11秒を要する（`--no-agent` でも発生）。遅延要素の遅延初期化（lazy）等で起動高速化を検討。
-  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（`Gateway::run` 初期化シーケンス）
-
-#### Phase 30: Upstream 先進機能：Hook・Steering・Spawn タスクの統合
-> ※ PicoClaw (Go Upstream) 参照。GeminiClaw ギャップではなく、RustyClaw の独自進化機能として位置付け。  
+  - 定期実行時に USB SSD の空き容量をチェックし、残り容  
 > 対象: `crates/rustyclaw-agent/`, `crates/rustyclaw-gateway/`, `crates/rustyclaw-tools/`, `crates/rustyclaw-cli/`
 
 - `[ ]` **1. イベント駆動 Hook システム (Hook Manager) の実装**
@@ -152,9 +135,25 @@
 
 ---
 
-### その他
+### RAG 機能の高度化
 
-_(現時点では空)_
+#### Phase 43-D: 実運用ルールの動的適用（RAG-based Guardrails）
+- `[ ]` **実運用ルールの動的適用（RAG-based Guardrailsによるシステムプロンプト最適化）**
+  - 増加するスキル仕様（`skills/**/*.md`）やユーザー固有の対応ルール（`USER.md`）を RAG に置き、現在の会話に関連する特定の運用ルールのみを動的にシステムプロンプトに注入することで、トークン削減と指示追従性を両立する。
+
+#### Phase 43-E: 階層型 RAG（Parent-Child Chunking）
+- `[ ]` **階層型 RAG（Parent-Child Chunking）の導入**
+  - 検索用の細かい「子チャンク（100-300文字）」でベクトル検索し、ヒット時に文脈を保持した「親チャンク（1000-3000文字）」を引き出す。`skills/**/*.md` や長期記憶 (`MEMORY.md`) の検索において、メタデータと SQLite の親子リレーション拡張だけで完結するため、推論負荷を増やさずに実運用でのスキル実行成功率を高める。
+
+#### Phase 43-F: 自己進化型 RAG（RAG Flywheel）
+- `[ ]` **実運用インシデント＆ソリューション・ナレッジベース（RAGフライホイール）の導入**
+  - 本番稼働時の外部コマンド実行エラーや外部 API（気象、Discord等）の呼び出しエラーが発生した際、その解決プロセス（自動リトライやフォールバック手順）を自動的に RAG へ登録。次回同様のエラーを検知した際、事前に解決策をロードしてシステムダウンを防止する。エラー発生・解決時のみ embedding を生成するため、定常負荷は増えない。
+
+#### Phase 43-G: ユーザー知的支援（セカンドブレイン RAG）
+- `[ ]` **1. KaraKeep ブックマークのインデックス化と API 同期**
+  - KaraKeep サーバーから定時バッチでブックマーク（タイトル・タグ・URL）を取得してインジェスト。対話中に「保存した記事」を自然言語で検索・提示可能にする。テキスト量が少ないため RPi4 への負荷も極めて低い。
+- `[ ]` **2. Obsidian 特定フォルダの増分インジェストとパーソナルナレッジ参照**
+  - Obsidian の指定ディレクトリ（または `#rag` タグ付きノート）をスキャン。RPi4 の CPU 負荷集中を避けるため、深夜のアイドル時間帯に差分のみを増分 embedding してセカンドブレイン化する。
 
 ---
 
