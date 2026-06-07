@@ -5,7 +5,7 @@
 Claude Code が直接実行するための基本コマンドです。
 
 - **ビルド**: `cargo build`
-- **テスト実行**: `cargo test`
+- **テスト実行**: `TZ=UTC cargo test --all-features --workspace`
 - **静的解析 (Clippy)**: `cargo clippy --all-targets --all-features -- -D warnings`
 - **フォーマット適用**: `cargo fmt --all`
 

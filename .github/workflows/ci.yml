@@ -33,4 +33,6 @@ jobs:
 
     # 5. すべてのユニットテスト・結合テストを実行
     - name: Run Tests
+      env:
+        TZ: UTC
       run: cargo test --all-features --workspace
