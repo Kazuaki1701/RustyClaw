@@ -96,3 +96,4 @@ Start without a live LLM provider (no API calls, useful for local testing):
 | [Web dashboard](docs/specs/06_dashboard_spec.md) | ダッシュボード・管理 API 仕様 |
 | [Deploy to Raspberry Pi 4](docs/README.md#4-デプロイssh-接続手順rpi4--rp1) | クロスビルド・デプロイ手順 |
 | [Operation guide](docs/specs/08_operation_inspection.md) | 稼働点検ガイド・コマンド集 |
+| [Git collaboration rules](docs/specs/10_git_collaboration_rules.md) | GitHub 共同開発・運用ガイドライン仕様 |
