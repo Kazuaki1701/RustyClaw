@@ -39,11 +39,14 @@
   - `[x]` **42-D**: 時間減衰リランキング: 検索結果に経過時間ペナルティ/ブーストを付与し直近の重要情報を優先
   - `[x]` **42-E**: イベント駆動インデックス同期: flush_memory() → ingest_memory_md() の既存実装で対応済みのためクローズ
 
-- `[x]` **Phase 43-A: RAG 最適化 Heartbeat（旧 Context 削減策の廃止）**
-  - `[x]` chunk_memory_md: section prefix + 隣接バレット結合（800 chars）
-  - `[x]` flush_memory: Δ 閾値 6→3、5000 byte 上限廃止、truncate_70_20 廃止
-  - `[x]` heartbeat_top_k: 2→3（TPM 安全マージン確保）
-  - `[x]` USER.md を ingest_static_documents の RAG コーパスに追加
+- `[ ]` **Phase 43: RAG 最適化（旧 Context 削減策の廃止）**
+  - `[x]` **Phase 43-A: RAG 最適化 Heartbeat**
+    - `[x]` chunk_memory_md: section prefix + 隣接バレット結合（800 chars）
+    - `[x]` flush_memory: Δ 閾値 6→3、5000 byte 上限廃止、truncate_70_20 廃止
+    - `[x]` heartbeat_top_k: 2→3（TPM 安全マージン確保）
+    - `[x]` USER.md を ingest_static_documents の RAG コーパスに追加
+  - `[ ]` **Phase 43-B: RAG 最適化 Dashboard**
+  - `[ ]` **Phase 43-C: RAG 最適化 Discord**
 
 ---
 
