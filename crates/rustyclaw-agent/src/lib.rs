@@ -2629,6 +2629,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_pipeline_execute() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
         let ws_dir = tempdir()?;
@@ -2689,6 +2690,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_cron_session_ignores_history() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
         let ws_dir = tempdir()?;
@@ -2796,6 +2798,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_pipeline_execute_stream_leak_filter() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
         let ws_dir = tempdir()?;
@@ -2836,7 +2839,7 @@ mod tests {
         unsafe {
             std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", ws_dir.path());
         }
-        let mut stream_res = pipeline
+        let stream_res = pipeline
             .execute_stream(ws_dir.path(), "session-stream-test", "hello")
             .await;
         unsafe {
@@ -3229,14 +3232,14 @@ Keep it short.\n\
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("memory.db");
         let db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
-        db.upsert_embedding("memory::0", "memory", None, "大森駅周辺", &vec![1.0f32; 4])
+        db.upsert_embedding("memory::0", "memory", None, "大森駅周辺", &[1.0f32; 4])
             .unwrap();
         db.upsert_embedding(
             "session::s1",
             "session",
             Some("s1"),
             "RAG 検証完了",
-            &vec![0.5f32; 4],
+            &[0.5f32; 4],
         )
         .unwrap();
 
@@ -3273,7 +3276,7 @@ Keep it short.\n\
     #[test]
     fn test_filter_seen_tool_result_gmail_first_time() {
         let dir = tempfile::tempdir().unwrap();
-        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        let db = rustyclaw_storage::DbManager::new(dir.path().join("test.db")).unwrap();
 
         let tool_result = "--- STDOUT ---\n[{\"id\":\"msg1\",\"sender\":\"test@example.com\",\"subject\":\"Test\",\"date\":\"Mon\",\"snippet\":\"Hi\"}]\n--- EXIT STATUS ---\n0";
         let call_args =
@@ -3293,7 +3296,7 @@ Keep it short.\n\
     #[test]
     fn test_filter_seen_tool_result_gmail_already_seen() {
         let dir = tempfile::tempdir().unwrap();
-        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        let db = rustyclaw_storage::DbManager::new(dir.path().join("test.db")).unwrap();
         db.mark_item_seen("gmail:msg1", "gmail").unwrap();
 
         let tool_result = "--- STDOUT ---\n[{\"id\":\"msg1\",\"sender\":\"test@example.com\",\"subject\":\"Test\",\"date\":\"Mon\",\"snippet\":\"Hi\"}]\n--- EXIT STATUS ---\n0";
@@ -3313,7 +3316,7 @@ Keep it short.\n\
     #[test]
     fn test_filter_seen_tool_result_calendar() {
         let dir = tempfile::tempdir().unwrap();
-        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        let db = rustyclaw_storage::DbManager::new(dir.path().join("test.db")).unwrap();
 
         let stdout = r#"[{"event_id":"evt1","title":"Meeting","start":"2026-06-06T10:00:00+09:00","start_wday":"土","end":"2026-06-06T11:00:00+09:00","end_wday":"土"}]"#;
         let tool_result = format!("--- STDOUT ---\n{}\n--- EXIT STATUS ---\n0", stdout);
@@ -3321,19 +3324,19 @@ Keep it short.\n\
             r#"{"script_name":"skills/calendar/scripts/calendar-ops.sh","args":["list"]}"#;
 
         let result1 =
-            filter_seen_tool_result("run_workspace_script", &call_args, &tool_result, &db);
+            filter_seen_tool_result("run_workspace_script", call_args, &tool_result, &db);
         assert!(result1.contains("evt1"));
         assert!(db.is_item_seen("calendar:evt1").unwrap());
 
         let result2 =
-            filter_seen_tool_result("run_workspace_script", &call_args, &tool_result, &db);
+            filter_seen_tool_result("run_workspace_script", call_args, &tool_result, &db);
         assert!(!result2.contains("evt1"));
     }
 
     #[test]
     fn test_filter_seen_tool_result_non_script_passthrough() {
         let dir = tempfile::tempdir().unwrap();
-        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        let db = rustyclaw_storage::DbManager::new(dir.path().join("test.db")).unwrap();
 
         let result = filter_seen_tool_result("web_fetch", "{}", "some content", &db);
         assert_eq!(result, "some content");
@@ -3350,7 +3353,7 @@ Keep it short.\n\
     #[test]
     fn test_filter_seen_tool_result_partial_seen() {
         let dir = tempfile::tempdir().unwrap();
-        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        let db = rustyclaw_storage::DbManager::new(dir.path().join("test.db")).unwrap();
         db.mark_item_seen("gmail:msg1", "gmail").unwrap();
 
         let tool_result = "--- STDOUT ---\n[{\"id\":\"msg1\",\"subject\":\"Old\"},{\"id\":\"msg2\",\"subject\":\"New\"}]\n--- EXIT STATUS ---\n0";
@@ -3369,7 +3372,7 @@ Keep it short.\n\
     #[test]
     fn test_filter_seen_tool_result_already_seen_produces_no_new_message() {
         let dir = tempfile::tempdir().unwrap();
-        let db = rustyclaw_storage::DbManager::new(&dir.path().join("test.db")).unwrap();
+        let db = rustyclaw_storage::DbManager::new(dir.path().join("test.db")).unwrap();
         db.mark_item_seen("gmail:msg99", "gmail").unwrap();
 
         let tool_result = "--- STDOUT ---\n[{\"id\":\"msg99\",\"sender\":\"test@example.com\",\"subject\":\"Hello\",\"date\":\"Mon\",\"snippet\":\"Hi\"}]\n--- EXIT STATUS ---\n0";
@@ -3630,8 +3633,8 @@ Keep it short.\n\
                 let path = entry.path();
                 if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
                     collected.push(path);
-                } else if path.is_dir() {
-                    if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                } else if path.is_dir()
+                    && let Ok(sub_entries) = std::fs::read_dir(&path) {
                         for sub_entry in sub_entries.flatten() {
                             let sub_path = sub_entry.path();
                             if sub_path.is_file()
@@ -3641,7 +3644,6 @@ Keep it short.\n\
                             }
                         }
                     }
-                }
             }
         }
 
@@ -3667,7 +3669,7 @@ Keep it short.\n\
         fs::write(skill_a_dir.join("SKILL.md"), "content a").unwrap();
         fs::write(skill_b_dir.join("SKILL.md"), "content b").unwrap();
 
-        let paths = vec![skill_a_dir.join("SKILL.md"), skill_b_dir.join("SKILL.md")];
+        let paths = [skill_a_dir.join("SKILL.md"), skill_b_dir.join("SKILL.md")];
         let keys: Vec<String> = paths
             .iter()
             .map(|fp| {

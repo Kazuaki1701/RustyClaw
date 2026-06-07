@@ -102,13 +102,10 @@ impl SearchIndexManager {
                 .doc(doc_address)
                 .context("Failed to retrieve document from searcher")?;
 
-            if let Some(path_value) = retrieved_doc.get_first(path_field) {
-                match path_value {
-                    tantivy::schema::OwnedValue::Str(path_str) => {
-                        matched_paths.push(PathBuf::from(path_str));
-                    }
-                    _ => {}
-                }
+            if let Some(tantivy::schema::OwnedValue::Str(path_str)) =
+                retrieved_doc.get_first(path_field)
+            {
+                matched_paths.push(PathBuf::from(path_str));
             }
         }
 

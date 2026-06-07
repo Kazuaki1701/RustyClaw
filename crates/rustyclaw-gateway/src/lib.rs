@@ -118,6 +118,12 @@ pub struct MessageBus {
     tx: broadcast::Sender<SystemEvent>,
 }
 
+impl Default for MessageBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageBus {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(100);
@@ -338,7 +344,7 @@ impl LaneRegistry {
                                                 tracing::info!(
                                                     "Heartbeat LLM execution successful. Processing response..."
                                                 );
-                                                if let Ok(db) =
+                                                if let Ok(_db) =
                                                     rustyclaw_storage::DbManager::new(&db_path)
                                                 {
                                                     let _ = heartbeat_svc
@@ -353,9 +359,9 @@ impl LaneRegistry {
                                             }
                                             Err(e) => {
                                                 drop(permit); // Release permit immediately so other lanes aren't blocked!
-                                                if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>() {
-                                                    if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
-                                                        if attempt < max_attempts {
+                                                if let Some(err) = e.downcast_ref::<rustyclaw_providers::ProviderError>()
+                                                    && let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err
+                                                        && attempt < max_attempts {
                                                             let parsed_reset = err.reset_after();
                                                             let backoff = parsed_reset
                                                                 .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
@@ -370,8 +376,6 @@ impl LaneRegistry {
                                                             attempt += 1;
                                                             continue;
                                                         }
-                                                    }
-                                                }
                                                 // Non-rate-limit error or max retries exceeded
                                                 tracing::error!(
                                                     "Heartbeat LLM execution failed: {:#}",
@@ -515,9 +519,8 @@ impl LaneRegistry {
                                             if let Some(err) = e
                                                 .downcast_ref::<rustyclaw_providers::ProviderError>(
                                                 )
-                                            {
-                                                if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
-                                                    if attempt < max_attempts {
+                                                && let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err
+                                                    && attempt < max_attempts {
                                                         let parsed_reset = err.reset_after();
                                                         let backoff = parsed_reset
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
@@ -532,8 +535,6 @@ impl LaneRegistry {
                                                         attempt += 1;
                                                         continue;
                                                     }
-                                                }
-                                            }
                                             // Non-rate-limit error or max retries exceeded
                                             tracing::error!(
                                                 "Failed to generate Daily Summary: {:#}",
@@ -568,10 +569,10 @@ impl LaneRegistry {
                     }
                     // 3. 通常ユーザーセッション実行処理
                     else {
-                        let desc = if session_id.starts_with("cron:session-summary:") {
+                        let desc = if let Some(suffix) = session_id.strip_prefix("cron:session-summary:") {
                             format!(
                                 "Auto-Summary for Session '{}'",
-                                &session_id["cron:session-summary:".len()..]
+                                suffix
                             )
                         } else if session_id.starts_with("cron:") {
                             // cron sessions pre-register display name in CronService; keep it
@@ -664,9 +665,7 @@ impl LaneRegistry {
                                         &content,
                                     );
                                     let exec_res =
-                                        if session_id.starts_with("cron:session-summary:") {
-                                            let target_session_id =
-                                                &session_id["cron:session-summary:".len()..];
+                                        if let Some(target_session_id) = session_id.strip_prefix("cron:session-summary:") {
                                             pipeline
                                                 .generate_session_summary(
                                                     &workspace_path,
@@ -754,8 +753,7 @@ impl LaneRegistry {
                                                     }
                                                 });
                                                 if let Ok(c) = std::fs::read_to_string(&state_path)
-                                                {
-                                                    if let Ok(parsed) =
+                                                    && let Ok(parsed) =
                                                         serde_json::from_str::<serde_json::Value>(
                                                             &c,
                                                         )
@@ -764,7 +762,6 @@ impl LaneRegistry {
                                                         current_state["lastChecks"]["lastUserContact"] =
                                                             serde_json::json!(now);
                                                     }
-                                                }
                                                 if let Ok(serialized) =
                                                     serde_json::to_string_pretty(&current_state)
                                                 {
@@ -808,9 +805,8 @@ impl LaneRegistry {
                                             if let Some(err) = e
                                                 .downcast_ref::<rustyclaw_providers::ProviderError>(
                                                 )
-                                            {
-                                                if let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err {
-                                                    if attempt < max_attempts {
+                                                && let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err
+                                                    && attempt < max_attempts {
                                                         let parsed_reset = err.reset_after();
                                                         let backoff = parsed_reset
                                                             .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
@@ -825,8 +821,6 @@ impl LaneRegistry {
                                                         attempt += 1;
                                                         continue;
                                                     }
-                                                }
-                                            }
                                             // Non-rate-limit error or max retries exceeded
                                             tracing::error!(
                                                 "Error in Agent execution for Session {}: {:#}",
@@ -957,14 +951,13 @@ impl Gateway {
         let mut tool_registry = rustyclaw_tools::ToolRegistry::new();
 
         // Brave Search ネイティブツール登録
-        if let Some(b) = config.tools.brave_search.as_ref().filter(|b| b.enabled) {
-            if !b.api_key.is_empty() {
+        if let Some(b) = config.tools.brave_search.as_ref().filter(|b| b.enabled)
+            && !b.api_key.is_empty() {
                 let t = rustyclaw_tools::WebSearchTool::new(b.api_key.clone());
                 tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
                 tool_server_handle.add_tool(t).await.ok();
                 tracing::info!("Registered WebSearchTool (Brave Search).");
             }
-        }
         // WebFetchTool は常時登録（APIキー不要）
         {
             let t = rustyclaw_tools::WebFetchTool::new();
@@ -1075,11 +1068,10 @@ impl Gateway {
         let mut rx_bus = bus.subscribe();
         tokio::spawn(async move {
             while let Ok(event) = rx_bus.recv().await {
-                if matches!(event, SystemEvent::IncomingMessage { .. }) {
-                    if let Err(e) = registry_clone.dispatch(event).await {
+                if matches!(event, SystemEvent::IncomingMessage { .. })
+                    && let Err(e) = registry_clone.dispatch(event).await {
                         tracing::error!("Failed to dispatch event to LaneRegistry: {}", e);
                     }
-                }
             }
         });
 
@@ -1123,15 +1115,14 @@ impl Gateway {
                 } = event
                 {
                     // 数字以外の channel_id（"http" など）は Discord チャンネルではないのでスキップ
-                    if channel_id.chars().all(|c| c.is_ascii_digit()) {
-                        if let Err(e) = discord_sender.send_message(&channel_id, &content).await {
+                    if channel_id.chars().all(|c| c.is_ascii_digit())
+                        && let Err(e) = discord_sender.send_message(&channel_id, &content).await {
                             tracing::error!(
                                 "Failed to send agent response to channel {}: {:#}",
                                 channel_id,
                                 e
                             );
                         }
-                    }
                 }
             }
         });

@@ -6,7 +6,7 @@ use rustyclaw_config::vault;
 use rustyclaw_config::{get_app_dir, get_config_dir, load_config};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing_subscriber::prelude::*;
@@ -151,11 +151,10 @@ fn setup_logging() -> Result<()> {
 
 /// VAULT_PASSPHRASE 環境変数、または対話的入力でパスフレーズを取得する
 fn prompt_passphrase() -> Result<String> {
-    if let Ok(p) = vault::resolve_passphrase(None) {
-        if !p.is_empty() {
+    if let Ok(p) = vault::resolve_passphrase(None)
+        && !p.is_empty() {
             return Ok(p);
         }
-    }
     print!("Vault passphrase (Enter for none): ");
     io::stdout().flush()?;
     read_secret()
@@ -183,7 +182,7 @@ fn read_secret() -> Result<String> {
         }
         println!();
         result?;
-        return Ok(s.trim().to_string());
+        Ok(s.trim().to_string())
     }
     #[cfg(not(unix))]
     {
@@ -354,8 +353,8 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
             );
         }
     }
-    if let Some(ref d) = config.channels.discord {
-        if let Some(k) = d.token.strip_prefix("$vault:") {
+    if let Some(ref d) = config.channels.discord
+        && let Some(k) = d.token.strip_prefix("$vault:") {
             add_vault_ref(
                 &mut vault_map,
                 k,
@@ -363,7 +362,6 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
                 d.enabled,
             );
         }
-    }
     if let Some(ref l) = config.channels.line {
         if let Some(k) = l.channel_access_token.strip_prefix("$vault:") {
             add_vault_ref(
@@ -382,8 +380,8 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
             );
         }
     }
-    if let Some(ref k) = config.tools.karakeep {
-        if let Some(key) = k.api_key.strip_prefix("$vault:") {
+    if let Some(ref k) = config.tools.karakeep
+        && let Some(key) = k.api_key.strip_prefix("$vault:") {
             add_vault_ref(
                 &mut vault_map,
                 key,
@@ -391,9 +389,8 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
                 k.enabled,
             );
         }
-    }
-    if let Some(ref o) = config.tools.obsidian {
-        if let Some(key) = o.api_key.strip_prefix("$vault:") {
+    if let Some(ref o) = config.tools.obsidian
+        && let Some(key) = o.api_key.strip_prefix("$vault:") {
             add_vault_ref(
                 &mut vault_map,
                 key,
@@ -401,7 +398,6 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
                 o.enabled,
             );
         }
-    }
     for (sname, srv) in &config.mcp {
         for (ekey, eval) in &srv.env {
             if let Some(k) = eval.strip_prefix("$vault:") {
@@ -710,7 +706,7 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn run_debug(cmd: DebugCommands, workspace: &PathBuf) -> Result<()> {
+fn run_debug(cmd: DebugCommands, workspace: &Path) -> Result<()> {
     let debug_dir = workspace.join("memory").join("debug");
 
     match cmd {

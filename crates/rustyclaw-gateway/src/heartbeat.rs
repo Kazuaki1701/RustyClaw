@@ -8,7 +8,6 @@ use rustyclaw_storage::{DbManager, SessionLogger};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 pub struct HeartbeatService {
     _config: Config,
@@ -76,15 +75,15 @@ impl HeartbeatService {
         // 既存のダイジェスト行をセッションIDごとにパースしてマップに格納
         let mut existing_digest_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
-        if !is_deep_scan && last_run_at.is_some() && digest_path.exists() {
-            if let Ok(content) = fs::read_to_string(&digest_path) {
+        if !is_deep_scan && last_run_at.is_some() && digest_path.exists()
+            && let Ok(content) = fs::read_to_string(&digest_path) {
                 for line in content.lines() {
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
                     }
-                    if trimmed.starts_with('[') {
-                        if let Some(close_bracket_idx) = trimmed.find("] ") {
+                    if trimmed.starts_with('[')
+                        && let Some(close_bracket_idx) = trimmed.find("] ") {
                             let body = &trimmed[close_bracket_idx + 2..];
                             if let Some(colon_idx) = body.find(": ") {
                                 let session_id = body[..colon_idx].to_string();
@@ -94,10 +93,8 @@ impl HeartbeatService {
                                     .push(trimmed.to_string());
                             }
                         }
-                    }
                 }
             }
-        }
 
         // sessions/*.jsonl をスキャンしてアクティブなセッションを収集
         let mut active_sessions = Vec::new();
@@ -119,8 +116,8 @@ impl HeartbeatService {
                 }
 
                 // ファイル変更時刻チェック
-                if let Ok(metadata) = fs::metadata(&path) {
-                    if let Ok(modified_time) = metadata.modified() {
+                if let Ok(metadata) = fs::metadata(&path)
+                    && let Ok(modified_time) = metadata.modified() {
                         let modified: DateTime<Local> = modified_time.into();
                         // 過去24時間以内に更新されたアクティブな対話のみ対象
                         if now_dt.signed_duration_since(modified).num_hours() < 24 {
@@ -128,7 +125,6 @@ impl HeartbeatService {
                             active_sessions.push((modified, path, session_id));
                         }
                     }
-                }
             }
         }
 
@@ -157,7 +153,7 @@ impl HeartbeatService {
                     let mut messages = Vec::new();
                     let is_http_dashboard = session_id == "http-dashboard";
 
-                    for line_res in reader.lines().flatten() {
+                    for line_res in reader.lines().map_while(Result::ok) {
                         if let Ok(msg) = serde_json::from_str::<Message>(&line_res) {
                             if is_http_dashboard {
                                 // http-dashboard は無制限に成長するため直近24時間のみ対象
@@ -187,20 +183,19 @@ impl HeartbeatService {
                         if messages[i].role == "user" {
                             let prompt = &messages[i].content;
                             let mut next_user_idx = messages.len();
-                            for j in (i + 1)..messages.len() {
-                                if messages[j].role == "user" {
+                            for (j, msg) in messages.iter().enumerate().skip(i + 1) {
+                                if msg.role == "user" {
                                     next_user_idx = j;
                                     break;
                                 }
                             }
 
                             let mut response = None;
-                            for j in (i + 1)..next_user_idx {
-                                if messages[j].role == "assistant" {
-                                    if !messages[j].content.trim().is_empty() {
-                                        response = Some(&messages[j].content);
+                            for msg in messages[(i + 1)..next_user_idx].iter() {
+                                if msg.role == "assistant"
+                                    && !msg.content.trim().is_empty() {
+                                        response = Some(&msg.content);
                                     }
-                                }
                             }
 
                             if let Some(resp_content) = response {
@@ -216,12 +211,11 @@ impl HeartbeatService {
                                     .collect::<String>();
 
                                 let mut time_str = "--:--".to_string();
-                                if let Some(ref ts) = messages[i].timestamp {
-                                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                                if let Some(ref ts) = messages[i].timestamp
+                                    && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
                                         let local_dt = dt.with_timezone(&Local);
                                         time_str = local_dt.format("%H:%M").to_string();
                                     }
-                                }
 
                                 session_lines.push(format!(
                                     "[{}] {}: {} → {}",
@@ -242,7 +236,7 @@ impl HeartbeatService {
         }
 
         // 時間順（昇順）にソート
-        merged_lines.sort_by(|a, b| a.0.cmp(&b.0));
+        merged_lines.sort_by_key(|a| a.0);
 
         let digest_lines: Vec<String> = merged_lines.into_iter().map(|item| item.1).collect();
 
@@ -280,7 +274,7 @@ impl HeartbeatService {
         let hour = now_dt.hour();
 
         // 1. Quiet Hours (23:00 〜 08:00) の除外
-        if hour >= 23 || hour < 8 {
+        if !(8..23).contains(&hour) {
             tracing::info!(
                 "HeartbeatService: Quiet hours (23:00-08:00) active. Step 5 Vocal Greeting skipped."
             );
@@ -406,36 +400,28 @@ impl HeartbeatService {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.is_file() && path.extension().map(|e| e == "jsonl").unwrap_or(false)
-                        {
-                            if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
-                                if !file_name.starts_with("cron:")
+                            && let Some(file_name) = path.file_stem().and_then(|s| s.to_str())
+                                && !file_name.starts_with("cron:")
                                     && !file_name.starts_with("cli-")
                                     && !file_name.starts_with("http-")
-                                {
-                                    if let Ok(meta) = path.metadata() {
-                                        if let Ok(mtime) = meta.modified() {
-                                            if active_session.is_none()
-                                                || mtime > active_session.as_ref().unwrap().0
+                                    && let Ok(meta) = path.metadata()
+                                        && let Ok(mtime) = meta.modified()
+                                            && (active_session.is_none()
+                                                || mtime > active_session.as_ref().unwrap().0)
                                             {
                                                 let session_id = file_name.replace('-', ":");
                                                 active_session =
                                                     Some((mtime, path.clone(), session_id));
                                             }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
                 if let Some((_, _, ref session_id)) = active_session {
                     let mut channel_id = String::new();
-                    if session_id.starts_with("discord-C") {
-                        if let Some(dash_idx) = session_id[9..].find('-') {
+                    if session_id.starts_with("discord-C")
+                        && let Some(dash_idx) = session_id[9..].find('-') {
                             channel_id = session_id[9..9 + dash_idx].to_string();
                         }
-                    }
                     (session_id.clone(), channel_id)
                 } else {
                     tracing::warn!(
@@ -461,23 +447,18 @@ impl HeartbeatService {
             {
                 let mut kept = Vec::new();
                 let cutoff = now - chrono::Duration::hours(24);
-                if posts_path.exists() {
-                    if let Ok(existing) = fs::read_to_string(&posts_path) {
+                if posts_path.exists()
+                    && let Ok(existing) = fs::read_to_string(&posts_path) {
                         for line in existing.lines() {
-                            if line.starts_with('[') {
-                                if let Some(end) = line.find(']') {
-                                    if let Ok(dt) =
+                            if line.starts_with('[')
+                                && let Some(end) = line.find(']')
+                                    && let Ok(dt) =
                                         chrono::DateTime::parse_from_rfc3339(&line[1..end])
-                                    {
-                                        if dt.with_timezone(&Local) >= cutoff {
+                                        && dt.with_timezone(&Local) >= cutoff {
                                             kept.push(line.to_string());
                                         }
-                                    }
-                                }
-                            }
                         }
                     }
-                }
                 kept.push(new_entry);
                 if kept.len() > 5 {
                     kept = kept.split_off(kept.len() - 5);
@@ -709,7 +690,7 @@ impl HeartbeatService {
         let hour = now_dt.hour();
 
         // Quiet Hours (23:00 〜 08:00) の処理
-        let is_quiet_hours = hour >= 23 || hour < 8;
+        let is_quiet_hours = !(8..23).contains(&hour);
         if is_quiet_hours && max_rainfall < 5.0 {
             // 豪雨（5.0mm/h以上）以外は Quiet Hours 中は Discord 通知をスキップ。
             // ただし findings.md に静かに記録する。
@@ -781,22 +762,20 @@ fn extract_coordinates(workspace_path: &std::path::Path) -> Option<(f64, f64)> {
     let user_md_path = workspace_path.join("USER.md");
     if let Ok(content) = std::fs::read_to_string(&user_md_path) {
         for line in content.lines() {
-            if line.contains("Coordinates:") && !line.contains("Commute") {
-                if let Some(pos) = line.find("Coordinates:") {
+            if line.contains("Coordinates:") && !line.contains("Commute")
+                && let Some(pos) = line.find("Coordinates:") {
                     let s = &line[pos + "Coordinates:".len()..];
                     let end_pos = s.find('(').unwrap_or(s.len());
                     let clean_s = &s[..end_pos].trim();
                     let parts: Vec<&str> = clean_s.split(',').collect();
-                    if parts.len() == 2 {
-                        if let (Ok(lat), Ok(lon)) = (
+                    if parts.len() == 2
+                        && let (Ok(lat), Ok(lon)) = (
                             parts[0].trim().parse::<f64>(),
                             parts[1].trim().parse::<f64>(),
                         ) {
                             return Some((lat, lon));
                         }
-                    }
                 }
-            }
         }
     }
     None

@@ -351,11 +351,9 @@ pub struct Config {
 }
 
 fn resolve_value(val: &str) -> String {
-    if val.starts_with("$env:") {
-        let env_name = &val[5..];
+    if let Some(env_name) = val.strip_prefix("$env:") {
         std::env::var(env_name).unwrap_or_else(|_| val.to_string())
-    } else if val.starts_with("$vault:") {
-        let vault_key = &val[7..];
+    } else if let Some(vault_key) = val.strip_prefix("$vault:") {
         if let Ok(env_val) = std::env::var(vault_key) {
             return env_val;
         }
@@ -363,21 +361,19 @@ fn resolve_value(val: &str) -> String {
         {
             return env_val;
         }
-        if let Ok(secrets) = vault::load_vault(None) {
-            if let Some(v) = secrets.get(vault_key) {
-                return v.clone();
-            }
+        if let Ok(secrets) = vault::load_vault(None)
+            && let Some(v) = secrets.get(vault_key)
+        {
+            return v.clone();
         }
         {
             let json_path = get_config_dir().join("vault.json");
-            if json_path.exists() {
-                if let Ok(file) = std::fs::File::open(json_path) {
-                    if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file) {
-                        if let Some(v) = json.get(vault_key).and_then(|v| v.as_str()) {
-                            return v.to_string();
-                        }
-                    }
-                }
+            if json_path.exists()
+                && let Ok(file) = std::fs::File::open(json_path)
+                && let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(file)
+                && let Some(v) = json.get(vault_key).and_then(|v| v.as_str())
+            {
+                return v.to_string();
             }
         }
         val.to_string()
@@ -432,10 +428,10 @@ impl Config {
         let mut name_list: Vec<&str> = names.as_chain();
 
         // global_fallback を末尾に追加（重複は除去）
-        if let Some(ref gf) = self.agents.global_fallback_model_name {
-            if !name_list.contains(&gf.as_str()) {
-                name_list.push(gf.as_str());
-            }
+        if let Some(ref gf) = self.agents.global_fallback_model_name
+            && !name_list.contains(&gf.as_str())
+        {
+            name_list.push(gf.as_str());
         }
 
         name_list
@@ -505,14 +501,14 @@ impl Config {
             }
             return None;
         }
-        if let Some(ref emb) = self.embedding {
-            if emb.enabled && !emb.api_endpoint.is_empty() {
-                return Some((
-                    emb.api_endpoint.clone(),
-                    emb.api_key.clone(),
-                    emb.model.clone(),
-                ));
-            }
+        if let Some(ref emb) = self.embedding
+            && emb.enabled && !emb.api_endpoint.is_empty()
+        {
+            return Some((
+                emb.api_endpoint.clone(),
+                emb.api_key.clone(),
+                emb.model.clone(),
+            ));
         }
         None
     }

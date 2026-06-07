@@ -103,19 +103,17 @@ pub fn load_skills(workspace_path: &Path) -> Vec<Skill> {
         // パターン1: ディレクトリ構造 [skill-name]/SKILL.md
         if path.is_dir() {
             let skill_md_path = path.join("SKILL.md");
-            if skill_md_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&skill_md_path) {
-                    if let Some(skill) = parse_standard_skill(&content, &path, &matter) {
+            if skill_md_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&skill_md_path)
+                    && let Some(skill) = parse_standard_skill(&content, &path, &matter) {
                         skills.push(skill);
                         continue;
                     }
-                }
-            }
         }
 
         // パターン2: 従来互換フラットファイル [skill-name].md (フォールバック)
-        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
+        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md")
+            && let Ok(content) = std::fs::read_to_string(&path) {
                 let skill_name = path
                     .file_stem()
                     .unwrap_or_default()
@@ -124,12 +122,11 @@ pub fn load_skills(workspace_path: &Path) -> Vec<Skill> {
                 let skill = parse_fallback_skill(
                     &content,
                     &skill_name,
-                    &path.parent().unwrap().to_path_buf(),
+                    path.parent().unwrap(),
                     &matter,
                 );
                 skills.push(skill);
             }
-        }
     }
     skills
 }
@@ -172,30 +169,24 @@ fn validate_manifest(manifest: &SkillManifest, dir_path: &Path) -> Result<(), St
     }
 
     // 親ディレクトリ名との一致検証
-    if let Some(dir_name) = dir_path.file_name().and_then(|n| n.to_str()) {
-        if name != dir_name {
+    if let Some(dir_name) = dir_path.file_name().and_then(|n| n.to_str())
+        && name != dir_name {
             return Err(format!(
                 "Skill name '{}' does not match its parent directory name '{}'",
                 name, dir_name
             ));
         }
-    }
 
     // 2. description の検証
     if manifest.description.is_empty() || manifest.description.len() > 1024 {
-        return Err(format!(
-            "Skill description length must be between 1 and 1024 characters"
-        ));
+        return Err("Skill description length must be between 1 and 1024 characters".to_string());
     }
 
     // 3. compatibility の検証
-    if let Some(ref compat) = manifest.compatibility {
-        if compat.is_empty() || compat.len() > 500 {
-            return Err(format!(
-                "Skill compatibility length must be between 1 and 500 characters"
-            ));
+    if let Some(ref compat) = manifest.compatibility
+        && (compat.is_empty() || compat.len() > 500) {
+            return Err("Skill compatibility length must be between 1 and 500 characters".to_string());
         }
-    }
 
     Ok(())
 }
@@ -303,7 +294,7 @@ pub fn generate_skills_directory(skills: &[Skill]) -> String {
     for skill in skills {
         // scripts/ 配下の .sh ファイルを列挙（ソート済み）
         let scripts_dir = skill.path.join("scripts");
-        let mut script_paths: Vec<String> = std::fs::read_dir(&scripts_dir)
+        let script_paths: Vec<String> = std::fs::read_dir(&scripts_dir)
             .map(|rd| {
                 let mut names: Vec<String> = rd
                     .flatten()

@@ -56,7 +56,7 @@ impl HealthServer {
                         let reload_tx_clone = reload_tx.clone();
                         let bus_clone = bus.clone();
                         let workspace_path_clone = workspace_path.clone();
-                        let gmn_sem_clone = gmn_sem_arc.clone();
+                        let _gmn_sem_clone = gmn_sem_arc.clone();
                         let gmn_cap_clone = gmn_capacity;
 
                         tokio::spawn(async move {
@@ -427,8 +427,7 @@ impl HealthServer {
                                         let json_body = request[body_start + 4..].trim();
                                         if let Ok(val) =
                                             serde_json::from_str::<serde_json::Value>(json_body)
-                                        {
-                                            if let Some(msg) = val["message"].as_str() {
+                                            && let Some(msg) = val["message"].as_str() {
                                                 let today = chrono::Local::now().format("%Y%m%d").to_string();
                                                 let session_id = format!("http-dashboard-{}", today);
                                                 let mut rx = bus_clone.subscribe();
@@ -445,11 +444,10 @@ impl HealthServer {
                                                     tokio::select! {
                                                         res = async {
                                                             loop {
-                                                                if let Ok(crate::SystemEvent::AgentResponse { session_id: resp_session, content, .. }) = rx.recv().await {
-                                                                    if resp_session == session_id {
+                                                                if let Ok(crate::SystemEvent::AgentResponse { session_id: resp_session, content, .. }) = rx.recv().await
+                                                                    && resp_session == session_id {
                                                                         return content;
                                                                     }
-                                                                }
                                                             }
                                                         } => { chat_resp = res; }
                                                         _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
@@ -460,7 +458,6 @@ impl HealthServer {
                                                     chat_resp = "Error: Failed to publish chat event to bus".to_string();
                                                 }
                                             }
-                                        }
                                     }
                                     ("200 OK".to_string(), chat_resp, "text/plain; charset=utf-8")
                                 } else {
@@ -502,7 +499,7 @@ fn read_last_lines(path: &Path, limit: usize) -> String {
     }
     if let Ok(file) = std::fs::File::open(path) {
         let reader = std::io::BufReader::new(file);
-        let lines: Vec<String> = reader.lines().flatten().collect();
+        let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
         let start = if lines.len() > limit {
             lines.len() - limit
         } else {
@@ -523,16 +520,13 @@ fn get_latest_app_log() -> Option<PathBuf> {
     if let Ok(entries) = std::fs::read_dir(log_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
-                if name.starts_with("rustyclaw.log") {
-                    if let Ok(mt) = std::fs::metadata(&path).and_then(|m| m.modified()) {
-                        if mt > latest_time {
+            if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned())
+                && name.starts_with("rustyclaw.log")
+                    && let Ok(mt) = std::fs::metadata(&path).and_then(|m| m.modified())
+                        && mt > latest_time {
                             latest_time = mt;
                             latest_file = Some(path);
                         }
-                    }
-                }
-            }
         }
     }
     latest_file
@@ -546,8 +540,8 @@ fn extract_since_param(request: &str) -> Option<String> {
     let query = &first_line[query_start + 1..];
     let end = query.find(' ').unwrap_or(query.len());
     for pair in query[..end].split('&') {
-        if let Some(val) = pair.strip_prefix("since=") {
-            if val.len() >= 10
+        if let Some(val) = pair.strip_prefix("since=")
+            && val.len() >= 10
                 && val
                     .chars()
                     .next()
@@ -556,7 +550,6 @@ fn extract_since_param(request: &str) -> Option<String> {
             {
                 return Some(val.to_string());
             }
-        }
     }
     None
 }
@@ -583,11 +576,10 @@ fn extract_query_param(request: &str, key: &str) -> Option<String> {
         .unwrap_or(request.len());
     let query = &request[query_start + 1..query_end];
     for pair in query.split('&') {
-        if let Some((k, v)) = pair.split_once('=') {
-            if k == key {
+        if let Some((k, v)) = pair.split_once('=')
+            && k == key {
                 return Some(v.to_string());
             }
-        }
     }
     None
 }
