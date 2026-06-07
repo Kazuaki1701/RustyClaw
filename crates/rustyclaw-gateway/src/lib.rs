@@ -489,6 +489,8 @@ impl LaneRegistry {
                                                         "cron"
                                                     } else if session_id.starts_with("discord-") {
                                                         "discord"
+                                                    } else if session_id.starts_with("http-dashboard") {
+                                                        "dashboard"
                                                     } else if session_id.starts_with("cli-") {
                                                         "cli"
                                                     } else {
@@ -780,6 +782,8 @@ impl LaneRegistry {
                                                         "cron"
                                                     } else if session_id.starts_with("discord-") {
                                                         "discord"
+                                                    } else if session_id.starts_with("http-dashboard") {
+                                                        "dashboard"
                                                     } else if session_id.starts_with("cli-") {
                                                         "cli"
                                                     } else {
