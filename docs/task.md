@@ -27,7 +27,7 @@
   - 計画書: [2026-06-07-dashboard-rag-implementation.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/plans/2026-06-07-dashboard-rag-implementation.md)
   - ADR: [001-dashboard-rag-approach-c-hybrid.md](file:///home/kazuaki/Projects/RustyClaw/docs/adr/001-dashboard-rag-approach-c-hybrid.md)
 
-- `[ ]` **Phase 42: Heartbeat RAG 精度・効率の最適化**（アイデアバックログより昇格）
+- `[x]` **Phase 42: Heartbeat RAG 精度・効率の最適化**（アイデアバックログより昇格）
   - 検索クエリの最適化: heartbeat-digest.md 等から検索価値のあるキーワード・トピックのみ抽出し焦点ボケを防止
   - オンデマンド・ステップ別 RAG: Heartbeat の各 Step 実行時に必要な知識のみを動的・個別に検索注入
   - プロンプトキャッシュの最適化: 静的指示と動的 RAG 結果の境界整理でキャッシュヒット率を最大化
