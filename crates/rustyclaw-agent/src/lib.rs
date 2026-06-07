@@ -47,6 +47,15 @@ fn build_discord_rag_query(history: &[rustyclaw_providers::Message], raw_user_me
     parts.join("\n")
 }
 
+const HEARTBEAT_RAG_TAIL_LINES: usize = 10;
+
+pub fn build_heartbeat_rag_query(digest: &str) -> String {
+    let lines: Vec<&str> = digest.lines().collect();
+    let start = lines.len().saturating_sub(HEARTBEAT_RAG_TAIL_LINES);
+    let tail = lines[start..].join("\n");
+    format!("recent errors tasks memory updates: {}", tail)
+}
+
 pub struct Pipeline {
     config: Config,
     provider: Box<dyn LlmProvider>,
@@ -3978,6 +3987,61 @@ Keep it short.\n\
         let files: &[&str] = &["SOUL.md", "HEARTBEAT.md"]; // MEMORY.md を含まない
         let contains_memory = files.contains(&"MEMORY.md");
         assert!(!contains_memory, "build_heartbeat_context は MEMORY.md を静的ロードしないべき");
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_rag_tests {
+    use super::*;
+
+    #[test]
+    fn test_build_heartbeat_rag_query_empty() {
+        let result = build_heartbeat_rag_query("");
+        assert_eq!(result, "recent errors tasks memory updates: ");
+    }
+
+    #[test]
+    fn test_build_heartbeat_rag_query_fewer_than_10_lines() {
+        let digest = "line1\nline2\nline3";
+        let result = build_heartbeat_rag_query(digest);
+        assert_eq!(
+            result,
+            "recent errors tasks memory updates: line1\nline2\nline3"
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_rag_query_exactly_10_lines() {
+        let digest = (1..=10)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = build_heartbeat_rag_query(&digest);
+        assert!(result.starts_with("recent errors tasks memory updates: "));
+        assert!(result.contains("line1"));
+        assert!(result.contains("line10"));
+    }
+
+    #[test]
+    fn test_build_heartbeat_rag_query_truncates_old_lines() {
+        // 11行: 最古の line1 は除外され line2〜line11 のみ残る
+        let digest = (1..=11)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = build_heartbeat_rag_query(&digest);
+        assert!(result.starts_with("recent errors tasks memory updates: "));
+        // Check that line1 (standalone) is not present, but lines 2-11 are.
+        // We check for newline or start of string to avoid matching within "line10", "line11"
+        assert!(!result.contains("\nline1\n") && !result.starts_with("recent errors tasks memory updates: line1\n"), "line1 should be truncated");
+        assert!(result.contains("line2"));
+        assert!(result.contains("line11"));
+    }
+
+    #[test]
+    fn test_build_heartbeat_rag_query_prefix() {
+        let result = build_heartbeat_rag_query("some content");
+        assert!(result.starts_with("recent errors tasks memory updates: "));
     }
 }
 
