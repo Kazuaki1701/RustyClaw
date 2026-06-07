@@ -735,6 +735,7 @@ Rules:
         workspace_dir: &Path,
         session_id: &str,
         user_message: &str,
+        rag_query: Option<&str>,
         tool_registry: &ToolRegistry,
         db_path: &Path,
     ) -> Result<LlmResponse> {
@@ -755,6 +756,8 @@ Rules:
             }
             cfg
         };
+        // Phase 42-A: rag_query が指定された場合はそちらを使用、未指定時は user_message にフォールバック
+        let effective_rag = rag_query.unwrap_or(user_message);
         if heartbeat_config
             .embedding
             .as_ref()
@@ -763,14 +766,14 @@ Rules:
         {
             if let Some(client) = make_embed_client(&heartbeat_config) {
                 let rag_ctx =
-                    retrieve_rag_context_local(user_message, &heartbeat_config, &client, db_path, hb_top_k)
+                    retrieve_rag_context_local(effective_rag, &heartbeat_config, &client, db_path, hb_top_k)
                         .await;
                 if !rag_ctx.is_empty() {
                     system_context.push_str(&rag_ctx);
                 }
             }
         } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &heartbeat_config, rag, hb_top_k).await;
+            let rag_ctx = retrieve_rag_context(effective_rag, &heartbeat_config, rag, hb_top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
