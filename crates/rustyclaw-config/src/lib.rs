@@ -348,6 +348,18 @@ pub struct Config {
     /// RAG ベクトルメモリ設定
     #[serde(default)]
     pub embedding: Option<EmbeddingConfig>,
+    /// 自律性制御レベル
+    #[serde(default)]
+    pub autonomy_level: AutonomyLevel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutonomyLevel {
+    #[default]
+    Autonomous,
+    Supervised,
+    ReadOnly,
 }
 
 fn resolve_value(val: &str) -> String {

@@ -5,7 +5,7 @@ use rig_core::embeddings::Embedding;
 use rig_core::vector_store::VectorStoreIndex;
 use rig_core::vector_store::in_memory_store::InMemoryVectorStore;
 use rig_core::vector_store::request::VectorSearchRequest;
-use rustyclaw_config::Config;
+use rustyclaw_config::{Config, AutonomyLevel};
 use rustyclaw_providers::{
     CompletionOptions, LlmProvider, LlmResponse, Message, StreamChunk, create_provider,
 };
@@ -60,6 +60,76 @@ pub fn build_heartbeat_rag_query(digest: &str) -> String {
     format!("recent errors tasks memory updates: {}", tail)
 }
 
+fn is_write_operation(tool_name: &str) -> bool {
+    if tool_name == "workspace_write" || tool_name == "workspace_execute_script" || tool_name == "cron_schedule" {
+        return true;
+    }
+    let lower = tool_name.to_lowercase();
+    lower.contains("write")
+        || lower.contains("delete")
+        || lower.contains("create")
+        || lower.contains("update")
+        || lower.contains("post")
+        || lower.contains("patch")
+        || lower.contains("send")
+        || lower.contains("execute")
+}
+
+async fn run_confirmation_gate(tool_name: &str, args: &str, workspace_dir: &Path) -> Result<bool> {
+    let approval_file = workspace_dir.join("pending_approval.json");
+    let req_id = format!("req-{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
+    
+    let parsed_args: serde_json::Value = serde_json::from_str(args).unwrap_or(serde_json::Value::String(args.to_string()));
+    
+    let req_data = serde_json::json!({
+        "id": req_id,
+        "tool_name": tool_name,
+        "arguments": parsed_args,
+        "status": "pending",
+        "created_at": chrono::Local::now().to_rfc3339()
+    });
+    
+    let file_content = serde_json::to_string_pretty(&req_data)?;
+    fs::write(&approval_file, file_content)?;
+    
+    tracing::warn!(
+        "⚠️ [CONFIRMATION REQUIRED] Tool '{}' wants to execute.\nArguments: {}\nTo approve, modify 'status' to 'approved' in {}.",
+        tool_name,
+        args,
+        approval_file.display()
+    );
+    
+    let start_time = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(300);
+    let mut approved = false;
+    
+    while start_time.elapsed() < timeout {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        
+        if !approval_file.exists() {
+            break;
+        }
+        
+        if let Ok(content) = fs::read_to_string(&approval_file)
+            && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+            && let Some(status) = val.get("status").and_then(|s| s.as_str())
+        {
+            if status == "approved" {
+                approved = true;
+                break;
+            } else if status == "rejected" {
+                break;
+            }
+        }
+    }
+    
+    if approval_file.exists() {
+        let _ = fs::remove_file(&approval_file);
+    }
+    
+    Ok(approved)
+}
+
 // ==============================================================================
 // Heartbeat Agent Refactoring (Phase 40-4)
 // ==============================================================================
@@ -108,18 +178,73 @@ impl rig_core::tool::ToolDyn for HeartbeatToolWrapper {
 }
 
 #[derive(Clone)]
-struct HeartbeatHook {
+struct AgentHook {
     workspace_dir: PathBuf,
     session_id: String,
+    autonomy_level: AutonomyLevel,
+    log_results: bool,
 }
 
-impl HeartbeatHook {
-    fn new(workspace_dir: PathBuf, session_id: String) -> Self {
-        Self { workspace_dir, session_id }
+impl AgentHook {
+    fn new(workspace_dir: PathBuf, session_id: String, autonomy_level: AutonomyLevel, log_results: bool) -> Self {
+        Self { workspace_dir, session_id, autonomy_level, log_results }
     }
 }
 
-impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> for HeartbeatHook {
+impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> for AgentHook {
+    fn on_tool_call(
+        &self,
+        tool_name: &str,
+        _tool_call_id: Option<String>,
+        _internal_call_id: &str,
+        args: &str,
+    ) -> impl std::future::Future<Output = rig_core::agent::ToolCallHookAction> + rig_core::wasm_compat::WasmCompatSend {
+        let is_write = is_write_operation(tool_name);
+        let autonomy_level = self.autonomy_level;
+        let workspace_dir = self.workspace_dir.clone();
+        let tool_name = tool_name.to_string();
+        let args = args.to_string();
+
+        async move {
+            if is_write {
+                match autonomy_level {
+                    AutonomyLevel::ReadOnly => {
+                        tracing::warn!("Operation '{}' rejected in ReadOnly mode.", tool_name);
+                        rig_core::agent::ToolCallHookAction::Skip {
+                            reason: format!("Operation '{}' rejected: RustyClaw is running in ReadOnly mode.", tool_name),
+                        }
+                    }
+                    AutonomyLevel::Supervised => {
+                        tracing::info!("Operation '{}' requires user approval.", tool_name);
+                        match run_confirmation_gate(&tool_name, &args, &workspace_dir).await {
+                            Ok(true) => {
+                                tracing::info!("Operation '{}' approved.", tool_name);
+                                rig_core::agent::ToolCallHookAction::cont()
+                            }
+                            Ok(false) => {
+                                tracing::warn!("Operation '{}' rejected by user.", tool_name);
+                                rig_core::agent::ToolCallHookAction::Skip {
+                                    reason: format!("Operation '{}' rejected by user.", tool_name),
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Confirmation gate error: {}", e);
+                                rig_core::agent::ToolCallHookAction::Skip {
+                                    reason: format!("Confirmation gate error or timeout: {}", e),
+                                }
+                            }
+                        }
+                    }
+                    AutonomyLevel::Autonomous => {
+                        rig_core::agent::ToolCallHookAction::cont()
+                    }
+                }
+            } else {
+                rig_core::agent::ToolCallHookAction::cont()
+            }
+        }
+    }
+
     fn on_tool_result(
         &self,
         tool_name: &str,
@@ -132,17 +257,20 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
         let session_id = self.session_id.clone();
         let tool_name = tool_name.to_string();
         let result = result.to_string();
+        let log_results = self.log_results;
 
         async move {
-            let tool_msg = Message {
-                role: "tool".to_string(),
-                content: result,
-                tool_call_id,
-                name: Some(tool_name),
-                ..Default::default()
-            };
-            if let Err(e) = logger.append_message(&session_id, &tool_msg) {
-                tracing::error!("Failed to save tool result message in session log: {}", e);
+            if log_results {
+                let tool_msg = Message {
+                    role: "tool".to_string(),
+                    content: result,
+                    tool_call_id,
+                    name: Some(tool_name),
+                    ..Default::default()
+                };
+                if let Err(e) = logger.append_message(&session_id, &tool_msg) {
+                    tracing::error!("Failed to save tool result message in session log: {}", e);
+                }
             }
             rig_core::agent::HookAction::cont()
         }
@@ -155,6 +283,7 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
     ) -> impl std::future::Future<Output = rig_core::agent::HookAction> + rig_core::wasm_compat::WasmCompatSend {
         let logger = SessionLogger::new(&self.workspace_dir);
         let session_id = self.session_id.clone();
+        let log_results = self.log_results;
 
         let mut content = String::new();
         let mut tool_calls = Vec::new();
@@ -187,7 +316,9 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
         };
 
         async move {
-            if let Err(e) = logger.append_message(&session_id, &assistant_msg) {
+            if log_results
+                && let Err(e) = logger.append_message(&session_id, &assistant_msg)
+            {
                 tracing::error!("Failed to save assistant response in session log: {}", e);
             }
             rig_core::agent::HookAction::cont()
@@ -889,7 +1020,7 @@ Rules:
         let rig_history: Vec<rig_core::completion::Message> = Vec::new();
         let response_text = rig_core::agent::PromptRequest::from_agent(&agent, user_message)
             .with_history(rig_history)
-            .with_hook(HeartbeatHook::new(workspace_dir.to_path_buf(), session_id.to_string()))
+            .with_hook(AgentHook::new(workspace_dir.to_path_buf(), session_id.to_string(), self.config.autonomy_level, true))
             .await
             .map_err(|e| anyhow::anyhow!("heartbeat agent error: {}", e))?;
 
@@ -1231,7 +1362,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         progress_tx: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> Result<LlmResponse> {
         use rig_core::agent::AgentBuilder;
-        use rig_core::completion::Chat;
         use rustyclaw_providers::RustyclawCompletionModel;
 
         let logger = SessionLogger::new(workspace_dir);
@@ -1319,11 +1449,12 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             .build();
 
         // プロバイダーメッセージを rig メッセージ形式に変換
-        let mut rig_history = rustyclaw_providers::provider_messages_to_rig(&history.messages);
+        let rig_history = rustyclaw_providers::provider_messages_to_rig(&history.messages);
 
         // rig ReAct ループ実行 (LLMにはインジェクション済みのメッセージを渡す)
-        let response_text = agent
-            .chat(injected_user_message, &mut rig_history)
+        let response_text = rig_core::agent::PromptRequest::from_agent(&agent, injected_user_message)
+            .with_history(rig_history)
+            .with_hook(AgentHook::new(workspace_dir.to_path_buf(), session_id.to_string(), self.config.autonomy_level, false))
             .await
             .map_err(|e| anyhow::anyhow!("rig agent error: {}", e))?;
 
@@ -2656,6 +2787,135 @@ mod tests {
             .collect();
         files.sort_unstable_by(|a, b| b.cmp(a));
         files.into_iter().next()
+    }
+
+    #[tokio::test]
+    async fn test_autonomy_level_read_only_blocks_write() {
+        use rig_core::agent::PromptHook;
+        
+        let hook = AgentHook::new(
+            PathBuf::from("/tmp"),
+            "test_session".to_string(),
+            AutonomyLevel::ReadOnly,
+            false,
+        );
+        
+        // 書き込み系ツールはブロックされるべき
+        let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
+            &hook, "workspace_write", None, "call_id", "{}"
+        ).await;
+        match action {
+            rig_core::agent::ToolCallHookAction::Skip { reason } => {
+                assert!(reason.contains("ReadOnly mode"));
+            }
+            _ => panic!("Expected Skip action"),
+        }
+        
+        let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
+            &hook, "workspace_execute_script", None, "call_id", "{}"
+        ).await;
+        match action {
+            rig_core::agent::ToolCallHookAction::Skip { reason } => {
+                assert!(reason.contains("ReadOnly mode"));
+            }
+            _ => panic!("Expected Skip"),
+        }
+
+        // 読み取り系ツールは許可されるべき
+        let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
+            &hook, "workspace_read", None, "call_id", "{}"
+        ).await;
+        assert!(matches!(action, rig_core::agent::ToolCallHookAction::Continue));
+        
+        let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
+            &hook, "web_search", None, "call_id", "{}"
+        ).await;
+        assert!(matches!(action, rig_core::agent::ToolCallHookAction::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_autonomy_level_supervised_approves() {
+        use rig_core::agent::PromptHook;
+        let dir = tempdir().unwrap();
+        let ws_path = dir.path().to_path_buf();
+        
+        let hook = AgentHook::new(
+            ws_path.clone(),
+            "test_session".to_string(),
+            AutonomyLevel::Supervised,
+            false,
+        );
+
+        let ws_path_clone = ws_path.clone();
+        // 非同期に status を approved に変更するタスクを走らせる
+        tokio::spawn(async move {
+            let approval_file = ws_path_clone.join("pending_approval.json");
+            for _ in 0..20 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                if approval_file.exists() {
+                    break;
+                }
+            }
+            
+            if approval_file.exists()
+                && let Ok(content) = fs::read_to_string(&approval_file)
+                && let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content)
+                && let Some(obj) = val.as_object_mut()
+            {
+                obj.insert("status".to_string(), serde_json::Value::String("approved".to_string()));
+                let _ = fs::write(&approval_file, serde_json::to_string_pretty(&val).unwrap());
+            }
+        });
+
+        let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
+            &hook, "workspace_write", None, "call_id", "{}"
+        ).await;
+        assert!(matches!(action, rig_core::agent::ToolCallHookAction::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_autonomy_level_supervised_rejects() {
+        use rig_core::agent::PromptHook;
+        let dir = tempdir().unwrap();
+        let ws_path = dir.path().to_path_buf();
+        
+        let hook = AgentHook::new(
+            ws_path.clone(),
+            "test_session".to_string(),
+            AutonomyLevel::Supervised,
+            false,
+        );
+
+        let ws_path_clone = ws_path.clone();
+        // 非同期に status を rejected に変更するタスクを走らせる
+        tokio::spawn(async move {
+            let approval_file = ws_path_clone.join("pending_approval.json");
+            for _ in 0..20 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                if approval_file.exists() {
+                    break;
+                }
+            }
+            
+            if approval_file.exists()
+                && let Ok(content) = fs::read_to_string(&approval_file)
+                && let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content)
+                && let Some(obj) = val.as_object_mut()
+            {
+                obj.insert("status".to_string(), serde_json::Value::String("rejected".to_string()));
+                let _ = fs::write(&approval_file, serde_json::to_string_pretty(&val).unwrap());
+            }
+        });
+
+        let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
+            &hook, "workspace_write", None, "call_id", "{}"
+        ).await;
+        match action {
+            rig_core::agent::ToolCallHookAction::Skip { reason } => {
+                assert!(reason.contains("rejected by user"));
+            }
+            _ => panic!("Expected Skip action due to rejection"),
+        }
     }
 
     #[test]
