@@ -165,7 +165,8 @@ rustyclaw-gateway
     ├── HeartbeatService (HEARTBEAT.md ベース、GeminiClaw 原版)
     ├── CronService (内製スケジューラー)
     ├── WatchdogService (systemd watchdog)
-    └── HealthServer (HTTP /health /ready /reload)
+    ├── HealthServer (HTTP /health /ready /reload)
+    └── WebPreviewServer (HTTP port 4000: static previews serving)
         ↓
 rustyclaw-agent (Pipeline)
     ├── ContextBuilder

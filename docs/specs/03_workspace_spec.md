@@ -52,6 +52,10 @@
             └── last_response.json # 最新のAPI応答/ツールコール生ダンプ (debug_dump時)
 
     │
+    │  [ 静的プレビュー配信ディレクトリ ]
+    ├── previews/
+    │   └── {filename}.html                    # エージェントが生成したプレビュー表示用静的ファイル
+    │
     │  [ セッション永続ログディレクトリ ]
     └── sessions/
         ├── cli-session.jsonl                  # CLI 実行時のセッション履歴
