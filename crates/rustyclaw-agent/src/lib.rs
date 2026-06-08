@@ -60,6 +60,141 @@ pub fn build_heartbeat_rag_query(digest: &str) -> String {
     format!("recent errors tasks memory updates: {}", tail)
 }
 
+// ==============================================================================
+// Heartbeat Agent Refactoring (Phase 40-4)
+// ==============================================================================
+
+struct HeartbeatToolWrapper {
+    inner: Arc<dyn rig_core::tool::ToolDyn>,
+    db_path: PathBuf,
+}
+
+impl HeartbeatToolWrapper {
+    fn new(inner: Arc<dyn rig_core::tool::ToolDyn>, db_path: PathBuf) -> Self {
+        Self { inner, db_path }
+    }
+}
+
+impl rig_core::tool::ToolDyn for HeartbeatToolWrapper {
+    fn name(&self) -> String {
+        self.inner.name()
+    }
+
+    fn definition<'a>(
+        &'a self,
+        prompt: String,
+    ) -> rig_core::wasm_compat::WasmBoxedFuture<'a, rig_core::completion::ToolDefinition> {
+        self.inner.definition(prompt)
+    }
+
+    fn call<'a>(
+        &'a self,
+        args: String,
+    ) -> rig_core::wasm_compat::WasmBoxedFuture<'a, Result<String, rig_core::tool::ToolError>> {
+        Box::pin(async move {
+            let tool_name = self.name();
+            let raw_res = self.inner.call(args.clone()).await?;
+
+            let mut tool_content = raw_res;
+            if let Ok(db) = rustyclaw_storage::DbManager::new(&self.db_path) {
+                tool_content = filter_seen_tool_result(&tool_name, &args, &tool_content, &db);
+            }
+
+            tool_content = truncate_70_20(&tool_content, 3_000);
+
+            Ok(tool_content)
+        })
+    }
+}
+
+#[derive(Clone)]
+struct HeartbeatHook {
+    workspace_dir: PathBuf,
+    session_id: String,
+}
+
+impl HeartbeatHook {
+    fn new(workspace_dir: PathBuf, session_id: String) -> Self {
+        Self { workspace_dir, session_id }
+    }
+}
+
+impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> for HeartbeatHook {
+    fn on_tool_result(
+        &self,
+        tool_name: &str,
+        tool_call_id: Option<String>,
+        _internal_call_id: &str,
+        _args: &str,
+        result: &str,
+    ) -> impl std::future::Future<Output = rig_core::agent::HookAction> + rig_core::wasm_compat::WasmCompatSend {
+        let logger = SessionLogger::new(&self.workspace_dir);
+        let session_id = self.session_id.clone();
+        let tool_name = tool_name.to_string();
+        let result = result.to_string();
+
+        async move {
+            let tool_msg = Message {
+                role: "tool".to_string(),
+                content: result,
+                tool_call_id,
+                name: Some(tool_name),
+                ..Default::default()
+            };
+            if let Err(e) = logger.append_message(&session_id, &tool_msg) {
+                tracing::error!("Failed to save tool result message in session log: {}", e);
+            }
+            rig_core::agent::HookAction::cont()
+        }
+    }
+
+    fn on_completion_response(
+        &self,
+        _prompt: &rig_core::completion::Message,
+        response: &rig_core::completion::CompletionResponse<M::Response>,
+    ) -> impl std::future::Future<Output = rig_core::agent::HookAction> + rig_core::wasm_compat::WasmCompatSend {
+        let logger = SessionLogger::new(&self.workspace_dir);
+        let session_id = self.session_id.clone();
+
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+
+        for c in response.choice.iter() {
+            match c {
+                rig_core::completion::AssistantContent::Text(t) => {
+                    content.push_str(&t.text);
+                }
+                rig_core::completion::AssistantContent::ToolCall(tc) => {
+                    tool_calls.push(rustyclaw_providers::ToolCall {
+                        id: tc.id.clone(),
+                        r#type: "function".to_string(),
+                        function: rustyclaw_providers::FunctionCall {
+                            name: tc.function.name.clone(),
+                            arguments: tc.function.arguments.to_string(),
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let tool_calls_opt = if tool_calls.is_empty() { None } else { Some(tool_calls) };
+        let assistant_msg = Message {
+            role: "assistant".to_string(),
+            content: filter_json_leaks(&content),
+            tool_calls: tool_calls_opt,
+            ..Default::default()
+        };
+
+        async move {
+            if let Err(e) = logger.append_message(&session_id, &assistant_msg) {
+                tracing::error!("Failed to save assistant response in session log: {}", e);
+            }
+            rig_core::agent::HookAction::cont()
+        }
+    }
+}
+
 pub struct Pipeline {
     config: Config,
     provider: Box<dyn LlmProvider>,
@@ -80,84 +215,7 @@ impl Pipeline {
         }
     }
 
-    /// モデルチェーンを走査し、最初に成功したレスポンスを返す。
-    /// チェーン内の全モデルが失敗した場合はエラーを返す。
-    /// フォールバックモデルが使用された場合は warn! ログを出力する。
-    async fn complete_with_fallback(
-        &self,
-        purpose: &str,
-        session_id: &str,
-        messages: &[Message],
-        tools: &[rustyclaw_providers::ToolDef],
-        timeout: Duration,
-    ) -> Result<LlmResponse> {
-        let chain = self.config.get_model_chain(purpose);
-        if chain.is_empty() {
-            return Err(anyhow::anyhow!(
-                "no available models for purpose: {}",
-                purpose
-            ));
-        }
 
-        let category = resolve_category(session_id);
-        let mut last_err: Option<anyhow::Error> = None;
-
-        for (idx, model_cfg) in chain.iter().enumerate() {
-            let provider_id =
-                if model_cfg.model_provider == "gmn" || model_cfg.model_provider == "gemini" {
-                    "gmn".to_string()
-                } else {
-                    rustyclaw_providers::resolve_provider_id(model_cfg)
-                };
-            if let Some(remaining) = rustyclaw_providers::provider_cooldown_remaining(&provider_id)
-            {
-                tracing::info!(
-                    model = %model_cfg.model_name,
-                    provider = %provider_id,
-                    remaining_secs = remaining.as_secs(),
-                    "Provider is cooled down. Skipping in fallback chain..."
-                );
-                continue;
-            }
-
-            let opts = CompletionOptions {
-                model: model_cfg.model_name.clone(),
-                max_tokens: model_cfg.max_tokens,
-                temperature: model_cfg.temperature,
-                timeout,
-                category: Some(category.clone()),
-            };
-            let provider = create_provider(model_cfg.clone());
-            match provider.complete(messages, tools, &opts).await {
-                Ok(response) => {
-                    if idx > 0 {
-                        tracing::warn!(
-                            purpose = purpose,
-                            used_model = %model_cfg.model_name,
-                            primary_model = %chain[0].model_name,
-                            fallback_index = idx,
-                            "fallback model used"
-                        );
-                    }
-                    return Ok(response);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        model = %model_cfg.model_name,
-                        error = %e,
-                        "model failed, trying next in chain"
-                    );
-                    last_err = Some(e.into());
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "all models failed for purpose '{}': {}",
-            purpose,
-            last_err.map(|e| e.to_string()).unwrap_or_default()
-        ))
-    }
 
     /// context_window ベースのメッセージ件数ハードキャップ。
     /// モデルの context_window 文字列を parse_context_window() で解釈し、
@@ -606,39 +664,21 @@ Rules:
             },
             conversation_text,
         );
-        let provider = create_provider(memory_model.clone());
-        let messages = vec![
-            Message {
-                role: "system".to_string(),
-                content: system_prompt.to_string(),
-                name: None,
-                ..Default::default()
-            },
-            Message {
-                role: "user".to_string(),
-                content: user_message,
-                name: None,
-                ..Default::default()
-            },
-        ];
+        let model = rustyclaw_providers::RustyclawCompletionModel::new(config.clone(), "memory", session_id);
+        let usage_sink = model.usage_sink();
 
-        let opts = CompletionOptions {
-            model: memory_model.model_name,
-            max_tokens: memory_model.max_tokens.or(Some(1500)), // MEMORY.md ≦ 1250 tok + daily log ≒ 100 tok
-            temperature: memory_model.temperature.or(Some(0.3)),
-            timeout: Duration::from_secs(300),
-            category: Some("memory".to_string()),
-        };
+        let agent = rig_core::agent::AgentBuilder::new(model)
+            .preamble(system_prompt)
+            .build();
 
-        let response = provider
-            .complete(&messages, &[], &opts)
+        let response_text = rig_core::agent::PromptRequest::from_agent(&agent, &user_message)
             .await
-            .context("LLM call failed for memory flush")?;
+            .context("LLM call failed for memory flush agent")?;
 
-        // FU-4: memory flush の LLM 消費を usage テーブルへ計上（Stats 過少計上の解消）
-        Self::record_aux_usage(&db, session_id, &response, "memory-flush");
-
-        let response_text = response.content;
+        let last_usage: Option<LlmResponse> = usage_sink.lock().unwrap().take();
+        if let Some(ref usage) = last_usage {
+            Self::record_aux_usage(&db, session_id, usage, "memory-flush");
+        }
 
         let new_memory =
             extract_delimited_block(&response_text, "---NEW_MEMORY---", "---END_MEMORY---");
@@ -733,7 +773,6 @@ Rules:
         system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
 
         // RAG: heartbeat プロンプトに関連チャンクを注入 (ISSUE-27)
-        // heartbeat_top_k が設定されている場合は config を clone して top_k を上書き (ISSUE-30)
         let hb_top_k = self
             .config
             .embedding
@@ -814,120 +853,78 @@ Rules:
             name: None,
             ..Default::default()
         };
-        let mut messages = vec![
-            Message {
-                role: "system".to_string(),
-                content: system_context,
-                name: None,
-                ..Default::default()
-            },
-            user_msg.clone(),
-        ];
 
         logger
             .append_message(session_id, &user_msg)
             .context("Failed to save user message in session log (fail-closed)")?;
 
-        // seen_items filter DB (fail-open: skip filtering if DB unavailable)
-        let db_opt = rustyclaw_storage::DbManager::new(db_path).ok();
+        use rig_core::agent::AgentBuilder;
+        use rustyclaw_providers::RustyclawCompletionModel;
 
-        let provider_tools: Vec<rustyclaw_providers::ToolDef> = tool_registry
-            .tool_definitions()
-            .await
-            .into_iter()
-            .map(|d| rustyclaw_providers::ToolDef {
-                name: d.name,
-                description: d.description,
-                parameters: d.parameters,
-            })
-            .collect();
+        let model = RustyclawCompletionModel::new(self.config.clone(), "heartbeat", session_id);
+        let usage_sink = model.usage_sink();
 
-        let max_loops = 5;
-        for _ in 0..max_loops {
-            self.dump_request(workspace_dir, &messages);
-
-            let mut response = self
-                .complete_with_fallback(
-                    "heartbeat",
-                    session_id,
-                    &messages,
-                    &provider_tools,
-                    Duration::from_secs(900),
-                )
-                .await?;
-            response.content = filter_json_leaks(&response.content);
-
-            let assistant_msg = Message {
-                role: response.role.clone(),
-                content: response.content.clone(),
-                tool_calls: response.tool_calls.clone(),
-                name: None,
-                ..Default::default()
-            };
-            messages.push(assistant_msg.clone());
-            logger
-                .append_message(session_id, &assistant_msg)
-                .context("Failed to save assistant response in session log (fail-closed)")?;
-            self.dump_response(workspace_dir, &response.content, &response.role);
-
-            if let Some(ref calls) = response.tool_calls
-                && !calls.is_empty()
-            {
-                for call in calls {
-                    tracing::info!(
-                        "Agent executing tool call: {} (id: {})",
-                        call.function.name,
-                        call.id
-                    );
-                    let (mut tool_content, tool_is_error) = if let Some(tool) =
-                        tool_registry.get(&call.function.name)
-                    {
-                        match tool.call(call.function.arguments.clone()).await {
-                            Ok(content) => (content, false),
-                            Err(e) => (format!("Tool error: {}", e), true),
-                        }
-                    } else {
-                        (
-                            format!("Error: Tool '{}' not found in registry", call.function.name),
-                            true,
-                        )
-                    };
-
-                    // Filter already-seen Gmail/Calendar items (fail-open)
-                    if !tool_is_error && let Some(ref db) = db_opt {
-                        tool_content = filter_seen_tool_result(
-                            &call.function.name,
-                            &call.function.arguments,
-                            &tool_content,
-                            db,
-                        );
-                    }
-
-                    // ツール結果を 3,000 bytes にキャップ（Groq TPM 上限対策）
-                    tool_content = truncate_70_20(&tool_content, 3_000);
-
-                    let tool_msg = Message {
-                        role: "tool".to_string(),
-                        content: tool_content,
-                        tool_call_id: Some(call.id.clone()),
-                        name: Some(call.function.name.clone()),
-                        ..Default::default()
-                    };
-                    messages.push(tool_msg.clone());
-                    logger.append_message(session_id, &tool_msg).context(
-                        "Failed to save tool result message in session log (fail-closed)",
-                    )?;
-                }
-                continue;
-            }
-
-            return Ok(response);
+        let mut wrapped_tools: Vec<Box<dyn rig_core::tool::ToolDyn>> = Vec::new();
+        for (_, tool) in tool_registry.iter() {
+            let wrapped = HeartbeatToolWrapper::new(tool.clone(), db_path.to_path_buf());
+            wrapped_tools.push(Box::new(wrapped));
         }
 
-        Err(anyhow::anyhow!(
-            "Heartbeat agent loop exceeded maximum step limit of {}",
-            max_loops
-        ))
+        let agent = AgentBuilder::new(model)
+            .preamble(&system_context)
+            .default_max_turns(5)
+            .tools(wrapped_tools)
+            .build();
+
+        let initial_messages = vec![
+            Message {
+                role: "system".to_string(),
+                content: system_context.clone(),
+                ..Default::default()
+            },
+            user_msg.clone(),
+        ];
+        self.dump_request(workspace_dir, &initial_messages);
+
+        let rig_history: Vec<rig_core::completion::Message> = Vec::new();
+        let response_text = rig_core::agent::PromptRequest::from_agent(&agent, user_message)
+            .with_history(rig_history)
+            .with_hook(HeartbeatHook::new(workspace_dir.to_path_buf(), session_id.to_string()))
+            .await
+            .map_err(|e| anyhow::anyhow!("heartbeat agent error: {}", e))?;
+
+        let response_text = filter_json_leaks(&response_text);
+        self.dump_response(workspace_dir, &response_text, "assistant");
+
+        let last_usage: Option<LlmResponse> = usage_sink.lock().unwrap().take();
+        if let Some(ref usage) = last_usage
+            && let Ok(db) = rustyclaw_storage::DbManager::new(db_path)
+        {
+            let heartbeat_model = self.config.get_model("heartbeat");
+            let _ = db.record_usage(
+                session_id,
+                usage.prompt_tokens.unwrap_or(0),
+                usage.completion_tokens.unwrap_or(0),
+                usage.total_tokens.unwrap_or(0),
+                &heartbeat_model.model_name,
+                "heartbeat",
+                Some(&heartbeat_model.model_provider),
+                0,
+            );
+        }
+
+        let response = LlmResponse {
+            content: response_text,
+            role: "assistant".to_string(),
+            tool_calls: None,
+            prompt_tokens: last_usage.as_ref().and_then(|u| u.prompt_tokens),
+            completion_tokens: last_usage.as_ref().and_then(|u| u.completion_tokens),
+            total_tokens: last_usage.as_ref().and_then(|u| u.total_tokens),
+            model_used: Some(self.config.get_model("heartbeat").model_name),
+            provider_id: Some(self.config.get_model("heartbeat").model_provider),
+        };
+
+        Ok(response)
     }
 
     /// 通常（一括）の対話実行
@@ -978,18 +975,40 @@ Rules:
 
         self.dump_request(workspace_dir, &messages);
 
-        let cat = resolve_category(session_id);
-        let opts = CompletionOptions {
-            model: self.config.get_model("default").model_name,
-            max_tokens: self.config.get_model("default").max_tokens,
-            temperature: self.config.get_model("default").temperature,
-            timeout: Duration::from_secs(900),
-            category: Some(cat),
-        };
-
         // 3. LLMプロバイダ呼び出し
-        let mut response = self.provider.complete(&messages, &[], &opts).await?;
-        response.content = filter_json_leaks(&response.content);
+        use rig_core::agent::AgentBuilder;
+        use rustyclaw_providers::RustyclawCompletionModel;
+
+        let system_content = messages[0].content.clone();
+
+        let model = RustyclawCompletionModel::new(self.config.clone(), "default", session_id);
+        let usage_sink = model.usage_sink();
+
+        // 履歴を rig_core::completion::Message に変換
+        let rig_history = rustyclaw_providers::provider_messages_to_rig(&history.messages);
+
+        let agent = AgentBuilder::new(model)
+            .preamble(&system_content)
+            .build();
+
+        let response_text = rig_core::agent::PromptRequest::from_agent(&agent, user_message)
+            .with_history(rig_history)
+            .await
+            .map_err(|e| anyhow::anyhow!("agent execution failed: {}", e))?;
+
+        let response_text = filter_json_leaks(&response_text);
+
+        let last_usage: Option<LlmResponse> = usage_sink.lock().unwrap().take();
+        let response = LlmResponse {
+            content: response_text,
+            role: "assistant".to_string(),
+            tool_calls: None,
+            prompt_tokens: last_usage.as_ref().and_then(|u| u.prompt_tokens),
+            completion_tokens: last_usage.as_ref().and_then(|u| u.completion_tokens),
+            total_tokens: last_usage.as_ref().and_then(|u| u.total_tokens),
+            model_used: Some(self.config.get_model("default").model_name),
+            provider_id: Some(self.config.get_model("default").model_provider),
+        };
 
         // 4. 会話ログの保存 (fail-closed)
         logger
@@ -1078,16 +1097,6 @@ Rules:
             let _ = fs::write(&existing_summary_path, placeholder);
         }
 
-        let summary_model = self.config.get_model("summary");
-        let provider = create_provider(summary_model.clone());
-        let opts = CompletionOptions {
-            model: summary_model.model_name,
-            max_tokens: summary_model.max_tokens.or(Some(1500)),
-            temperature: summary_model.temperature.or(Some(0.3)),
-            timeout: Duration::from_secs(300),
-            category: Some("summary".to_string()),
-        };
-
         // FU-4: summary 経路の LLM 消費を計上するため db を開く（fail-open）
         let usage_db = rustyclaw_storage::DbManager::new(workspace_dir.join("memory.db")).ok();
 
@@ -1115,29 +1124,23 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 existing_content, new_conversation_text
             );
 
-            let messages = vec![
-                Message {
-                    role: "system".to_string(),
-                    content: system_prompt.to_string(),
-                    name: None,
-                    ..Default::default()
-                },
-                Message {
-                    role: "user".to_string(),
-                    content: user_message,
-                    name: None,
-                    ..Default::default()
-                },
-            ];
+            let model = rustyclaw_providers::RustyclawCompletionModel::new(self.config.clone(), "summary", target_session_id);
+            let usage_sink = model.usage_sink();
 
-            let response = provider
-                .complete(&messages, &[], &opts)
+            let agent = rig_core::agent::AgentBuilder::new(model)
+                .preamble(system_prompt)
+                .build();
+
+            let content = rig_core::agent::PromptRequest::from_agent(&agent, &user_message)
                 .await
-                .context("LLM call failed for incremental session summary generation")?;
-            if let Some(db) = &usage_db {
-                Self::record_aux_usage(db, target_session_id, &response, "session-summary");
+                .context("LLM call failed for incremental session summary generation agent")?;
+
+            if let Some(db) = &usage_db
+                && let Some(usage) = usage_sink.lock().unwrap().take()
+            {
+                Self::record_aux_usage(db, target_session_id, &usage, "session-summary");
             }
-            response.content
+            content
         } else if existing_turns > 0 && existing_turns >= history.len() {
             existing_content
         } else {
@@ -1164,29 +1167,23 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 target_session_id, conversation_text
             );
 
-            let messages = vec![
-                Message {
-                    role: "system".to_string(),
-                    content: system_prompt.to_string(),
-                    name: None,
-                    ..Default::default()
-                },
-                Message {
-                    role: "user".to_string(),
-                    content: user_message,
-                    name: None,
-                    ..Default::default()
-                },
-            ];
+            let model = rustyclaw_providers::RustyclawCompletionModel::new(self.config.clone(), "summary", target_session_id);
+            let usage_sink = model.usage_sink();
 
-            let response = provider
-                .complete(&messages, &[], &opts)
+            let agent = rig_core::agent::AgentBuilder::new(model)
+                .preamble(system_prompt)
+                .build();
+
+            let content = rig_core::agent::PromptRequest::from_agent(&agent, &user_message)
                 .await
-                .context("LLM call failed for full session summary generation")?;
-            if let Some(db) = &usage_db {
-                Self::record_aux_usage(db, target_session_id, &response, "session-summary");
+                .context("LLM call failed for full session summary generation agent")?;
+
+            if let Some(db) = &usage_db
+                && let Some(usage) = usage_sink.lock().unwrap().take()
+            {
+                Self::record_aux_usage(db, target_session_id, &usage, "session-summary");
             }
-            response.content
+            content
         };
 
         // Append comment for tracking turns (strip any existing footer comment first)
@@ -2670,7 +2667,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_complete_with_fallback_skips_disabled_model() {
+    async fn test_get_model_chain_skips_disabled_model() {
         // disabled モデルが先頭の場合、get_model_chain が有効モデルだけを返すことを確認
         let config = rustyclaw_config::Config {
             model_list: vec![

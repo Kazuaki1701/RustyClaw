@@ -37,6 +37,10 @@ impl ToolRegistry {
         self.tools.get(name)
     }
 
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, String, Arc<dyn rig_core::tool::ToolDyn>> {
+        self.tools.iter()
+    }
+
     pub fn tool_count(&self) -> usize {
         self.tools.len()
     }
