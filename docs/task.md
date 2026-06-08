@@ -55,7 +55,7 @@
   - `axum` または `warp` による非同期 HTTP サーバースレッドの実装。
   - `workspace/previews/` 配下の静的ファイルサービングと、安全な Tailscale アドレス経由でのプレビューURL提示。
 
-- `[ ]` **3. Bubblewrap による実行スクリプトのサンドボックス化（ラズパイ環境保護）**
+- `[x]` **3. Bubblewrap による実行スクリプトのサンドボックス化（ラズパイ環境保護）**
   - `bwrap` コマンドラインラッピングによる `WorkspaceExecuteScriptTool` の保護。
   - `/workspace` ディレクトリのみを書き込み可能バインドし、ホストOSやSSDの不用意な破壊を防ぐ。
 
