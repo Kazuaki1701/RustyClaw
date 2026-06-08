@@ -37,7 +37,7 @@
 - `[x]` **40-1: `rustyclaw-providers` の rig-core Provider への置き換え** (#22)
   - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
 
-- `[ ]` **40-4: 宣言的 `AgentBuilder` の導入**
+- `[x]` **40-4: 宣言的 `AgentBuilder` の導入**
   - heartbeat / summary などのエージェント定義を AgentBuilder で再整理（現状は execute_heartbeat が独自ループ）。
 
 ---
