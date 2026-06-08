@@ -47,7 +47,7 @@
 #### Phase 37: GeminiClaw 高度先進機能の移植と統合
 > 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。
 
-- `[ ]` **1. 自律性制御 (Autonomy Level) システムの導入**
+- `[x]` **1. 自律性制御 (Autonomy Level) システムの導入**
   - `Config` に `autonomy_level` を追加し、`autonomous` / `supervised` / `read_only` の切り替えをサポート。
   - `supervised` 時に書き込み操作を一時中断し承認を待つゲートウェイインターセプション処理の実装。
 
