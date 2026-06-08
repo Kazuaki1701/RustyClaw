@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-09 (ISSUE-26, Phase 37-1/2/3, Phase 40-1/4 をアーカイブ / bwrap ~/.config RW バインド修正)  
+> **最終更新日**: 2026-06-09 (ISSUE-26, Phase 37-1/2/3, Phase 40-1/4 をアーカイブ / bwrap ~/.config RW バインド修正 / Calendar owner フィールド追加)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。
 
 ---
@@ -13,21 +13,9 @@
 
 ---
 
-- `[ ]` **Calendar 誰の予定か識別できない**
+- `[x]` **Calendar 誰の予定か識別できない** ✅ 2026-06-09 修正済み
   - calendar_op.sh list_family の出力が下記形式のため、だれの予定かが識別できない
-
-   ~~~json
-   {
-     "event_id": "_64rjcga584q46b9n6l1k6b9k6l2k8b9p610k2ba16t0jic2374p42d1h74",
-     "title": "5時間授業",
-     "start": "2026-06-12",
-     "start_wday": "金",
-     "end": "2026-06-12",
-     "end_wday": "金",
-     "location": ""
-   }
-   ~~~
-
+  - **修正**: `fetch_events` に `owner` 引数を追加し、各イベントに `"owner": "かずあき"` 等のフィールドを付与
 
 - `[x]` **bwrap導入の結果、 rp1:/~/.rustyclaw/ への書き込みができない** ✅ 2026-06-09 修正済み
   - **症状例**: カレンダーを確認しようとしたところ、システム側で認証情報の書き込みエラー（Read-only file system）が発生しており、Googleカレンダーの情報を直接取得することができない
