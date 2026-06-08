@@ -494,6 +494,20 @@ pub struct WorkspaceExecuteScriptArgs {
     pub env: std::collections::HashMap<String, String>,
 }
 
+fn is_bwrap_available() -> bool {
+    std::process::Command::new("bwrap")
+        .arg("--ro-bind")
+        .arg("/")
+        .arg("/")
+        .arg("--")
+        .arg("true")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// workspace/scripts/ 配下のスクリプトを実行するツール
 #[derive(Clone)]
 pub struct WorkspaceExecuteScriptTool {
@@ -564,30 +578,44 @@ impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
-        let mut cmd = match ext {
-            "sh" => {
-                let mut c = tokio::process::Command::new("bash");
-                c.arg(&script_path);
-                c
-            }
-            "py" => {
-                let mut c = tokio::process::Command::new("python3");
-                c.arg(&script_path);
-                c
-            }
-            "js" => {
-                let mut c = tokio::process::Command::new("node");
-                c.arg(&script_path);
-                c
-            }
-            "ts" => {
-                let mut c = tokio::process::Command::new("bun");
-                c.arg("run").arg(&script_path);
-                c
-            }
-            _ => tokio::process::Command::new(&script_path),
+        let use_sandbox = is_bwrap_available();
+
+        let original_args_base = match ext {
+            "sh" | "py" | "js" => vec![script_path.to_str().unwrap_or("").to_string()],
+            "ts" => vec!["run".to_string(), script_path.to_str().unwrap_or("").to_string()],
+            _ => vec![],
         };
-        cmd.args(&args.args);
+
+        let mut original_args = original_args_base;
+        original_args.extend(args.args.clone());
+
+        let original_program = match ext {
+            "sh" => "bash",
+            "py" => "python3",
+            "js" => "node",
+            "ts" => "bun",
+            _ => script_path.to_str().unwrap_or(""),
+        };
+
+        let mut cmd = if use_sandbox {
+            tracing::info!("Running script '{}' inside Bubblewrap sandbox", script_name);
+            let mut c = tokio::process::Command::new("bwrap");
+            c.arg("--ro-bind").arg("/").arg("/")
+             .arg("--dev").arg("/dev")
+             .arg("--proc").arg("/proc")
+             .arg("--tmpfs").arg("/tmp")
+             .arg("--bind").arg(&self.workspace_dir).arg(&self.workspace_dir)
+             .arg("--share-net")
+             .arg("--")
+             .arg(original_program);
+            c.args(&original_args);
+            c
+        } else {
+            tracing::warn!("bwrap command not found. Running script '{}' without sandbox protection!", script_name);
+            let mut c = tokio::process::Command::new(original_program);
+            c.args(&original_args);
+            c
+        };
         for (key, val_str) in &args.env {
             let resolved = if let Some(vault_key) = val_str.strip_prefix("$vault:") {
                 let mut resolved_opt = match rustyclaw_config::vault::load_vault(None) {
