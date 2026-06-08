@@ -614,13 +614,28 @@ impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
 
         let mut cmd = if use_sandbox {
             tracing::info!("Running script '{}' inside Bubblewrap sandbox", script_name);
+            // workspace_dir がシンボリックリンク経由の NFS パスを含む場合、
+            // bwrap の --bind はマウント先作成に失敗する。canonical path を使う。
+            let workspace_bind = self.workspace_dir.canonicalize()
+                .unwrap_or_else(|_| self.workspace_dir.clone());
             let mut c = tokio::process::Command::new("bwrap");
             c.arg("--ro-bind").arg("/").arg("/")
              .arg("--dev").arg("/dev")
              .arg("--proc").arg("/proc")
              .arg("--tmpfs").arg("/tmp")
-             .arg("--bind").arg(&self.workspace_dir).arg(&self.workspace_dir)
-             .arg("--share-net")
+             .arg("--bind").arg(&workspace_bind).arg(&workspace_bind);
+            // $HOME/.config を RW バインドする。
+            // gws 等の外部認証ツールはトークンキャッシュを ~/.config/<tool>/ に書き込む。
+            // --ro-bind / / だけだとそのディレクトリが読み取り専用になり
+            // "Read-only file system (os error 30)" で認証に失敗するため、
+            // $HOME/.config が存在する場合のみ書き込み可能にオーバーレイする。
+            if let Some(home) = std::env::var_os("HOME") {
+                let config_dir = std::path::Path::new(&home).join(".config");
+                if config_dir.exists() {
+                    c.arg("--bind").arg(&config_dir).arg(&config_dir);
+                }
+            }
+            c.arg("--share-net")
              .arg("--")
              .arg(original_program);
             c.args(&original_args);
@@ -1159,4 +1174,5 @@ mod tests {
         assert!(!defs[0].description.is_empty());
         assert!(defs[0].parameters.get("properties").is_some());
     }
+
 }
