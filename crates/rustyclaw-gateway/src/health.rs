@@ -1,11 +1,16 @@
 use anyhow::{Context, Result};
 use rustyclaw_config::get_app_dir;
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+
+/// セッション別キャンセル通知用マップ。
+/// `/chat` ハンドラが oneshot::Sender を登録し、`/chat/cancel` が send() で通知する。
+type CancelMap = Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>;
 
 pub struct HealthServer {
     addr: SocketAddr,
@@ -14,6 +19,7 @@ pub struct HealthServer {
     workspace_path: PathBuf,
     gmn_sem: Arc<tokio::sync::Semaphore>,
     gmn_capacity: usize,
+    cancel_map: CancelMap,
 }
 
 impl HealthServer {
@@ -33,6 +39,7 @@ impl HealthServer {
             workspace_path,
             gmn_sem,
             gmn_capacity,
+            cancel_map: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -47,6 +54,7 @@ impl HealthServer {
         let workspace_path = Arc::new(self.workspace_path.clone());
         let gmn_sem_arc = self.gmn_sem.clone();
         let gmn_capacity = self.gmn_capacity;
+        let cancel_map: CancelMap = self.cancel_map.clone();
 
         tokio::spawn(async move {
             loop {
@@ -58,6 +66,7 @@ impl HealthServer {
                         let workspace_path_clone = workspace_path.clone();
                         let _gmn_sem_clone = gmn_sem_arc.clone();
                         let gmn_cap_clone = gmn_capacity;
+                        let cancel_map_clone = cancel_map.clone();
 
                         tokio::spawn(async move {
                             let mut buffer = [0u8; 8192];
@@ -420,6 +429,32 @@ impl HealthServer {
                                 {
                                     let html = get_dashboard_html();
                                     ("200 OK".to_string(), html, "text/html; charset=utf-8")
+                                } else if request.starts_with("POST /chat/cancel") {
+                                    // ── CANCEL エンドポイント ────────────────────────
+                                    // session_id を受け取り、対応する oneshot::Sender に通知する
+                                    let mut cancel_resp = "not_found".to_string();
+                                    if let Some(body_start) = request.find("\r\n\r\n") {
+                                        let json_body = request[body_start + 4..].trim();
+                                        if let Ok(val) =
+                                            serde_json::from_str::<serde_json::Value>(json_body)
+                                            && let Some(sid) = val["session_id"].as_str()
+                                        {
+                                            let mut map = cancel_map_clone.lock().await;
+                                            if let Some(tx) = map.remove(sid) {
+                                                let _ = tx.send(());
+                                                cancel_resp = "cancelled".to_string();
+                                                tracing::info!(
+                                                    "Dashboard chat cancelled for session: {}",
+                                                    sid
+                                                );
+                                            }
+                                        }
+                                    }
+                                    (
+                                        "200 OK".to_string(),
+                                        cancel_resp,
+                                        "text/plain; charset=utf-8",
+                                    )
                                 } else if request.starts_with("POST /chat") {
                                     let mut chat_resp = "Error: Invalid request body".to_string();
 
@@ -431,6 +466,14 @@ impl HealthServer {
                                                 let today = chrono::Local::now().format("%Y%m%d").to_string();
                                                 let session_id = format!("http-dashboard-{}", today);
                                                 let mut rx = bus_clone.subscribe();
+
+                                                // キャンセル通知チャネルを作成し、cancel_map に登録
+                                                let (cancel_tx, cancel_rx) =
+                                                    tokio::sync::oneshot::channel::<()>();
+                                                {
+                                                    let mut map = cancel_map_clone.lock().await;
+                                                    map.insert(session_id.clone(), cancel_tx);
+                                                }
 
                                                 let event = crate::SystemEvent::IncomingMessage {
                                                     session_id: session_id.clone(),
@@ -453,10 +496,15 @@ impl HealthServer {
                                                         _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
                                                             chat_resp = "Error: Request timeout".to_string();
                                                         }
+                                                        _ = cancel_rx => {
+                                                            chat_resp = "⚠️ 応答を中断しました。".to_string();
+                                                        }
                                                     }
                                                 } else {
                                                     chat_resp = "Error: Failed to publish chat event to bus".to_string();
                                                 }
+                                                // 応答済み or キャンセル済みの場合、cancel_map から除去
+                                                cancel_map_clone.lock().await.remove(&session_id);
                                             }
                                     }
                                     ("200 OK".to_string(), chat_resp, "text/plain; charset=utf-8")
@@ -752,8 +800,11 @@ header{
 .chat-in-area{padding:8px 10px;border-top:1px solid rgba(255,255,255,.05);display:flex;gap:6px;flex-shrink:0}
 .chat-in{flex:1;background:rgba(0,0,0,.4);border:1px solid rgba(0,212,255,.15);border-radius:var(--radius);padding:7px 12px;color:var(--text);font-size:13px;font-family:'Outfit',sans-serif;outline:none;transition:border-color .2s,box-shadow .2s}
 .chat-in:focus{border-color:rgba(0,212,255,.45);box-shadow:0 0 8px rgba(0,212,255,.15)}
-.send-btn{background:linear-gradient(135deg,rgba(191,0,255,.7),rgba(0,212,255,.7));border:none;border-radius:var(--radius);color:#fff;padding:0 16px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 0 12px rgba(0,212,255,.2);transition:opacity .2s,box-shadow .2s;font-family:'Fira Code',monospace;letter-spacing:.04em}
+.send-btn{background:linear-gradient(135deg,rgba(191,0,255,.7),rgba(0,212,255,.7));border:none;border-radius:var(--radius);color:#fff;padding:0 16px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 0 12px rgba(0,212,255,.2);transition:all .2s;font-family:'Fira Code',monospace;letter-spacing:.04em}
 .send-btn:hover{opacity:.88;box-shadow:0 0 20px rgba(0,212,255,.35)}
+.cancel-btn{background:linear-gradient(135deg,rgba(255,34,68,.8),rgba(255,120,0,.7));border:none;border-radius:var(--radius);color:#fff;padding:0 16px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 0 14px rgba(255,34,68,.35);transition:all .2s;font-family:'Fira Code',monospace;letter-spacing:.04em;animation:cancel-pulse 1.8s ease-in-out infinite}
+.cancel-btn:hover{opacity:.88;box-shadow:0 0 22px rgba(255,34,68,.55)}
+@keyframes cancel-pulse{0%,100%{box-shadow:0 0 14px rgba(255,34,68,.35)}50%{box-shadow:0 0 22px rgba(255,34,68,.65)}}
 .loading-dots{display:flex;gap:4px;padding:10px 14px;align-self:flex-start}
 .dot{width:5px;height:5px;background:var(--muted);border-radius:50%;animation:blink 1.4s infinite both}
 .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
@@ -1155,13 +1206,40 @@ async function updateLog(){
   }catch{}
 }
 function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}}
+let currentAbortController=null;
+let currentSessionId=null;
+function setSendButtonState(state){
+  const btn=document.getElementById('sendBtn');
+  if(state==='cancel'){
+    btn.textContent='CANCEL';btn.className='cancel-btn';btn.onclick=cancelMessage;
+  }else{
+    btn.textContent='SEND';btn.className='send-btn';btn.onclick=sendMessage;
+  }
+}
+async function cancelMessage(){
+  if(currentAbortController){currentAbortController.abort();}
+  if(currentSessionId){
+    try{await fetch('/chat/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:currentSessionId})});}catch{}
+  }
+}
 async function sendMessage(){
   const inp=document.getElementById('chatInput');const msg=inp.value.trim();if(!msg)return;
   addBubble(msg,'user');inp.value='';
-  const lid=addLoading();inp.disabled=true;document.getElementById('sendBtn').disabled=true;
-  try{const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});removeLoading(lid);addBubble(r.ok?await r.text():'エラー: 返答の取得に失敗しました。','ai')}
-  catch{removeLoading(lid);addBubble('通信エラー','ai')}
-  finally{inp.disabled=false;document.getElementById('sendBtn').disabled=false;inp.focus()}
+  const today=new Date();const pad=n=>String(n).padStart(2,'0');
+  currentSessionId='http-dashboard-'+today.getFullYear()+pad(today.getMonth()+1)+pad(today.getDate());
+  currentAbortController=new AbortController();
+  const lid=addLoading();inp.disabled=true;setSendButtonState('cancel');
+  try{
+    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg}),signal:currentAbortController.signal});
+    removeLoading(lid);addBubble(r.ok?await r.text():'エラー: 返答の取得に失敗しました。','ai');
+  }catch(e){
+    removeLoading(lid);
+    if(e.name==='AbortError'){addBubble('⚠️ 応答を中断しました。','ai');}
+    else{addBubble('通信エラー','ai');}
+  }finally{
+    inp.disabled=false;setSendButtonState('send');inp.focus();
+    currentAbortController=null;currentSessionId=null;
+  }
 }
 function addBubble(text,role){const d=document.createElement('div');d.className='bubble '+role;d.textContent=text;d.style.whiteSpace='pre-wrap';const m=document.getElementById('chatMessages');m.appendChild(d);m.scrollTop=m.scrollHeight}
 function addLoading(){const id='ld-'+Date.now();const el=document.createElement('div');el.className='loading-dots';el.id=id;el.innerHTML='<span class="dot"></span><span class="dot"></span><span class="dot"></span>';const m=document.getElementById('chatMessages');m.appendChild(el);m.scrollTop=m.scrollHeight;return id}
