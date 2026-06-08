@@ -14,6 +14,7 @@ pub mod health;
 pub mod heartbeat;
 pub(crate) mod skills;
 pub mod watchdog;
+pub mod web_preview;
 
 const SUMMARIZE_CRON_SESSIONS: &[&str] = &[
     "cron:karakeep-cleanup",
@@ -894,6 +895,27 @@ impl Gateway {
         // 1. 設定のロード
         let config = rustyclaw_config::load_config(&self.config_path)
             .context("Failed to load initial configuration for Gateway")?;
+
+        // Web Preview Server Startup
+        let mut web_preview_task = None;
+        let preview_base_url = if config.web_preview.enabled {
+            match crate::web_preview::start_web_preview_server(&config, self.workspace_path.clone()).await {
+                Ok((h, bound_addr)) => {
+                    web_preview_task = Some(h);
+                    let base = crate::web_preview::get_preview_base_url(&config.web_preview.base_url, bound_addr.port());
+                    tracing::info!("Web Preview Server started successfully. Base URL: {}", base);
+                    Some(base)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to start Web Preview Server: {:#}", e);
+                    None
+                }
+            }
+        } else {
+            tracing::info!("Web Preview Server is disabled in config.");
+            None
+        };
+
         {
             let m = config.get_model("default");
             tracing::info!(
@@ -972,7 +994,7 @@ impl Gateway {
             tool_server_handle.add_tool(t).await.ok();
         }
         {
-            let t = rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone());
+            let t = rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone(), preview_base_url.clone());
             tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
             tool_server_handle.add_tool(t).await.ok();
         }
@@ -1229,6 +1251,7 @@ impl Gateway {
                 _ = sig_int.recv() => {
                     tracing::info!("Received SIGINT. Initiating graceful shutdown...");
                     for h in &mcp_service_tasks { h.abort(); }
+                    if let Some(ref h) = web_preview_task { h.abort(); }
                     discord_client.shutdown().await;
                     break;
                 }
@@ -1236,6 +1259,7 @@ impl Gateway {
                 _ = sig_term.recv() => {
                     tracing::info!("Received SIGTERM. Initiating graceful shutdown...");
                     for h in &mcp_service_tasks { h.abort(); }
+                    if let Some(ref h) = web_preview_task { h.abort(); }
                     discord_client.shutdown().await;
                     break;
                 }
@@ -1349,6 +1373,30 @@ mod tests {
         let lanes = registry.lanes.lock().await;
         assert!(lanes.contains_key("session-abc"));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_web_preview_server_serves_static_file() -> Result<()> {
+        let ws_dir = tempdir()?;
+        let previews_dir = ws_dir.path().join("previews");
+        fs::create_dir_all(&previews_dir)?;
+        fs::write(previews_dir.join("hello.html"), "<h1>hello world</h1>")?;
+
+        let mut config = Config::default();
+        config.web_preview.enabled = true;
+        config.web_preview.host = "127.0.0.1".to_string();
+        config.web_preview.port = 0;
+
+        let (handle, bound_addr) = crate::web_preview::start_web_preview_server(&config, ws_dir.path().to_path_buf()).await?;
+
+        let url = format!("http://{}/hello.html", bound_addr);
+        let resp = reqwest::get(&url).await?;
+        assert!(resp.status().is_success());
+        let text = resp.text().await?;
+        assert!(text.contains("hello world"));
+
+        handle.abort();
         Ok(())
     }
 }

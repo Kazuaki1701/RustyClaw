@@ -51,7 +51,7 @@
   - `Config` に `autonomy_level` を追加し、`autonomous` / `supervised` / `read_only` の切り替えをサポート。
   - `supervised` 時に書き込み操作を一時中断し承認を待つゲートウェイインターセプション処理の実装。
 
-- `[ ]` **2. Tailscale 連携 Web プレビューサーバーの実装**
+- `[x]` **2. Tailscale 連携 Web プレビューサーバーの実装**
   - `axum` または `warp` による非同期 HTTP サーバースレッドの実装。
   - `workspace/previews/` 配下の静的ファイルサービングと、安全な Tailscale アドレス経由でのプレビューURL提示。
 

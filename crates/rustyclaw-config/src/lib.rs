@@ -323,6 +323,41 @@ pub struct ToolsConfig {
 }
 
 // ─────────────────────────────────────────────
+// Web Preview
+// ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebPreviewConfig {
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+    #[serde(default = "default_preview_host")]
+    pub host: String,
+    #[serde(default = "default_preview_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+impl Default for WebPreviewConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            host: default_preview_host(),
+            port: default_preview_port(),
+            base_url: None,
+        }
+    }
+}
+
+fn default_preview_host() -> String {
+    "0.0.0.0".to_string()
+}
+
+fn default_preview_port() -> u16 {
+    4000
+}
+
+// ─────────────────────────────────────────────
 // Config
 // ─────────────────────────────────────────────
 
@@ -351,6 +386,9 @@ pub struct Config {
     /// 自律性制御レベル
     #[serde(default)]
     pub autonomy_level: AutonomyLevel,
+    /// Webプレビューサーバー設定
+    #[serde(default)]
+    pub web_preview: WebPreviewConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -159,11 +159,12 @@ pub struct WorkspaceWriteArgs {
 #[derive(Clone)]
 pub struct WorkspaceWriteTool {
     workspace_path: std::path::PathBuf,
+    preview_base_url: Option<String>,
 }
 
 impl WorkspaceWriteTool {
-    pub fn new(workspace_path: std::path::PathBuf) -> Self {
-        Self { workspace_path }
+    pub fn new(workspace_path: std::path::PathBuf, preview_base_url: Option<String>) -> Self {
+        Self { workspace_path, preview_base_url }
     }
 }
 
@@ -210,7 +211,21 @@ impl rig_core::tool::Tool for WorkspaceWriteTool {
             std::fs::write(&full, args.content.as_bytes())
         };
         result
-            .map(|_| format!("OK: wrote to {}", rel))
+            .map(|_| {
+                let preview_suffix = if let Some(ref base_url) = self.preview_base_url {
+                    let path_str = rel.replace('\\', "/");
+                    if let Some(sub_path) = path_str.strip_prefix("previews/") {
+                        format!(" Preview URL: {}/{}", base_url, sub_path)
+                    } else if path_str == "previews" {
+                        format!(" Preview URL: {}/", base_url)
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                format!("OK: wrote to {}{}", rel, preview_suffix)
+            })
             .map_err(|e| ToolCallError(format!("Write failed {}: {}", rel, e)))
     }
 }
@@ -734,7 +749,7 @@ mod tests {
         use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
         let read_tool = WorkspaceReadTool::new(dir.path().to_path_buf());
-        let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
+        let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf(), None);
 
         let res = write_tool.call(r#"{"path":"patrol/state.json","content":"{\"lastRun\":null,\"rotationIndex\":0}"}"#.to_string()).await;
         assert!(res.is_ok(), "write failed: {:?}", res);
@@ -750,7 +765,7 @@ mod tests {
     async fn test_workspace_write_append_mode() {
         use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
-        let tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
+        let tool = WorkspaceWriteTool::new(dir.path().to_path_buf(), None);
 
         tool.call(r#"{"path":"patrol/findings.md","content":"line1\n"}"#.to_string())
             .await
@@ -1038,7 +1053,7 @@ mod tests {
     async fn test_workspace_read_rig_core_roundtrip() {
         use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
-        let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
+        let write_tool = WorkspaceWriteTool::new(dir.path().to_path_buf(), None);
         let read_tool = WorkspaceReadTool::new(dir.path().to_path_buf());
 
         let write_result = write_tool
@@ -1064,7 +1079,7 @@ mod tests {
     async fn test_workspace_write_rig_core_append() {
         use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
-        let tool = WorkspaceWriteTool::new(dir.path().to_path_buf());
+        let tool = WorkspaceWriteTool::new(dir.path().to_path_buf(), None);
         tool.call(r#"{"path":"log.txt","content":"line1\n"}"#.to_string())
             .await
             .unwrap();
@@ -1073,6 +1088,17 @@ mod tests {
             .unwrap();
         let content = std::fs::read_to_string(dir.path().join("log.txt")).unwrap();
         assert!(content.contains("line1") && content.contains("line2"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_write_preview_url() {
+        use rig_core::tool::ToolDyn;
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WorkspaceWriteTool::new(dir.path().to_path_buf(), Some("http://100.100.100.100:4000".to_string()));
+        let res = tool.call(r#"{"path":"previews/index.html","content":"<h1>hello</h1>"}"#.to_string())
+            .await
+            .unwrap();
+        assert!(res.contains("Preview URL: http://100.100.100.100:4000/index.html"));
     }
 
     // ── Task 3: 残りのツール rig-core impl ──
