@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-08 (ISSUE-26 完了)  
+> **最終更新日**: 2026-06-09 (ISSUE-26, Phase 37-1/2/3, Phase 40-1/4 をアーカイブ / bwrap ~/.config RW バインド修正)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。
 
 ---
@@ -13,10 +13,28 @@
 
 ---
 
-- `[x]` **ISSUE-26: Heartbeat エージェントが 5ステップのループ上限に達して毎回クラッシュするバグの修正** (#20)
-  - **症状**: 30分ごとの Heartbeat patrol 実行時、`list_family` や `get-gmail` などのツールを繰り返し呼び出し続け、最大ループ数（5回）を超過して `Heartbeat agent loop exceeded maximum step limit of 5` で終了する。
-  - **原因**: `trim_heartbeat_messages` による対話履歴のトリミング（最新の1世代以外を捨てる）により、エージェントが「過去に確認済みであること」を忘れてしまい、無限にツールの再実行を繰り返している可能性が高い。
-  - **対策案**: `trim_heartbeat_messages` の廃止または履歴保持件数の緩和、および新規データがない場合に速やかに `HEARTBEAT_OK` で終了させるプロンプト制御の強化。
+- `[ ]` **Calendar 誰の予定か識別できない**
+  - calendar_op.sh list_family の出力が下記形式のため、だれの予定かが識別できない
+
+   ~~~json
+   {
+     "event_id": "_64rjcga584q46b9n6l1k6b9k6l2k8b9p610k2ba16t0jic2374p42d1h74",
+     "title": "5時間授業",
+     "start": "2026-06-12",
+     "start_wday": "金",
+     "end": "2026-06-12",
+     "end_wday": "金",
+     "location": ""
+   }
+   ~~~
+
+
+- `[x]` **bwrap導入の結果、 rp1:/~/.rustyclaw/ への書き込みができない** ✅ 2026-06-09 修正済み
+  - **症状例**: カレンダーを確認しようとしたところ、システム側で認証情報の書き込みエラー（Read-only file system）が発生しており、Googleカレンダーの情報を直接取得することができない
+  - **修正**: `bwrap --ro-bind / /` でホスト全体が RO になる問題を、`--bind $HOME/.config $HOME/.config` 追加で解消
+
+- `[ ]` **Dashboard Chat にて、"中断ボタン" の導入**
+  - 送信後の待ち時間は SEND ボタンは 赤色ベースの CANCEL ボタンに切り替わる。LLM応答待ち中の CANCEL を可能にする
 
 ---
 
@@ -30,38 +48,14 @@
 
 ## 一般課題
 
-### リファクタリング
-
-> Phase 40 完了済み: 40-2（rig-core Tool 直接実装）・40-3（RAG 長期記憶）・40-5（Unified RAG）・40-6（rmcp 移行・ReAct ループ一本化）・40-7（Static Docs RAG）。
-
-- `[x]` **40-1: `rustyclaw-providers` の rig-core Provider への置き換え** (#22)
-  - Groq / Cloudflare などの自前 HTTP ペイロード構築を rig の共通 API にリファクタリング。
-
-- `[x]` **40-4: 宣言的 `AgentBuilder` の導入**
-  - heartbeat / summary などのエージェント定義を AgentBuilder で再整理（現状は execute_heartbeat が独自ループ）。
-
----
-
 ### GeminiClaw とのギャップ解消
 
 #### Phase 37: GeminiClaw 高度先進機能の移植と統合
-> 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。
-
-- `[x]` **1. 自律性制御 (Autonomy Level) システムの導入**
-  - `Config` に `autonomy_level` を追加し、`autonomous` / `supervised` / `read_only` の切り替えをサポート。
-  - `supervised` 時に書き込み操作を一時中断し承認を待つゲートウェイインターセプション処理の実装。
-
-- `[x]` **2. Tailscale 連携 Web プレビューサーバーの実装**
-  - `axum` または `warp` による非同期 HTTP サーバースレッドの実装。
-  - `workspace/previews/` 配下の静的ファイルサービングと、安全な Tailscale アドレス経由でのプレビューURL提示。
-
-- `[x]` **3. Bubblewrap による実行スクリプトのサンドボックス化（ラズパイ環境保護）**
-  - `bwrap` コマンドラインラッピングによる `WorkspaceExecuteScriptTool` の保護。
-  - `/workspace` ディレクトリのみを書き込み可能バインドし、ホストOSやSSDの不用意な破壊を防ぐ。
+> 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。  
+> 完了済み: 37-1（Autonomy Level）・37-2（Web Preview Server）・37-3（Bubblewrap サンドボックス）
 
 - `[ ]` **4. プロンプト予算 (Prompt Budget) 設定によるコンテキスト配分管理**
-  - `config.json` に `prompt_budget` の上限値を定義。
-  - 会話圧縮（コンパクション）のトリガーしきい値と動的連動させるリファクタリング。
+  - 詳細設計: [`docs/plans/2026-06-08-phase37-4-prompt-budget.md`](plans/2026-06-08-phase37-4-prompt-budget.md)
 
 #### Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル）
 > GeminiClaw は Discord / Slack / Telegram のマルチチャンネルに対応しており、notifications チャンネル（home と独立したバックグラウンドジョブ通知先）を持つ。RustyClaw は Discord のみで、LINE 導入予定に伴いこのギャップを回収する。  
@@ -112,7 +106,24 @@
 #### Phase 27: ハウスクリーニング、ディスク容量保護と Cron 拡張
 
 - `[ ]` **1. ディスク空き容量監視と SSD 保護の導入**
-  - 定期実行時に USB SSD の空き容量をチェックし、残り容  
+  - 定期実行時に USB SSD の空き容量をチェックし、残り容量が 5% 以下になった際に Discord 等へ警告アラートを投げる保護タスクの実装。
+
+- `[ ]` **2. Cron セッションおよびログの自動プルーニングの実装**
+  - 古い `cron:` 実行ログやセッションファイルを自動消去するクリーンアップ機構の実装。
+  - 対象: `crates/rustyclaw-gateway/src/cron.rs`
+
+- `[ ]` **3. 1回限り (at / deleteAfterRun) job の自動削除サポート**
+  - 実行完了後に `cron.json` から自身のジョブ定義を自動削除し、アトミックに更新保存。
+
+#### Phase 28b 残: ダッシュボード精度・起動最適化のフォローアップ
+> 出典: 2026-05-31 の Phase 28 実機検証（`gateway --no-agent` 起動ログ点検）で判明した改善候補。
+
+- `[ ]` **2. Gateway 起動時の設定ロード遅延（約11秒）の短縮検討**
+  - `Initializing daemon` から `loaded configuration` まで約11秒を要する（`--no-agent` でも発生）。遅延要素の遅延初期化（lazy）等で起動高速化を検討。
+  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（`Gateway::run` 初期化シーケンス）
+
+#### Phase 30: Upstream 先進機能：Hook・Steering・Spawn タスクの統合
+> ※ PicoClaw (Go Upstream) 参照。GeminiClaw ギャップではなく、RustyClaw の独自進化機能として位置付け。  
 > 対象: `crates/rustyclaw-agent/`, `crates/rustyclaw-gateway/`, `crates/rustyclaw-tools/`, `crates/rustyclaw-cli/`
 
 - `[ ]` **1. イベント駆動 Hook システム (Hook Manager) の実装**
@@ -145,8 +156,6 @@
 ---
 
 ### RAG 機能の高度化
-
-
 
 #### Phase 43-F: 自己進化型 RAG（RAG Flywheel）
 
@@ -189,6 +198,8 @@
 - `[ ]` **Google Drive / Sheets / Docs ツール**
   - gws CLI 経由で実装可能。ユースケースが明確になった時点で追加
 
-
-
-
+- `[ ]` **embedding 検索における時間情報の有効化**
+  - ハイブリッド検索 / メタデータフィルタ：
+    「今日」「今週」などの時間的キーワードに含まれるクエリに対して、Embedding 検索対象範囲を更新日時などのメタデータでフィルタリング
+  - 再順位付け:
+     検索結果に対して時間的近接度をスコアで加算し、新しい情報を上位に引き上げる仕組み。
