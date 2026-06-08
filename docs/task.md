@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-09 (ISSUE-26, Phase 37-1/2/3, Phase 40-1/4 をアーカイブ / bwrap ~/.config RW バインド修正 / Calendar owner フィールド追加)  
+> **最終更新日**: 2026-06-09 (ISSUE-26, Phase 37-1/2/3, Phase 40-1/4 をアーカイブ / bwrap ~/.config RW バインド修正 / Calendar owner フィールド追加 / Dashboard Chat 中断ボタン実装)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。
 
 ---
@@ -21,8 +21,9 @@
   - **症状例**: カレンダーを確認しようとしたところ、システム側で認証情報の書き込みエラー（Read-only file system）が発生しており、Googleカレンダーの情報を直接取得することができない
   - **修正**: `bwrap --ro-bind / /` でホスト全体が RO になる問題を、`--bind $HOME/.config $HOME/.config` 追加で解消
 
-- `[ ]` **Dashboard Chat にて、"中断ボタン" の導入**
+- `[x]` **Dashboard Chat にて、"中断ボタン" の導入** ✅ 2026-06-09 実装済み
   - 送信後の待ち時間は SEND ボタンは 赤色ベースの CANCEL ボタンに切り替わる。LLM応答待ち中の CANCEL を可能にする
+  - **実装**: `AbortController` + `POST /chat/cancel` 方式。バックエンドは `oneshot` チャネルで `tokio::select!` にキャンセル枝を追加
 
 ---
 
