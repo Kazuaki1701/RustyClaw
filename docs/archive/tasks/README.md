@@ -7,6 +7,9 @@
 
 | 完了日 | 対象フェーズ / ISSUE | アーカイブファイルへのリンク |
 | :--- | :--- | :--- |
+| 2026-06-09 | バグ修正: calendar-ops.sh args / Dashboard Chat 応答タイミング | [2026-06-09-completed-bugs-calendar-args-dashboard-session.md](2026-06-09-completed-bugs-calendar-args-dashboard-session.md) |
+| 2026-06-09 | バグ修正: Calendar owner識別 / bwrap RW修正 / Dashboard Chat 中断ボタン | [2026-06-09-completed-bugs-calendar-bwrap-chat.md](2026-06-09-completed-bugs-calendar-bwrap-chat.md) |
+| 2026-06-08 | ISSUE-26 / Phase 37-1, 2, 3 / Phase 40-1, 40-4 | [2026-06-08-completed-issue26-phase37-123-phase40-14.md](2026-06-08-completed-issue26-phase37-123-phase40-14.md) |
 | 2026-06-07 | Phase 43-D / Phase 43-E | [2026-06-07-completed-phase43de-rag.md](2026-06-07-completed-phase43de-rag.md) |
 | 2026-06-07 | Phase 43 / ISSUE-34 | [completed-phase43-issue34.md](completed-phase43-issue34.md) |
 | 2026-06-07 | Phase 41-1 / Phase 42 / ISSUE-33 | [completed-phase41-phase42-issue33.md](completed-phase41-phase42-issue33.md) |
