@@ -6,6 +6,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use rand::Rng;
+
 use tokio::net::TcpListener;
 
 /// セッション別キャンセル通知用マップ。
@@ -86,27 +88,19 @@ impl HealthServer {
                                 // ── ログ系エンドポイント ─────────────────────────
                                 } else if request.starts_with("GET /logs/memory") {
                                     let path = workspace_path_clone.join("MEMORY.md");
-                                    let content =
-                                        std::fs::read_to_string(&path).unwrap_or_else(|_| {
-                                            "(MEMORY.md が見つかりません)".to_string()
-                                        });
+                                    let content = read_file_content(&path, "(MEMORY.md が見つかりません)");
                                     ("200 OK".to_string(), content, "text/plain; charset=utf-8")
                                 } else if request.starts_with("GET /logs/heartbeat-digest") {
                                     let path = workspace_path_clone
                                         .join("memory")
                                         .join("heartbeat-digest.md");
-                                    let content =
-                                        std::fs::read_to_string(&path).unwrap_or_else(|_| {
-                                            "(heartbeat-digest.md が見つかりません)".to_string()
-                                        });
+                                    let content = read_file_content(&path, "(heartbeat-digest.md が見つかりません)");
                                     ("200 OK".to_string(), content, "text/plain; charset=utf-8")
                                 } else if request.starts_with("GET /logs/heartbeat-state") {
                                     let path = workspace_path_clone
                                         .join("memory")
                                         .join("heartbeat-state.json");
-                                    let raw = std::fs::read_to_string(&path)
-                                        .unwrap_or_else(|_| "{}".to_string());
-                                    // JSON をパースして pretty-print し直す（失敗時はそのまま）
+                                    let raw = read_file_content(&path, "{}");
                                     let pretty = serde_json::from_str::<serde_json::Value>(&raw)
                                         .ok()
                                         .and_then(|v| serde_json::to_string_pretty(&v).ok())
@@ -463,8 +457,9 @@ impl HealthServer {
                                         if let Ok(val) =
                                             serde_json::from_str::<serde_json::Value>(json_body)
                                             && let Some(msg) = val["message"].as_str() {
-                                                let today = chrono::Local::now().format("%Y%m%d").to_string();
-                                                let session_id = format!("http-dashboard-{}", today);
+                                                let timestamp = chrono::Local::now().timestamp_nanos_opt().unwrap_or(0);
+                                                let random_suffix: u32 = rand::thread_rng().r#gen::<u32>();
+                                                let session_id = format!("http-dashboard-{}-{}", timestamp, random_suffix);
                                                 let mut rx = bus_clone.subscribe();
 
                                                 // キャンセル通知チャネルを作成し、cancel_map に登録
@@ -545,18 +540,45 @@ fn read_last_lines(path: &Path, limit: usize) -> String {
     if !path.exists() {
         return format!("Log file not found: {:?}", path);
     }
-    if let Ok(file) = std::fs::File::open(path) {
-        let reader = std::io::BufReader::new(file);
-        let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
-        let start = if lines.len() > limit {
-            lines.len() - limit
-        } else {
-            0
-        };
-        return lines[start..].join("\n");
+    match std::fs::File::open(path) {
+        Ok(file) => {
+            let reader = std::io::BufReader::new(file);
+            let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+            let start = if lines.len() > limit { lines.len() - limit } else { 0 };
+            lines[start..].join("\n")
+        }
+        Err(e) => {
+            if is_readonly_error(&e) {
+                "Error: Read-only file system".to_string()
+            } else {
+                "Failed to open log file.".to_string()
+            }
+        }
     }
-    "Failed to open log file.".to_string()
 }
+
+// Helper to detect read-only filesystem errors
+fn is_readonly_error(err: &std::io::Error) -> bool {
+    matches!(err.kind(), std::io::ErrorKind::PermissionDenied)
+}
+
+// Helper to read file content safely, returning a custom message on errors
+fn read_file_content(path: &Path, not_found_msg: &str) -> String {
+    if !path.exists() {
+        return not_found_msg.to_string();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) => {
+            if is_readonly_error(&e) {
+                "Error: Read-only file system".to_string()
+            } else {
+                not_found_msg.to_string()
+            }
+        }
+    }
+}
+
 
 fn get_latest_app_log() -> Option<PathBuf> {
     let log_dir = get_app_dir().join("logs");
@@ -626,8 +648,8 @@ fn extract_query_param(request: &str, key: &str) -> Option<String> {
     for pair in query.split('&') {
         if let Some((k, v)) = pair.split_once('=')
             && k == key {
-                return Some(v.to_string());
-            }
+            return Some(v.to_string());
+        }
     }
     None
 }
