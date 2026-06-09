@@ -457,9 +457,15 @@ impl HealthServer {
                                         if let Ok(val) =
                                             serde_json::from_str::<serde_json::Value>(json_body)
                                             && let Some(msg) = val["message"].as_str() {
-                                                let timestamp = chrono::Local::now().timestamp_nanos_opt().unwrap_or(0);
-                                                let random_suffix: u32 = rand::thread_rng().r#gen::<u32>();
-                                                let session_id = format!("http-dashboard-{}-{}", timestamp, random_suffix);
+                                                // クライアント送信の session_id を優先して使用し、cancel_map との整合を保つ
+                                                let session_id = val["session_id"]
+                                                    .as_str()
+                                                    .map(|s| s.to_string())
+                                                    .unwrap_or_else(|| {
+                                                        let ts = chrono::Local::now().timestamp_nanos_opt().unwrap_or(0);
+                                                        let rnd: u32 = rand::thread_rng().r#gen::<u32>();
+                                                        format!("http-dashboard-{}-{}", ts, rnd)
+                                                    });
                                                 let mut rx = bus_clone.subscribe();
 
                                                 // キャンセル通知チャネルを作成し、cancel_map に登録
@@ -1247,12 +1253,11 @@ async function cancelMessage(){
 async function sendMessage(){
   const inp=document.getElementById('chatInput');const msg=inp.value.trim();if(!msg)return;
   addBubble(msg,'user');inp.value='';
-  const today=new Date();const pad=n=>String(n).padStart(2,'0');
-  currentSessionId='http-dashboard-'+today.getFullYear()+pad(today.getMonth()+1)+pad(today.getDate());
+  currentSessionId='http-dashboard-'+Date.now()+'-'+Math.floor(Math.random()*0xFFFFFF);
   currentAbortController=new AbortController();
   const lid=addLoading();inp.disabled=true;setSendButtonState('cancel');
   try{
-    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg}),signal:currentAbortController.signal});
+    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg,session_id:currentSessionId}),signal:currentAbortController.signal});
     removeLoading(lid);addBubble(r.ok?await r.text():'エラー: 返答の取得に失敗しました。','ai');
   }catch(e){
     removeLoading(lid);
