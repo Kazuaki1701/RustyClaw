@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-09 (ISSUE-26, Phase 37-1/2/3, Phase 40-1/4 をアーカイブ / bwrap ~/.config RW バインド修正 / Calendar owner フィールド追加 / Dashboard Chat 中断ボタン実装)  
+> **最終更新日**: 2026-06-09 (バグ修正 3件完了 / 新規バグ 2件追加)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。
 
 ---
@@ -24,6 +24,18 @@
 - `[x]` **Dashboard Chat にて、"中断ボタン" の導入** ✅ 2026-06-09 実装済み
   - 送信後の待ち時間は SEND ボタンは 赤色ベースの CANCEL ボタンに切り替わる。LLM応答待ち中の CANCEL を可能にする
   - **実装**: `AbortController` + `POST /chat/cancel` 方式。バックエンドは `oneshot` チャネルで `tokio::select!` にキャンセル枝を追加
+
+- `[ ]` **calendar-ops.sh を引数なしで実行している**
+  - 発見日時: 2026-06-09 08:02:42 (rp1 ログ)
+  - **症状**: Dashboard Chat で「今日の予定は？」と問いかけた際、LLM が `run_workspace_script` の args に `list_family` を渡さず引数なしで実行。
+  - **エラー出力**: `Usage: calendar-ops.sh {list_family|list_ai_agent|...} ...` (stderr)
+  - **原因仮説**: MEMORY.md のスキル定義に `args` の記載がないため、LLM が引数不要と判断した可能性。MEMORY.md のカレンダースキル定義にデフォルト args を明記する必要あり
+
+- `[ ]` **Dashboard Chat が LLM 応答待ち中に新規メッセージを受信すると無応答になる**
+  - 発見日時: 2026-06-09 08:03:33〜08:03:34 (rp1 ログ)
+  - **再現手順**: メッセージ A を送信 → LLM 処理中にメッセージ B を送信 → A の応答が返るも B の session リスナーが見ていないため無視 → 5分後に `Error: Request timeout`
+  - **症状**: `AgentResponse` は正常生成されているにもかかわらず、`POST /chat` の `rx.recv()` ループが新規コネクションの subscriber になっているため前の応答を受け取れない
+  - **原因仮説**: `http-dashboard-{today}` の session_id 共有 + broadcast のタイミング問題。B の `rx.subscribe()` 前に A の応答が流れてしまっている
 
 ---
 
