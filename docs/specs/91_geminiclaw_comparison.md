@@ -74,8 +74,8 @@
 |---|---|---|---|
 | Step 1: 活動レビュー | ✅ | ✅ | 正常稼働。ダイジェストに基づいて自己文脈を正しく認識 |
 | Step 2: Memory 整理 | ✅ | ✅ | |
-| Step 3: Calendar / Email チェック | ✅ | ✅ | gws_calendar_list_events / gws_gmail_list_messages |
-| Step 4: 天気チェック | ✅ | ✅ | `yolp_weather` ツール実装済み（Open-Meteo バックエンド、Phase 32） |
+| Step 3: Calendar / Email チェック | ✅ | ✅ | カレンダー取得 (`calendar-ops.sh`) / Gmail取得 (`506_get-gmail.sh`) |
+| Step 4: 天気チェック | ✅ | ✅ | 天気検索 (`504_get-weather.sh`：気象庁・Open-Meteo ハイブリッド) |
 | Step 5: 声掛け（Quiet Hours 考慮） | ✅ | ✅ | |
 | Step 6: プロアクティブ作業 | ✅ | ✅ | |
 | Step 7: HEARTBEAT_OK 応答 | ✅ | ✅ | |
@@ -120,11 +120,11 @@
 ### 2-8. 外部ツール連携
 | 機能 | GeminiClaw（ツール名） | RustyClaw（ツール名） | 備考 |
 |---|---|---|---|
-| Google Calendar 参照 | gog_calendar_events | gws_calendar_list_events ✅ | |
-| Google Calendar 書き込み | gog_calendar_insert | gws_writable_calendar_insert ✅ | 許可カレンダーのみ。config で管理 |
-| Gmail 参照 | gog_gmail_search | gws_gmail_list_messages ✅ | |
+| Google Calendar 参照 | gog_calendar_events | カレンダー取得 (`calendar-ops.sh`) ✅ | |
+| Google Calendar 書き込み | gog_calendar_insert | カレンダー追加 (`calendar-ops.sh`) ✅ | 許可カレンダーのみ。config で管理 |
+| Gmail 参照 | gog_gmail_search | Gmail取得 (`506_get-gmail.sh`) ✅ | |
 | **Gmail 送信** | gog_gmail_send | ❌ | 意図的に未実装（送信禁止） |
-| Gmail 削除 | gog_gmail_trash | gws_gmail_trash_message ✅ | _ai-agent ラベル必須ガード付き |
+| Gmail 削除 | gog_gmail_trash | Gmail削除・アーカイブ (`506_get-gmail.sh`) ✅ | _ai-agent ラベル必須ガード付き |
 | **Google Drive** | gog_drive_* | ❌ | 未実装 |
 | **Google Sheets** | gog_sheets_* | ❌ | 未実装 |
 | **Google Docs** | gog_docs_* | ❌ | 未実装 |
@@ -134,7 +134,7 @@
 | Obsidian 書き込み・追記 | Obsidian MCP (SSE) | ✅ | obsidian_write_note として LLM に公開 |
 | **Obsidian Dataview クエリ** | Obsidian MCP (SSE) | ❌ | 未実装 |
 | **全文検索（Memory）** | qmd_query / qmd_get | ✅ | memory_search として LLM に公開 |
-| **天気** | 天気ツール | ✅ | `yolp_weather`（Open-Meteo 60分降水予報、Phase 32） |
+| **天気** | 天気ツール | ✅ | 天気検索 (`504_get-weather.sh`：気象庁・Open-Meteo ハイブリッド) |
 
 ### 2-9. Rate Limit 対策
 | 機能 | GeminiClaw | RustyClaw | 備考 |

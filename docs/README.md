@@ -31,7 +31,7 @@ docs/
 │   ├── 06_dashboard_spec.md   # Web Dashboard・管理用 API 仕様
 │   ├── 08_operation_inspection.md  # 稼働点検ガイド（コマンド集・既知パターン）
 │   ├── 10_git_collaboration_rules.md # GitHub 共同開発・運用ガイドライン仕様
-│   ├── 12_weather_yolp_spec.md # YOLP気象情報APIリファレンス雨雲レーダー仕様
+│   ├── 12_weather_hybrid_spec.md # 気象庁・Open-Meteo ハイブリッド天気予報設計仕様
 │   ├── 13_rag_file_operations.md # 実運用 RAG 運用マークダウン仕様
 │   ├── 11_skills_spec.md      # Skills システム仕様・GeminiClaw 比較・移植記録
 │   ├── 81_llm_provider_model_selection.md # プロバイダー・モデル選定指針仕様
