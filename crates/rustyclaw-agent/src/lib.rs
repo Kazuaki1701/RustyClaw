@@ -371,6 +371,20 @@ impl Pipeline {
 
     /// 各種人格定義ファイルを読み込んでシステムプロンプト（Context）を構築する
     /// 行頭が // で始まる行（インデント許容）を除去する
+    pub fn truncate_context_content(content: &str, max_chars: usize) -> String {
+        let char_count = content.chars().count();
+        if char_count <= max_chars {
+            return content.to_string();
+        }
+        let truncated: String = content.chars().take(max_chars).collect();
+        format!(
+            "{}\n\n> ⚠️ [RustyClaw] 以降を省略（全 {} 文字中 先頭 {} 文字を注入）",
+            truncated,
+            char_count,
+            max_chars
+        )
+    }
+
     fn strip_comments(content: &str) -> String {
         content
             .lines()
@@ -4308,5 +4322,35 @@ mod discord_rag_tests {
         assert!(result.contains("Turn 2 user"));
         assert!(result.contains("Turn 3 assistant"));
         assert!(result.ends_with("User: Current"));
+    }
+}
+
+#[cfg(test)]
+mod truncate_context_tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_context_content_short_stays_unchanged() {
+        let short = "a".repeat(100);
+        let result = Pipeline::truncate_context_content(&short, 3_000);
+        assert_eq!(result, short);
+    }
+
+    #[test]
+    fn test_truncate_context_content_long_is_truncated() {
+        let long_content = "あ".repeat(4_000);
+        let result = Pipeline::truncate_context_content(&long_content, 3_000);
+        let char_count = result.chars().count();
+        assert!(char_count > 3_000, "省略メッセージが付いているはず");
+        assert!(result.contains("[RustyClaw]"), "省略マーカーが含まれるはず");
+        let expected_prefix: String = "あ".repeat(3_000);
+        assert!(result.starts_with(&expected_prefix));
+    }
+
+    #[test]
+    fn test_truncate_context_content_exact_limit_stays_unchanged() {
+        let content = "x".repeat(3_000);
+        let result = Pipeline::truncate_context_content(&content, 3_000);
+        assert_eq!(result, content);
     }
 }
