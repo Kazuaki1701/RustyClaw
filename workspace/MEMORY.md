@@ -39,7 +39,7 @@ Remove outdated entries. Prefer facts over narratives.
     - **Google Workspace API:** カレンダー（予定の参照・書き込み）、Gmail（未読メール検索など）。
     - **Knowledge Base Access:** Obsidian (Local REST API)、長期記憶 (`memory_search`) を活用した情報読み取り、メモ記録。
     - **Web Access:** `web_search` (最新トピック検索)、`web_fetch` (記事内容取得)。
-    - **Specific Tools:** Karakeep（ブックマーク管理）、YOLP API（天気）。
+    - **Specific Tools:** Karakeep（ブックマーク管理）、天気予報スクリプト（天気）。
 - **CF Neurons:** Cloudflare Workers AI の無料枠 is 10,000 neurons/日。09:00 JST リセット。dev/prod で共有のため枯渇しやすい。 [2026-05-30]
 - **Calendar Access:** 現状、外部カレンダーの参照には具体的な名称やURLなど、詳細な識別子が必要。単なる名前だけではアクセスが困難な場合がある。
 

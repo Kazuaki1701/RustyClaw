@@ -44,7 +44,7 @@
 | Skill | GeminiClaw | RustyClaw | 主な適合変更 |
 |---|---|---|---|
 | **topic-patrol** | ✅ | ✅ | `geminiclaw_post_message` → 自動配信。`geminiclaw_status` → `[now:]`。Phase 21 で移植済み |
-| **daily-briefing** | ✅ | ✅ | `gog_calendar_events` → `gws_calendar_list_events`。`gog_gmail_search` → `gws_gmail_list_messages`。天気検索 → `yolp_weather`。あゆみ様・ゆうき様カレンダー追記 |
+| **daily-briefing** | ✅ | ✅ | カレンダー取得 (`calendar-ops.sh`)、Gmail取得 (`506_get-gmail.sh`)、天気検索 (`504_get-weather.sh`)。あゆみ様・ゆうき様カレンダー追記 |
 | **vitals-coach** | ✅ | ✅ | スクリプトパス絶対指定 → `run_workspace_script("500_get-vital-data-garmin.sh")`。配信 → 自動 |
 | **deep-research** | ✅ | ✅ | `agent-browser` → `web_fetch`（フォールバック）。保存 → `workspace_write`。`geminiclaw_status` 削除 |
 | **todo-tracker** | ✅ | ✅ | `geminiclaw_status` → `[now:]` 参照。`workspace_read`/`workspace_write` そのまま使用 |
