@@ -2,9 +2,9 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (BUG-02, BUG-03 完了分アーカイブ化)  
+> **最終更新日**: 2026-06-11 (Phase 44-1〜44-5 完了分アーカイブ化)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
-> **最新アーカイブ**: [2026-06-11-completed-bugs-02-03.md](archive/tasks/2026-06-11-completed-bugs-02-03.md) (BUG-02, BUG-03)
+> **最新アーカイブ**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md) (Phase 44-1〜44-5)
 
 ---
 
