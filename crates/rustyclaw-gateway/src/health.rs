@@ -1264,19 +1264,39 @@ async function cancelMessage(){
 async function sendMessage(){
   const inp=document.getElementById('chatInput');const msg=inp.value.trim();if(!msg)return;
   addBubble(msg,'user');inp.value='';
+  const cached=getCachedResponse(msg);
+  if(cached){addBubble('⚡ (キャッシュ) '+cached,'ai');return;}
+  await doSendWithRetry(msg,inp,0);
+}
+async function doSendWithRetry(msg,inp,attempt){
   currentSessionId='http-dashboard-'+Date.now()+'-'+Math.floor(Math.random()*0xFFFFFF);
   currentAbortController=new AbortController();
+  wasManualCancel=false;
+  const signal=AbortSignal.any([currentAbortController.signal,AbortSignal.timeout(CHAT_TIMEOUT_MS)]);
   const lid=addLoading();inp.disabled=true;setSendButtonState('cancel');
   try{
-    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg,session_id:currentSessionId}),signal:currentAbortController.signal});
-    removeLoading(lid);addBubble(r.ok?await r.text():'エラー: 返答の取得に失敗しました。','ai');
+    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg,session_id:currentSessionId}),signal});
+    removeLoading(lid);
+    const text=r.ok?await r.text():'エラー: 返答の取得に失敗しました。';
+    addBubble(text,'ai');
+    if(r.ok)setCachedResponse(msg,text);
   }catch(e){
     removeLoading(lid);
-    if(e.name==='AbortError'){addBubble('⚠️ 応答を中断しました。','ai');}
-    else{addBubble('通信エラー','ai');}
+    if(e.name==='AbortError'){
+      if(wasManualCancel){
+        addBubble('⚠️ 応答を中断しました。','ai');
+      }else if(attempt<1){
+        addBubble('⏱ タイムアウト。自動再試行中…','ai');
+        currentAbortController=null;currentSessionId=null;
+        await doSendWithRetry(msg,inp,attempt+1);
+        return;
+      }else{
+        addBubble('⚠️ 再試行もタイムアウトしました。しばらくしてから再度お試しください。','ai');
+      }
+    }else{addBubble('通信エラー','ai');}
   }finally{
     inp.disabled=false;setSendButtonState('send');inp.focus();
-    currentAbortController=null;currentSessionId=null;
+    currentAbortController=null;currentSessionId=null;wasManualCancel=false;
   }
 }
 function addBubble(text,role){const d=document.createElement('div');d.className='bubble '+role;d.textContent=text;d.style.whiteSpace='pre-wrap';const m=document.getElementById('chatMessages');m.appendChild(d);m.scrollTop=m.scrollHeight}
