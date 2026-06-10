@@ -394,8 +394,8 @@ impl Pipeline {
     }
 
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
-        // 静的ブロック（SOUL/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
-        // 動的な [now:] は末尾に置くことで毎回変わる部分がキャッシュ prefix を破壊しないようにする。
+        // 静的ブロック（SOUL/USER）のみを返す。
+        // 動的な [now:] は呼び出し元で追加する（build_heartbeat_context と同パターン）。
         const MAX_CONTEXT_CHARS_PER_FILE: usize = 3_000;
         let files = ["SOUL.md", "USER.md"];
         let mut context = String::new();
@@ -429,10 +429,6 @@ impl Pipeline {
                 last_entry
             ));
         }
-
-        // 動的ブロック（現在時刻）は末尾に配置
-        let now = chrono::Local::now();
-        context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
 
         Ok(context)
     }
@@ -3024,7 +3020,7 @@ mod tests {
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
-    fn test_build_system_context_injects_runtime_context() {
+    fn test_build_system_context_returns_static_content() {
         let ws_dir = tempdir().unwrap();
         std::fs::write(ws_dir.path().join("SOUL.md"), "soul").unwrap();
 
@@ -3033,16 +3029,11 @@ mod tests {
         let pipeline = Pipeline::new(config, flush_sem);
         let context = pipeline.build_system_context(ws_dir.path()).unwrap();
 
-        // 静的ファイルが先頭、[now:] は末尾（プロンプトキャッシュ最適化）
         assert!(context.contains("# SOUL.md"));
-        // フォーマット: [now: YYYY-MM-DDTHH:MM:SS+HH:MM]
-        let last_line = context.trim_end().lines().last().unwrap();
         assert!(
-            last_line.starts_with("[now: "),
-            "datetime line must be last for cache optimization"
+            !context.contains("[now: "),
+            "build_system_context must not include [now:] — dynamic content belongs in callers"
         );
-        assert!(last_line.ends_with(']'));
-        assert!(last_line.contains('T'), "must be ISO 8601 format");
     }
 
     #[test]
