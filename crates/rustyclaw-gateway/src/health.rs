@@ -1410,7 +1410,7 @@ mod tests {
 
     #[test]
     fn test_chat_timeout_secs_is_reasonable() {
-        assert!(CHAT_TIMEOUT_SECS >= 30, "タイムアウトが短すぎる: {}", CHAT_TIMEOUT_SECS);
-        assert!(CHAT_TIMEOUT_SECS <= 300, "タイムアウトが長すぎる: {}", CHAT_TIMEOUT_SECS);
+        const { assert!(CHAT_TIMEOUT_SECS >= 30) }
+        const { assert!(CHAT_TIMEOUT_SECS <= 300) }
     }
 }
