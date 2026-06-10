@@ -196,10 +196,12 @@ fn dump_llm_io(category: &str, model: &str, messages: &[Message], response: &Llm
         .join(category);
     let date_dir = category_dir.join(&date_str);
 
-    if let Err(e) = std::fs::create_dir_all(&date_dir) {
-        tracing::error!("Failed to create llm dump directory {:?}: {}", date_dir, e);
-        return;
-    }
+    let dated_ok = if let Err(e) = std::fs::create_dir_all(&date_dir) {
+        tracing::warn!("Failed to create llm dump directory {:?}: {}", date_dir, e);
+        false
+    } else {
+        true
+    };
 
     // Delete date folders older than 5 days
     // Spec: "5日超" = older than 5 days → retain today + 5 prior days (6 days total)
@@ -219,30 +221,32 @@ fn dump_llm_io(category: &str, model: &str, messages: &[Message], response: &Llm
         }
     }
 
-    let file_path = date_dir.join(format!("{}.json", time_str));
+    if dated_ok {
+        let file_path = date_dir.join(format!("{}.json", time_str));
 
-    #[derive(serde::Serialize)]
-    struct LlmIoDump<'a> {
-        timestamp: i64,
-        model: &'a str,
-        request: &'a [Message],
-        response: &'a LlmResponse,
-    }
-
-    let dump = LlmIoDump {
-        timestamp: now.timestamp(),
-        model,
-        request: messages,
-        response,
-    };
-
-    match std::fs::File::create(&file_path) {
-        Ok(file) => {
-            if let Err(e) = serde_json::to_writer_pretty(file, &dump) {
-                tracing::error!("Failed to write llm io dump to {:?}: {}", file_path, e);
-            }
+        #[derive(serde::Serialize)]
+        struct LlmIoDump<'a> {
+            timestamp: i64,
+            model: &'a str,
+            request: &'a [Message],
+            response: &'a LlmResponse,
         }
-        Err(e) => tracing::error!("Failed to create llm io dump file {:?}: {}", file_path, e),
+
+        let dump = LlmIoDump {
+            timestamp: now.timestamp(),
+            model,
+            request: messages,
+            response,
+        };
+
+        match std::fs::File::create(&file_path) {
+            Ok(file) => {
+                if let Err(e) = serde_json::to_writer_pretty(file, &dump) {
+                    tracing::error!("Failed to write llm io dump to {:?}: {}", file_path, e);
+                }
+            }
+            Err(e) => tracing::error!("Failed to create llm io dump file {:?}: {}", file_path, e),
+        }
     }
 
     // ── last_request.json (コンパクト版) ──────────────────────────────
@@ -2561,6 +2565,56 @@ mod tests {
         assert!(val["model"].is_string());
         assert!(val["message_count"].is_number());
         assert!(val["messages"].is_array());
+
+        unsafe {
+            std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
+        }
+    }
+
+    #[test]
+    fn test_dump_llm_io_writes_last_request_even_when_dated_dir_fails() {
+        let _lock = workspace_dir_lock().lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path();
+
+        // category と同名のファイルを置いて create_dir_all を意図的に失敗させる
+        let llm_dir = workspace.join("memory").join("debug").join("llm");
+        std::fs::create_dir_all(&llm_dir).unwrap();
+        std::fs::write(llm_dir.join("forcefail-cat"), b"I am a file").unwrap();
+
+        unsafe {
+            std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", workspace.to_str().unwrap());
+        }
+
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            trigger: None,
+            timestamp: None,
+        }];
+        let response = LlmResponse {
+            content: "world".to_string(),
+            role: "assistant".to_string(),
+            tool_calls: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            model_used: None,
+            provider_id: None,
+        };
+
+        // category="forcefail-cat" は既にファイルなので create_dir_all が失敗する
+        dump_llm_io("forcefail-cat", "test-model", &messages, &response);
+
+        // last_request.json は失敗時でも書かれるべき
+        let last_req = llm_dir.join("last_request.json");
+        assert!(
+            last_req.exists(),
+            "last_request.json は dated dir 作成失敗時でも書かれるべき"
+        );
 
         unsafe {
             std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
