@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (BUG-04・BUG-05 追加)  
+> **最終更新日**: 2026-06-11 (Phase 23-1 完了済みマーク・BUG-01-a 表現更新)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
 > **最新アーカイブ**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md) (Phase 44-1〜44-5)
 
@@ -48,9 +48,8 @@ Groq (`groq-llama-8b`, RPD: 14,400) と Cloudflare Workers AI (`cf-gemma-4-26b`)
 > 外部プロバイダー障害による停止リスクは現時点で低下しているが、lms（LM Studio）が単一障害点になるため ISSUE-09 参照。
 
 **対策（要実施）**
-- `[ ]` **BUG-01-a**: `heartbeat` / `summary` パーパスに groq / cf モデルをフォールバック追加し、
-  LM Studio 障害時にも縮退動作できるようにする。  
-  対象: `production/config/config.release.json` の `agents.heartbeat / summary`
+- `[ ]` **BUG-01-a**: `config.release.json` の `heartbeat` / `summary` パーパスを **lms-* 主力 + groq / cf フォールバック** 構成に変更し、LM Studio 障害時にも縮退動作できるようにする。  
+  対象: `production/config/config.release.json` の `agents.heartbeat / summary`（現状は lms-* のみ）
 - `[ ]` **BUG-01-b**: 全モデル失敗時に Discord へ `⚠️ LLM provider 全滅` アラートを投げる
   エラーハンドリングを `rustyclaw-gateway` に追加し、サイレント停止を防ぐ。  
   対象: `crates/rustyclaw-gateway/src/heartbeat.rs`（heartbeat 失敗パス）・`cron.rs`（session-summary 失敗パス）
@@ -223,7 +222,7 @@ vault にこのキーが登録されていない。
 #### Phase 23: 安全ガードレールと構造化監査ログの構築
 > ※ GeminiClaw に直接対応機能なし。RustyClaw 独自の安全機構として重要。
 
-- `[ ]` **1. 自律レベル制御 (Autonomy Level) と承認ゲート (Confirmation Gate) の実装**
+- `[x]` **1. 自律レベル制御 (Autonomy Level) と承認ゲート (Confirmation Gate) の実装** ✅ Phase 37-1 で実装済み
   - `AutonomyLevel` (`Autonomous` / `Supervised` / `ReadOnly`) の導入。
   - `supervised`（監視モード）時、書き込みや破壊的アクションに対して `ask-user` ファイル監視で実行を非同期ブロッキングする承認ゲートの実装。
 
