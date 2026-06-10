@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (config.json 整理・use_local_embedding / dimensions ハードコード化)  
+> **最終更新日**: 2026-06-11 (BUG-04・BUG-05 追加)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
 > **最新アーカイブ**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md) (Phase 44-1〜44-5)
 
@@ -59,6 +59,48 @@ Groq (`groq-llama-8b`, RPD: 14,400) と Cloudflare Workers AI (`cf-gemma-4-26b`)
   対象: `production/workspace/memory/sessions/` 内の 2026-06-11 付きファイル
 
 
+
+---
+
+### BUG-04: bwrap サンドボックスによる gws 認証失敗（Gmail / Calendar アクセス不能）
+
+> **発見日**: 2026-06-09 heartbeat ログ点検  
+> **重要度**: 🔴 高（Gmail・Google Calendar ツールが全コール失敗）
+
+**現象**  
+heartbeat・通常セッション問わず、gws ツール呼び出し時に以下のエラーで認証失敗する。
+
+```
+error[auth]: Failed to get token: Failed to set permissions on token directory
+  '/home/kazuaki/.config/gws': Read-only file system (os error 30)
+```
+
+**原因分析**  
+bwrap サンドボックスにより `~/.config/gws/` への書き込みが禁止されている。
+gws は認証トークンをこのディレクトリにキャッシュしようとするが、
+サンドボックス内では Read-only fs のため書き込みできない。
+
+**対策（要実施）**
+- `[ ]` **BUG-04-a**: gws のトークンキャッシュディレクトリを書き込み可能なパス（例: `~/.rustyclaw/config/gws-cache/`）に変更する方法を調査し、gws 設定または起動オプションで上書き設定する。  
+  対象: `production/workspace/` 内の gws 起動スクリプト・設定
+
+---
+
+### BUG-05: Obsidian トークン未設定（Obsidian ツール全機能不能）
+
+> **発見日**: 2026-06-11 workspace/MEMORY.md 点検  
+> **重要度**: 🟡 中（Obsidian ノート参照・書き込みが全て不能）
+
+**現象**  
+Obsidian ツール呼び出し時に認証エラーが発生し、ノートの読み取り・書き込みが不能。
+
+**原因分析**  
+`config.json` の `tools.obsidian.api_key` は `$vault:obsidian-api-key` を参照しているが、
+vault にこのキーが登録されていない。
+
+**対策（要実施）**
+- `[ ]` **BUG-05-a**: Obsidian Local REST API プラグインの API キーを取得し、`vault.enc` に `obsidian-api-key` として登録する。  
+  対象: `production/config/vault.enc`（`rustyclaw vault set obsidian-api-key <KEY>`）
 
 ---
 
