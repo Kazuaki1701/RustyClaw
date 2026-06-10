@@ -1255,6 +1255,7 @@ function setSendButtonState(state){
   }
 }
 async function cancelMessage(){
+  wasManualCancel=true;
   if(currentAbortController){currentAbortController.abort();}
   if(currentSessionId){
     try{await fetch('/chat/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:currentSessionId})});}catch{}
