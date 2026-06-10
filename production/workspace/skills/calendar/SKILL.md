@@ -27,7 +27,12 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 - **Tool**: `run_workspace_script`
 - **Parameters**:
   - `script_name`: `skills/calendar/scripts/calendar-ops.sh`
-  - `args`: `["<subcommand>", ...]`
+  - `args`: `["<subcommand>", ...]`  ← **サブコマンドは必須。引数なし呼び出しはエラー。**
+
+### Default Action
+
+**予定確認（ユーザーからのリクエスト・パトロール cron トリガー問わず）は必ず `list_family` を使う。**
+`args: ["list_family"]`
 
 ### Operations
 
@@ -47,6 +52,9 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 
 以下の代表的な依頼パターンについて、引数の組み立て例を参考に実行してください。
 
+*   **パトロール cron トリガー（定期チェック）**
+    *   *手順*: `list_family` を実行して家族全員の予定を取得し、注目すべきイベントをサマリーとして出力する。
+    *   `args`: `["list_family"]`
 *   **「今日 / 明日の家族全員の予定を教えて」**
     *   *手順*: `list_family` を実行すると、自動的に家族全員（かずあき様、ゆうき様、あゆみ様）の予定が日付順にソートされてマージ出力される。そこから今日/明日の予定をモデル自身で抽出してユーザーに提示する。
     *   `args`: `["list_family"]`
@@ -66,6 +74,7 @@ Reads upcoming Google Calendar events (defaulting to all family members) and cre
 
 ## Common Mistakes & Antipatterns
 
+- **`args` を空にして呼び出さない。** サブコマンドは必須。引数なしで呼ぶとスクリプトがエラー終了する。予定確認なら `args: ["list_family"]`。
 - **スクリプトを直接シェルで実行しない。** `run_workspace_script` を使うこと。
 - **書き込み操作（create/delete/update）でカレンダーIDを指定しないこと。** スクリプト内部で自動的に `_AI-AGENT` カレンダーが対象になります。
 - **start/end は RFC3339 形式**（例: `2026-06-01T10:00:00+09:00`）。

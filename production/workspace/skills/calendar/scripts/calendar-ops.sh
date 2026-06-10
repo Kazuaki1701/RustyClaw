@@ -2,7 +2,7 @@
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 
-CMD="${1:-}"
+CMD="${1:-list_family}"
 
 # 各カレンダーIDのハードコード
 CAL_KAZUAKI="ayabe.kazuaki@gmail.com" # かずあき様
@@ -22,6 +22,9 @@ if ! command -v gws &>/dev/null; then
     exit 1
 fi
 
+# gws の stderr から keyring 関連ノイズを除去するラッパー
+gws() { command gws "$@" 2> >(grep -iv "keyring" >&2); }
+
 check_allowed() {
     local target="$1"
     for id in "${ALLOWED[@]}"; do
@@ -40,19 +43,22 @@ JQ_DEFS='
 '
 
 # イベント一覧取得のヘルパー関数
+# 引数: cal_id, now, end, owner（誰の予定か識別用ラベル）
 fetch_events() {
     local cal_id="$1"
     local now="$2"
     local end="$3"
+    local owner="${4:-}"
     gws calendar events list \
         --params "{\"calendarId\":\"${cal_id}\",\"timeMin\":\"${now}\",\"timeMax\":\"${end}\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":50}" \
         --format json \
-      | jq "${JQ_DEFS}"'
+      | jq --arg owner "${owner}" "${JQ_DEFS}"'
           [.items[]? |
             ((.start.date // (.start.dateTime | split("T")[0])) | wday_ja) as $start_wday |
             adj_end as $end |
             (($end | split("T")[0]) | wday_ja) as $end_wday |
             {
+                owner:       $owner,
                 event_id:    (.id // ""),
                 title:       (.summary // ""),
                 start:       (.start.dateTime // .start.date // ""),
@@ -68,16 +74,16 @@ end=$(date -d '+3 days' +%Y-%m-%dT%H:%M:%S%:z)
 
 case "$CMD" in
     list_family)
-        res1=$(fetch_events "$CAL_KAZUAKI" "$now" "$end")
-        res2=$(fetch_events "$CAL_YUKI" "$now" "$end")
-        res3=$(fetch_events "$CAL_AYUMI" "$now" "$end")
-        
+        res1=$(fetch_events "$CAL_KAZUAKI" "$now" "$end" "かずあき")
+        res2=$(fetch_events "$CAL_YUKI"    "$now" "$end" "ゆうき")
+        res3=$(fetch_events "$CAL_AYUMI"   "$now" "$end" "あゆみ")
+
         jq -n --argjson r1 "$res1" --argjson r2 "$res2" --argjson r3 "$res3" \
             '$r1 + $r2 + $r3 | sort_by(.start)'
         ;;
 
     list_ai_agent)
-        fetch_events "$CAL_AI_AGENT" "$now" "$end"
+        fetch_events "$CAL_AI_AGENT" "$now" "$end" "_AI_AGENT"
         ;;
 
     create_ai_agent)

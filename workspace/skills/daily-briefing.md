@@ -19,22 +19,18 @@ Execute all available data sources. Skip any source whose tool is unavailable �
 
 ### 1.1 Calendar (Today)
 
-Tool: `gws_calendar_list_events`
+Tool: `run_workspace_script`
+- `script_name`: `skills/calendar/scripts/calendar-ops.sh`
+- `args`: `["list_family"]`
 
-Run for each calendar in sequence:
-- `calendar_id`: `primary`, `time_min`: today start (YYYY-MM-DDT00:00:00+09:00), `max_results`: `20`
-- `calendar_id`: `ayabe.ayumi@gmail.com` (あゆみ様), same time range
-- `calendar_id`: `28hs0ibka0oa84810dupunrskk@group.calendar.google.com` (ゆうき様), same time range
-
-Extract: event summary, time, location, attendees.
+Extract: owner, event_id, title, start, end, location from the returned JSON array.
 
 ### 1.2 Email (Unread, Last 24h)
 
-Tool: `gws_gmail_list_messages`
-- `query`: `newer_than:1d is:unread`
-- `max_results`: `15`
+Tool: `run_workspace_script`
+- `script_name`: `skills/gmail/scripts/506_get-gmail.sh`
 
-Classify: **Needs Response** (from a person, expects reply) vs **FYI** (notifications, newsletters).
+Classify: **Needs Response** (from a person, expects reply) vs **FYI** (notifications, newsletters) based on the subject and sender in the returned list.
 
 ### 1.3 Tasks & TODOs
 
@@ -54,9 +50,10 @@ Extract: key accomplishments, decisions made, open items carried over.
 
 ### 1.5 Weather (Optional)
 
-Tool: `yolp_weather`
-- Check `USER.md` (already in system context) for K様の location coordinates (latitude, longitude)
-- Extracts rainfall prediction for next 60 minutes in 10-minute intervals
+Tool: `run_workspace_script`
+- `script_name`: `skills/weather/scripts/504_get-weather.sh`
+
+Extract: location, telop, today_max_c, today_min_c, weather_detail, wind, chance_of_rain, and rain_next_60min (15-minute intervals) from the returned JSON objects.
 
 Skip silently if location unknown or tool unavailable.
 
@@ -129,8 +126,8 @@ When triggered manually in conversation, reply directly without a formal header.
 
 | Source | Tool Missing | Behavior |
 |--------|-------------|----------|
-| Calendar | `gws_calendar_list_events` unavailable | Skip "Schedule" section |
-| Email | `gws_gmail_list_messages` unavailable | Skip "Email" section |
-| Weather | `yolp_weather` unavailable / no coordinates in USER.md | Skip weather line |
+| Calendar | `run_workspace_script` (`calendar-ops.sh`) unavailable or fails | Skip "Schedule" section |
+| Email | `run_workspace_script` (`506_get-gmail.sh`) unavailable or fails | Skip "Email" section |
+| Weather | `run_workspace_script` (`504_get-weather.sh`) unavailable or fails / no coordinates in USER.md | Skip weather line |
 | Yesterday | No summaries or log file for yesterday | Skip "Yesterday" section |
 | Tasks | No TODO in MEMORY.md and no TODO.md | Skip "Tasks" section |

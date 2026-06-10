@@ -1437,14 +1437,76 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             .build();
 
         // プロバイダーメッセージを rig メッセージ形式に変換
-        let rig_history = rustyclaw_providers::provider_messages_to_rig(&history.messages);
+        let mut rig_history = rustyclaw_providers::provider_messages_to_rig(&history.messages);
 
-        // rig ReAct ループ実行 (LLMにはインジェクション済みのメッセージを渡す)
-        let response_text = rig_core::agent::PromptRequest::from_agent(&agent, injected_user_message)
-            .with_history(rig_history)
-            .with_hook(AgentHook::new(workspace_dir.to_path_buf(), session_id.to_string(), self.config.autonomy_level, false))
-            .await
-            .map_err(|e| anyhow::anyhow!("rig agent error: {}", e))?;
+        let mut attempt = 0;
+        let max_attempts = 3;
+        let response_text = loop {
+            attempt += 1;
+            // rig ReAct ループ実行 (LLMにはインジェクション済みのメッセージを渡す)
+            let res = rig_core::agent::PromptRequest::from_agent(&agent, injected_user_message)
+                .with_history(rig_history.clone())
+                .with_hook(AgentHook::new(workspace_dir.to_path_buf(), session_id.to_string(), self.config.autonomy_level, false))
+                .await;
+
+            match res {
+                Ok(out) => break out,
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("UnknownToolCall") && attempt < max_attempts {
+                        let tool_name = if let Some(start) = err_str.find("tool `") {
+                            let sub = &err_str[start + 6..];
+                            if let Some(end) = sub.find('`') {
+                                &sub[..end]
+                            } else {
+                                "unknown"
+                            }
+                        } else {
+                            "unknown"
+                        };
+
+                        tracing::warn!(
+                            "Detected UnknownToolCall for tool `{}` in Session {}. Attempting to feed error back to the model and retry (attempt {}/{})",
+                            tool_name, session_id, attempt, max_attempts
+                        );
+
+                        let call_id = format!("err_call_{}_{}", tool_name, attempt);
+
+                        use rig_core::OneOrMany;
+                        use rig_core::completion::message::{
+                            AssistantContent, Text, ToolCall as RigToolCall, ToolFunction, ToolResult,
+                            ToolResultContent, UserContent,
+                        };
+
+                        rig_history.push(rig_core::completion::Message::Assistant {
+                            id: None,
+                            content: OneOrMany::one(AssistantContent::ToolCall(RigToolCall::new(
+                                call_id.clone(),
+                                ToolFunction::new(tool_name.to_string(), serde_json::json!({})),
+                            ))),
+                        });
+
+                        let feedback_msg = format!(
+                            "Error: UnknownToolCall: Model attempted to call unknown or disallowed tool `{}`. Please use other available tools (such as `run_workspace_script` with appropriate scripts) or alternative methods instead.",
+                            tool_name
+                        );
+
+                        rig_history.push(rig_core::completion::Message::User {
+                            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                                id: call_id,
+                                call_id: None,
+                                content: OneOrMany::one(ToolResultContent::Text(Text {
+                                    text: feedback_msg,
+                                    additional_params: None,
+                                })),
+                            })),
+                        });
+                        continue;
+                    }
+                    return Err(anyhow::anyhow!("rig agent error: {}", e));
+                }
+            }
+        };
 
         let response_text = filter_json_leaks(&response_text);
 

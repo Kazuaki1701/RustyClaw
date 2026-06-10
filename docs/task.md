@@ -2,9 +2,9 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (Phase 44-1〜44-5 LLM I/O 最適化・完了)  
+> **最終更新日**: 2026-06-11 (BUG-02, BUG-03 完了分アーカイブ化)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
-> **最新アーカイブ**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md) (Phase 44-1〜44-5)
+> **最新アーカイブ**: [2026-06-11-completed-bugs-02-03.md](archive/tasks/2026-06-11-completed-bugs-02-03.md) (BUG-02, BUG-03)
 
 ---
 
@@ -14,7 +14,48 @@
 
 ---
 
-- なし (すべてのバグ修正が完了しました)
+### BUG-01: LLM 全モデル失敗（`all models failed`）による深夜 Agent 停止
+
+> **発見日**: 2026-06-11 ログ点検  
+> **重要度**: 🔴 高（heartbeat 停止・4セッションサマリー未保存）
+
+**現象**  
+深夜 02:21〜05:51（JST）にかけて heartbeat・summary パーパス向けの全 LLM モデルが連続失敗し、
+以下 5 セッションが実行不能になった。
+
+- `02:21` cron:heartbeat
+- `02:23` cron:session-summary:cron:topic-patrol-explore
+- `04:03` cron:session-summary:cron:karakeep-cleanup
+- `04:49` cron:session-summary:cron:karakeep-recommendation
+- `05:51` cron:session-summary:cron:topic-patrol-deliver
+
+```
+ERROR rustyclaw_gateway: Heartbeat LLM execution failed:
+  CompletionError: ProviderError: all models failed for purpose 'heartbeat'
+```
+
+**原因分析**  
+`config.release.json` の purpose チェーン:
+- `heartbeat`: `[groq-llama-8b, cf-gemma-4-26b]`
+- `summary`: `[cf-gemma-4-26b, groq-llama-8b]`
+
+Groq (`groq-llama-8b`, RPD: 14,400) と Cloudflare Workers AI (`cf-gemma-4-26b`) の両方が
+02:21 以降 4 時間以上応答不能になっている。ログにレート制限・クールダウン痕跡は見当たらず、
+外部プロバイダー側の障害（Groq / Cloudflare Workers AI）が最有力原因。
+フォールバック先が 2 モデルしかなく、両方が同一時間帯に障害を受けた場合の救済手段が存在しない。
+
+**対策（要実施）**
+- `[ ]` **BUG-01-a**: `heartbeat` / `summary` パーパスに Ollama ローカルモデル
+  （例: `lms-gemma-4-e4b`）を最終フォールバックとして追加し、外部障害時でも縮退動作できるようにする。  
+  対象: `production/config/config.release.json` の `models.purposes.heartbeat / summary`
+- `[ ]` **BUG-01-b**: 全モデル失敗時に Discord へ `⚠️ LLM provider 全滅` アラートを投げる
+  エラーハンドリングを `rustyclaw-gateway` に追加し、サイレント停止を防ぐ。  
+  対象: `crates/rustyclaw-gateway/src/heartbeat.rs`（heartbeat 失敗パス）・`cron.rs`（session-summary 失敗パス）
+- `[ ]` **BUG-01-c**: 過去の失敗セッションサマリー（topic-patrol-explore 等 4 件）が
+  未保存になっていないか確認し、必要に応じて手動補完する。  
+  対象: `production/workspace/memory/sessions/` 内の 2026-06-11 付きファイル
+
+
 
 ---
 

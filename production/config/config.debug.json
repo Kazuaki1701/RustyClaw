@@ -1,30 +1,30 @@
 {
   "agents": {
-    "global_fallback_model_name": "lms-gemma-4-e4b",
-    "default": "lms-gemma-4-e4b",
-    "tools": "lms-gemma-4-e4b",
+    "global_fallback_model_name": "lms-gemma-4-12b",
+    "default": "lms-gemma-4-12b",
+    "tools": "lms-gemma-4-12b",
     "discord": [
-      "lms-gemma-4-e4b",
+      "lms-gemma-4-12b",
       "cf-gemma-4-26b"
     ],
     "line": [
-      "lms-gemma-4-e4b",
+      "lms-gemma-4-12b",
       "groq-llama-8b"
     ],
     "heartbeat": [
-      "lms-gemma-4-e4b",
+      "lms-gemma-4-12b",
       "groq-llama-8b"
     ],
     "patrol": [
-      "lms-gemma-4-e4b",
+      "lms-gemma-4-12b",
       "groq-llama-8b"
     ],
     "summary": [
-      "lms-gemma-4-e4b",
+      "lms-gemma-4-12b",
       "groq-llama-8b"
     ],
     "memory": [
-      "lms-gemma-4-e4b",
+      "lms-gemma-4-12b",
       "groq-llama-8b"
     ],
     "embedding": "lms-bge-m3"
@@ -264,9 +264,20 @@
       "context_window": "512"
     },
     {
-      "model_name": "lms-gemma-4-e4b",
+      "model_name": "lms-gemma-4-4b",
       "provider": "openai",
       "model": "google/gemma-4-e4b",
+      "api_base": "http://192.168.1.110:1234/v1",
+      "api_key": "lm-studio",
+      "max_tokens": 2048,
+      "temperature": 0.7,
+      "enabled": true,
+      "context_window": "16k"
+    },
+    {
+      "model_name": "lms-gemma-4-12b",
+      "provider": "openai",
+      "model": "google/gemma-4-12b-qat",
       "api_base": "http://192.168.1.110:1234/v1",
       "api_key": "lm-studio",
       "max_tokens": 2048,
@@ -327,14 +338,6 @@
     "brave-search": {
       "enabled": true,
       "api_key": "$vault:brave-search-api-key"
-    },
-    "google-workspace": {
-      "enabled": true,
-      "writable_calendar_ids": [
-        "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com",
-        "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com"
-      ],
-      "gmail_deletable_label": "_ai-agent"
     }
   },
   "mcp": {}
