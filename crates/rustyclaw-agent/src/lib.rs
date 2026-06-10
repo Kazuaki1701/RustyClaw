@@ -500,16 +500,6 @@ impl Pipeline {
         conversational_messages
     }
 
-    /// デバッグ用の生リクエストダンプを出力する
-    fn dump_request(&self, _workspace_dir: &Path, _messages: &[Message]) {
-        // Consolidated in providers layer
-    }
-
-    /// デバッグ用の生レスポンスダンプを出力する
-    fn dump_response(&self, _workspace_dir: &Path, _content: &str, _role: &str) {
-        // Consolidated in providers layer
-    }
-
     /// 前日のセッションからサマリーと履歴を取得し、文脈継続情報を作成する
     pub fn get_session_continuation_context(
         &self,
@@ -1024,8 +1014,6 @@ Rules:
             },
             user_msg.clone(),
         ];
-        self.dump_request(workspace_dir, &initial_messages);
-
         let rig_history: Vec<rig_core::completion::Message> = Vec::new();
         let response_text = rig_core::agent::PromptRequest::from_agent(&agent, user_message)
             .with_history(rig_history)
@@ -1034,7 +1022,6 @@ Rules:
             .map_err(|e| anyhow::anyhow!("heartbeat agent error: {}", e))?;
 
         let response_text = filter_json_leaks(&response_text);
-        self.dump_response(workspace_dir, &response_text, "assistant");
 
         let last_usage: Option<LlmResponse> = usage_sink.lock().unwrap().take();
         if let Some(ref usage) = last_usage
@@ -1115,8 +1102,6 @@ Rules:
         };
         messages.push(user_msg.clone());
 
-        self.dump_request(workspace_dir, &messages);
-
         // 3. LLMプロバイダ呼び出し
         use rig_core::agent::AgentBuilder;
         use rustyclaw_providers::RustyclawCompletionModel;
@@ -1165,8 +1150,6 @@ Rules:
         logger
             .append_message(session_id, &assistant_msg)
             .context("Failed to save assistant response in session log (fail-closed)")?;
-
-        self.dump_response(workspace_dir, &response.content, &response.role);
 
         if !session_id.starts_with("cron") {
             self.trigger_memory_flush_async(workspace_dir, session_id);
@@ -1570,8 +1553,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             ..Default::default()
         };
         messages.push(user_msg.clone());
-
-        self.dump_request(workspace_dir, &messages);
 
         let cat = resolve_category(session_id);
         let opts = CompletionOptions {
