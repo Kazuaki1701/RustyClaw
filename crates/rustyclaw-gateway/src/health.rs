@@ -1240,6 +1240,12 @@ async function updateLog(){
 function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}}
 let currentAbortController=null;
 let currentSessionId=null;
+let wasManualCancel=false;
+const responseCache=new Map();
+const CACHE_TTL_MS=5*60*1000;
+const CHAT_TIMEOUT_MS=120_000;
+function getCachedResponse(msg){const e=responseCache.get(msg);if(!e)return null;if(Date.now()-e.ts>CACHE_TTL_MS){responseCache.delete(msg);return null;}return e.text;}
+function setCachedResponse(msg,text){responseCache.set(msg,{text,ts:Date.now()});}
 function setSendButtonState(state){
   const btn=document.getElementById('sendBtn');
   if(state==='cancel'){
