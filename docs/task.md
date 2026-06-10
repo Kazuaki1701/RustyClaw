@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (Phase 44-1〜44-5 完了分アーカイブ化)  
+> **最終更新日**: 2026-06-11 (config.json 整理・use_local_embedding / dimensions ハードコード化)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
 > **最新アーカイブ**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md) (Phase 44-1〜44-5)
 
@@ -35,7 +35,7 @@ ERROR rustyclaw_gateway: Heartbeat LLM execution failed:
 ```
 
 **原因分析**  
-`config.release.json` の purpose チェーン:
+当時の `config.release.json`（クラウド主力構成）の purpose チェーン:
 - `heartbeat`: `[groq-llama-8b, cf-gemma-4-26b]`
 - `summary`: `[cf-gemma-4-26b, groq-llama-8b]`
 
@@ -44,10 +44,13 @@ Groq (`groq-llama-8b`, RPD: 14,400) と Cloudflare Workers AI (`cf-gemma-4-26b`)
 外部プロバイダー側の障害（Groq / Cloudflare Workers AI）が最有力原因。
 フォールバック先が 2 モデルしかなく、両方が同一時間帯に障害を受けた場合の救済手段が存在しない。
 
+> **現状メモ（2026-06-11）**: `config.release.json` を `config.debug.json` と同一の lms-* 主力構成で再作成済み。
+> 外部プロバイダー障害による停止リスクは現時点で低下しているが、lms（LM Studio）が単一障害点になるため ISSUE-09 参照。
+
 **対策（要実施）**
-- `[ ]` **BUG-01-a**: `heartbeat` / `summary` パーパスに Ollama ローカルモデル
-  （例: `lms-gemma-4-e4b`）を最終フォールバックとして追加し、外部障害時でも縮退動作できるようにする。  
-  対象: `production/config/config.release.json` の `models.purposes.heartbeat / summary`
+- `[ ]` **BUG-01-a**: `heartbeat` / `summary` パーパスに groq / cf モデルをフォールバック追加し、
+  LM Studio 障害時にも縮退動作できるようにする。  
+  対象: `production/config/config.release.json` の `agents.heartbeat / summary`
 - `[ ]` **BUG-01-b**: 全モデル失敗時に Discord へ `⚠️ LLM provider 全滅` アラートを投げる
   エラーハンドリングを `rustyclaw-gateway` に追加し、サイレント停止を防ぐ。  
   対象: `crates/rustyclaw-gateway/src/heartbeat.rs`（heartbeat 失敗パス）・`cron.rs`（session-summary 失敗パス）

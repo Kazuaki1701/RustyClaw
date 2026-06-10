@@ -1,4 +1,34 @@
 {
+  "agents": {
+    "global_fallback_model_name": "lms-gemma-4-12b",
+    "default": "lms-gemma-4-12b",
+    "tools": "lms-gemma-4-12b",
+    "discord": [
+      "lms-gemma-4-12b",
+      "cf-gemma-4-26b"
+    ],
+    "line": [
+      "lms-gemma-4-12b",
+      "groq-llama-8b"
+    ],
+    "heartbeat": [
+      "lms-gemma-4-12b",
+      "groq-llama-8b"
+    ],
+    "patrol": [
+      "lms-gemma-4-12b",
+      "groq-llama-8b"
+    ],
+    "summary": [
+      "lms-gemma-4-12b",
+      "groq-llama-8b"
+    ],
+    "memory": [
+      "lms-gemma-4-12b",
+      "groq-llama-8b"
+    ],
+    "embedding": "lms-bge-m3"
+  },
   "model_list": [
     {
       "model_name": "groq-llama-8b",
@@ -223,14 +253,25 @@
       "cf_aig_gateway_id": "rustyclaw-gateway"
     },
     {
-      "model_name": "lms-gemma-4-e4b",
+      "model_name": "lms-bge-m3",
       "provider": "openai",
-      "model": "google/gemma-4-e4b",
+      "model": "text-embedding-bge-m3",
+      "api_base": "http://192.168.1.110:1234/v1",
+      "api_key": "lm-studio",
+      "max_tokens": 0,
+      "temperature": 0.0,
+      "enabled": true,
+      "context_window": "512"
+    },
+    {
+      "model_name": "lms-gemma-4-12b",
+      "provider": "openai",
+      "model": "google/gemma-4-12b-qat",
       "api_base": "http://192.168.1.110:1234/v1",
       "api_key": "lm-studio",
       "max_tokens": 2048,
       "temperature": 0.7,
-      "enabled": false,
+      "enabled": true,
       "context_window": "16k"
     },
     {
@@ -243,51 +284,11 @@
       "temperature": 0.7,
       "enabled": false,
       "context_window": "16k"
-    },
-    {
-      "model_name": "lms-bge-m3",
-      "provider": "openai",
-      "model": "text-embedding-bge-m3",
-      "api_base": "http://192.168.1.110:1234/v1",
-      "api_key": "lm-studio",
-      "max_tokens": 0,
-      "temperature": 0.0,
-      "enabled": true,
-      "context_window": "512"
-    },
-    {
-      "model_name": "cf-bge-m3",
-      "provider": "openai",
-      "model": "@cf/baai/bge-m3",
-      "api_base": "https://gateway.ai.cloudflare.com/v1/a10120209a7dae1fcc497a5adf4be5d9/rustyclaw-gateway/workers-ai/@cf/baai/bge-m3",
-      "api_key": "$vault:cf-api-key",
-      "max_tokens": 0,
-      "temperature": 0.0,
-      "enabled": false,
-      "context_window": "512"
     }
   ],
-  "agents": {
-    "global_fallback_model_name": "groq-llama-8b",
-    "default":   "groq-llama-8b",
-    "tools":     "groq-qwen3-32b",
-    "discord":   ["groq-llama-70b", "groq-llama-8b"],
-    "line":      ["groq-llama-70b", "groq-llama-8b"],
-    "heartbeat": ["groq-llama-8b", "cf-gemma-4-26b"],
-    "patrol":    ["groq-llama-70b", "groq-llama-8b"],
-    "summary":   ["cf-gemma-4-26b", "groq-llama-8b"],
-    "memory":    ["cf-qwen3-30b", "groq-llama-8b"],
-    "embedding": "lms-bge-m3"
-  },
   "debug_dump": true,
-  "timezone": "Asia/Tokyo",
   "embedding": {
     "enabled": true,
-    "use_local_embedding": true,
-    "api_endpoint": "http://192.168.1.110:1234/v1/embeddings",
-    "api_key": "lm-studio",
-    "model": "intfloat/multilingual-e5-small",
-    "dimensions": 384,
     "top_k": 5,
     "heartbeat_top_k": 2,
     "similarity_threshold": 0.60,

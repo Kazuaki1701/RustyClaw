@@ -82,9 +82,6 @@ fn bool_true() -> bool {
     true
 }
 
-fn default_embedding_dims() -> usize {
-    1024
-}
 fn default_top_k() -> usize {
     5
 }
@@ -107,9 +104,6 @@ pub struct EmbeddingConfig {
     /// OpenAI互換API用のモデル名 (例: "text-embedding-bge-m3")
     #[serde(default)]
     pub model: Option<String>,
-    /// ベクトル次元数 (bge-m3 = 1024)
-    #[serde(default = "default_embedding_dims")]
-    pub dimensions: usize,
     /// 検索時に返す上位 K 件
     #[serde(default = "default_top_k")]
     pub top_k: usize,
@@ -119,10 +113,6 @@ pub struct EmbeddingConfig {
     /// セッション要約 embedding の保持日数（省略時は 7 日）
     #[serde(default)]
     pub session_summary_ttl_days: Option<u32>,
-    /// true のとき fastembed ローカルモデルを使用する（CloudflareAPI の代替）。
-    /// ローカルモデルは intfloat/multilingual-e5-small (384 次元)。
-    #[serde(default)]
-    pub use_local_embedding: bool,
     /// Heartbeat 専用の RAG top_k（省略時は 2 を使用。top_k とは独立）。
     /// Heartbeat は固定 Step を実行するだけなので top_k=5 は過剰（ISSUE-30）。
     #[serde(default)]
@@ -1018,7 +1008,6 @@ mod tests {
     fn test_embedding_config_defaults() {
         let json = r#"{ "enabled": true, "api_endpoint": "https://example.com", "api_key": "k" }"#;
         let cfg: EmbeddingConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.dimensions, 1024);
         assert_eq!(cfg.top_k, 5);
         assert!((cfg.similarity_threshold - 0.65).abs() < 1e-6);
     }
@@ -1034,27 +1023,9 @@ mod tests {
     }
 
     #[test]
-    fn test_embedding_config_use_local_default_false() {
-        let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
-        assert!(!cfg.use_local_embedding, "default should be false");
-    }
-
-    #[test]
-    fn test_embedding_config_use_local_true() {
-        let cfg: EmbeddingConfig =
-            serde_json::from_str(r#"{"use_local_embedding": true}"#).unwrap();
-        assert!(cfg.use_local_embedding);
-    }
-
-    #[test]
     fn test_embedding_config_heartbeat_top_k() {
         let json = r#"{
             "enabled": true,
-            "use_local_embedding": true,
-            "api_endpoint": "",
-            "api_key": "",
-            "model": "intfloat/multilingual-e5-small",
-            "dimensions": 384,
             "top_k": 5,
             "similarity_threshold": 0.6,
             "heartbeat_top_k": 2

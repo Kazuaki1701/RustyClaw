@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rustyclaw_agent::{build_heartbeat_rag_query, Pipeline, UnifiedRagEngine};
+use rustyclaw_agent::{build_heartbeat_rag_query, Pipeline};
 use rustyclaw_channels::{Channel, DiscordConnector};
 use rustyclaw_config::Config;
 use std::collections::HashMap;
@@ -323,13 +323,8 @@ impl LaneRegistry {
                                             "Session {} acquired permit slot. Executing agent...",
                                             session_id
                                         );
-                                        let mut pipeline =
+                                        let pipeline =
                                             Pipeline::new(active_config.clone(), gmn_sem.clone());
-                                        if let Some(rag) =
-                                            init_rag_engine(&active_config, &workspace_path)
-                                        {
-                                            pipeline.rag = Some(rag);
-                                        }
                                         match pipeline
                                             .execute_heartbeat(
                                                 &workspace_path,
@@ -445,13 +440,8 @@ impl LaneRegistry {
                                         "Session {} acquired permit slot. Executing agent...",
                                         session_id
                                     );
-                                    let mut pipeline =
+                                    let pipeline =
                                         Pipeline::new(active_config.clone(), gmn_sem.clone());
-                                    if let Some(rag) =
-                                        init_rag_engine(&active_config, &workspace_path)
-                                    {
-                                        pipeline.rag = Some(rag);
-                                    }
                                     match pipeline
                                         .execute(&workspace_path, &session_id, &prompt)
                                         .await
@@ -613,13 +603,8 @@ impl LaneRegistry {
                                         "Session {} acquired permit slot. Executing agent...",
                                         session_id
                                     );
-                                    let mut pipeline =
+                                    let pipeline =
                                         Pipeline::new(active_config.clone(), gmn_sem.clone());
-                                    if let Some(rag) =
-                                        init_rag_engine(&active_config, &workspace_path)
-                                    {
-                                        pipeline.rag = Some(rag);
-                                    }
                                     // ProgressReporter（進捗表示とタイピング）のセットアップ
                                     let is_user_channel = !session_id.starts_with("cron")
                                         && channel_id.parse::<u64>().is_ok();
@@ -1274,29 +1259,6 @@ impl Gateway {
 // ==============================================================================
 // RAG Engine Initialization
 // ==============================================================================
-
-/// config と workspace_path から UnifiedRagEngine を構築し、SQLite からデータをロードする。
-/// embedding が無効または設定がない場合は None を返す。
-fn init_rag_engine(
-    config: &rustyclaw_config::Config,
-    workspace_path: &std::path::Path,
-) -> Option<Arc<UnifiedRagEngine>> {
-    let emb_cfg = config.embedding.as_ref().filter(|e| e.enabled)?;
-    let (api_endpoint, api_key, _model) = config.get_embedding_client_params()?;
-    let dims = emb_cfg.dimensions;
-    let client = rustyclaw_providers::CloudflareEmbeddingClient::new(&api_endpoint, &api_key);
-    let model = rustyclaw_providers::CloudflareEmbeddingModel::new(client, dims);
-    let engine = UnifiedRagEngine::new(model);
-    let db_path = workspace_path.join("memory.db");
-    match rustyclaw_storage::DbManager::new(&db_path) {
-        Ok(db) => match engine.rebuild_from_db(&db) {
-            Ok(()) => tracing::info!("init_rag_engine: loaded {} embeddings", engine.len()),
-            Err(e) => tracing::warn!("init_rag_engine: rebuild failed: {}", e),
-        },
-        Err(e) => tracing::warn!("init_rag_engine: db open failed: {}", e),
-    }
-    Some(Arc::new(engine))
-}
 
 // ==============================================================================
 // Tests

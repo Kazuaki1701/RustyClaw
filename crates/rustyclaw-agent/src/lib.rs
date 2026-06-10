@@ -331,8 +331,6 @@ pub struct Pipeline {
     provider: Box<dyn LlmProvider>,
     /// flush_memory() の同時実行を 1 本に制限するセマフォ
     flush_sem: Arc<Semaphore>,
-    /// RAG エンジン (Task 7 で初期化される。None の場合は RAG スキップ)
-    pub rag: Option<Arc<UnifiedRagEngine>>,
 }
 
 impl Pipeline {
@@ -342,7 +340,6 @@ impl Pipeline {
             config,
             provider,
             flush_sem,
-            rag: None,
         }
     }
 
@@ -917,11 +914,6 @@ Rules:
             cfg
         };
         let effective_rag = rag_query.unwrap_or(user_message);
-        if heartbeat_config
-            .embedding
-            .as_ref()
-            .map(|e| e.use_local_embedding)
-            .unwrap_or(false)
         {
             if let Some(client) = make_embed_client(&heartbeat_config) {
                 let rag_ctx =
@@ -954,25 +946,6 @@ Rules:
                     system_context.push_str("## Step 6 関連記憶\n");
                     system_context.push_str(&step6_ctx);
                 }
-            }
-        } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(effective_rag, &heartbeat_config, rag, hb_top_k).await;
-            if !rag_ctx.is_empty() {
-                system_context.push_str(&rag_ctx);
-            }
-            let step2_ctx =
-                retrieve_rag_context(HEARTBEAT_STEP2_RAG_QUERY, &heartbeat_config, rag, hb_top_k)
-                    .await;
-            if !step2_ctx.is_empty() {
-                system_context.push_str("## Step 2 関連記憶\n");
-                system_context.push_str(&step2_ctx);
-            }
-            let step6_ctx =
-                retrieve_rag_context(HEARTBEAT_STEP6_RAG_QUERY, &heartbeat_config, rag, hb_top_k)
-                    .await;
-            if !step6_ctx.is_empty() {
-                system_context.push_str("## Step 6 関連記憶\n");
-                system_context.push_str(&step6_ctx);
             }
         }
 
@@ -1385,23 +1358,10 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             build_discord_rag_query(&history_messages, raw_user_message)
         };
 
-        if self
-            .config
-            .embedding
-            .as_ref()
-            .map(|e| e.use_local_embedding)
-            .unwrap_or(false)
-        {
-            if let Some(client) = make_embed_client(&self.config) {
-                let db_path = workspace_dir.join("memory.db");
-                let rag_ctx =
-                    retrieve_rag_context_local(&rag_query, &self.config, &client, &db_path, channel_top_k).await;
-                if !rag_ctx.is_empty() {
-                    system_context.push_str(&rag_ctx);
-                }
-            }
-        } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(&rag_query, &self.config, rag, channel_top_k).await;
+        if let Some(client) = make_embed_client(&self.config) {
+            let db_path = workspace_dir.join("memory.db");
+            let rag_ctx =
+                retrieve_rag_context_local(&rag_query, &self.config, &client, &db_path, channel_top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -1554,25 +1514,12 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let now = chrono::Local::now();
         system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
 
-        // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
+        // RAG: ユーザーメッセージに関連する記憶を動的注入
         let top_k = self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
-        if self
-            .config
-            .embedding
-            .as_ref()
-            .map(|e| e.use_local_embedding)
-            .unwrap_or(false)
-        {
-            if let Some(client) = make_embed_client(&self.config) {
-                let db_path = workspace_dir.join("memory.db");
-                let rag_ctx =
-                    retrieve_rag_context_local(user_message, &self.config, &client, &db_path, top_k).await;
-                if !rag_ctx.is_empty() {
-                    system_context.push_str(&rag_ctx);
-                }
-            }
-        } else if let Some(ref rag) = self.rag {
-            let rag_ctx = retrieve_rag_context(user_message, &self.config, rag, top_k).await;
+        if let Some(client) = make_embed_client(&self.config) {
+            let db_path = workspace_dir.join("memory.db");
+            let rag_ctx =
+                retrieve_rag_context_local(user_message, &self.config, &client, &db_path, top_k).await;
             if !rag_ctx.is_empty() {
                 system_context.push_str(&rag_ctx);
             }
@@ -2042,39 +1989,26 @@ pub(crate) fn chunk_document_hierarchical(file_name: &str, content: &str) -> Vec
 }
 
 pub(crate) enum EmbedClientKind {
-    Remote(rustyclaw_providers::CloudflareEmbeddingClient),
     Local(rustyclaw_providers::LocalEmbeddingClient),
 }
 
 impl EmbedClientKind {
     async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
         match self {
-            Self::Remote(c) => c.embed(texts).await,
             Self::Local(c) => c.embed(texts).await,
         }
     }
 }
 
-fn make_embed_client(config: &Config) -> Option<EmbedClientKind> {
-    if config
-        .embedding
-        .as_ref()
-        .map(|e| e.use_local_embedding)
-        .unwrap_or(false)
-    {
-        let cache_dir = rustyclaw_config::get_app_dir().join("fastembed_cache");
-        match rustyclaw_providers::LocalEmbeddingClient::new(&cache_dir) {
-            Ok(c) => return Some(EmbedClientKind::Local(c)),
-            Err(e) => {
-                tracing::warn!("make_embed_client: LocalEmbeddingClient init failed: {}", e);
-                return None;
-            }
+fn make_embed_client(_config: &Config) -> Option<EmbedClientKind> {
+    let cache_dir = rustyclaw_config::get_app_dir().join("fastembed_cache");
+    match rustyclaw_providers::LocalEmbeddingClient::new(&cache_dir) {
+        Ok(c) => Some(EmbedClientKind::Local(c)),
+        Err(e) => {
+            tracing::warn!("make_embed_client: LocalEmbeddingClient init failed: {}", e);
+            None
         }
     }
-    let (api_endpoint, api_key, _model) = config.get_embedding_client_params()?;
-    Some(EmbedClientKind::Remote(
-        rustyclaw_providers::CloudflareEmbeddingClient::new(&api_endpoint, &api_key),
-    ))
 }
 
 /// workspace_dir 内の AGENTS.md, USER.md, skills/*.md, memory/logs/*.md, memory/summaries/*.md, patrol/findings.md をチャンク化し、
@@ -2095,14 +2029,7 @@ pub async fn ingest_static_documents(
             return;
         }
     };
-    // ローカルモード時: 次元数が異なる場合 DB をクリアして全再インジェストを促す
-    if config
-        .embedding
-        .as_ref()
-        .map(|e| e.use_local_embedding)
-        .unwrap_or(false)
-        && let Err(e) = db.migrate_embedding_dims_if_needed(384)
-    {
+    if let Err(e) = db.migrate_embedding_dims_if_needed(384) {
         tracing::warn!("ingest_static_documents: migration error: {}", e);
     }
 
@@ -2518,45 +2445,6 @@ pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
     out
 }
 
-/// ユーザーメッセージに関連する記憶・過去セッションを UnifiedRagEngine から検索し、
-/// システムプロンプト注入用の文字列を返す。Fail-open。
-pub(crate) async fn retrieve_rag_context(
-    query_text: &str,
-    config: &Config,
-    rag_engine: &UnifiedRagEngine,
-    top_k: usize,
-) -> String {
-    if rag_engine.is_empty() {
-        return String::new();
-    }
-    let threshold = config
-        .embedding
-        .as_ref()
-        .map(|e| e.similarity_threshold as f64)
-        .unwrap_or(0.60);
-    let query_short: String = query_text.chars().take(512).collect();
-    let results = match rag_engine.search(&query_short, top_k).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("retrieve_rag_context: search error: {}", e);
-            return String::new();
-        }
-    };
-    let filtered: Vec<(String, String, f64)> = results
-        .into_iter()
-        .filter(|(_, _, score)| *score >= threshold)
-        .collect();
-    if filtered.is_empty() {
-        return String::new();
-    }
-    tracing::debug!(
-        "retrieve_rag_context: {} hits above threshold {}",
-        filtered.len(),
-        threshold
-    );
-    format_rag_context(&filtered)
-}
-
 /// ローカル embedding モデルを使って query_text に関連する記憶・ドキュメントを SQLite から検索し、
 /// システムプロンプト注入用の文字列を返す。Fail-open。
 pub(crate) async fn retrieve_rag_context_local(
@@ -2966,14 +2854,6 @@ mod tests {
             }
             _ => panic!("Expected Skip action due to rejection"),
         }
-    }
-
-    #[test]
-    fn test_make_embed_client_returns_none_when_no_config() {
-        use rustyclaw_config::Config;
-        let config = Config::default();
-        // no embedding config → make_embed_client returns None
-        assert!(make_embed_client(&config).is_none());
     }
 
     #[tokio::test]
