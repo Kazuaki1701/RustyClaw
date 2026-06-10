@@ -244,6 +244,55 @@ fn dump_llm_io(category: &str, model: &str, messages: &[Message], response: &Llm
         }
         Err(e) => tracing::error!("Failed to create llm io dump file {:?}: {}", file_path, e),
     }
+
+    // ── last_request.json (コンパクト版) ──────────────────────────────
+    const CONTENT_PREVIEW_CHARS: usize = 500;
+    let preview_str = |s: &str| -> String {
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() <= CONTENT_PREVIEW_CHARS {
+            s.to_string()
+        } else {
+            format!(
+                "{}…[省略: 全 {} 文字中 先頭 {} 文字]",
+                chars[..CONTENT_PREVIEW_CHARS].iter().collect::<String>(),
+                chars.len(),
+                CONTENT_PREVIEW_CHARS
+            )
+        }
+    };
+
+    let compact_messages: Vec<serde_json::Value> = messages
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "role": m.role,
+                "content_preview": preview_str(&m.content),
+            })
+        })
+        .collect();
+
+    let compact = serde_json::json!({
+        "timestamp": now.format("%Y-%m-%dT%H:%M:%S").to_string(),
+        "category": category,
+        "model": model,
+        "message_count": messages.len(),
+        "messages": compact_messages,
+        "response_preview": preview_str(&response.content),
+    });
+
+    if let Ok(json_str) = serde_json::to_string_pretty(&compact) {
+        let last_req_path = ws_dir
+            .join("memory")
+            .join("debug")
+            .join("llm")
+            .join("last_request.json");
+        if let Some(parent) = last_req_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(&last_req_path, &json_str) {
+            tracing::warn!("last_request.json の書き込みに失敗: {}", e);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1767,6 +1816,13 @@ mod tests {
     use tokio::io::{AsyncWriteExt, BufWriter};
     use tokio::net::TcpListener;
 
+    // RUSTYCLAW_WORKSPACE_DIR を操作するテストを直列化するための mutex
+    static WORKSPACE_DIR_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+    fn workspace_dir_lock() -> &'static std::sync::Mutex<()> {
+        WORKSPACE_DIR_LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     #[tokio::test]
     async fn test_openai_compat_complete() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -2058,6 +2114,7 @@ mod tests {
         use chrono::{Duration, Local};
         use std::fs;
 
+        let _lock = workspace_dir_lock().lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         unsafe {
             std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", tmp.path().to_str().unwrap());
@@ -2433,6 +2490,81 @@ mod tests {
             result[0], result[1],
             "different texts should produce different vectors"
         );
+    }
+
+    #[test]
+    fn test_dump_llm_io_writes_last_request_json() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let _lock = workspace_dir_lock().lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let workspace = dir.path();
+
+        unsafe {
+            std::env::set_var("RUSTYCLAW_WORKSPACE_DIR", workspace.to_str().unwrap());
+        }
+
+        let messages = vec![
+            Message {
+                role: "system".to_string(),
+                content: "S".repeat(1_000),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                trigger: None,
+                timestamp: None,
+            },
+            Message {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                trigger: None,
+                timestamp: None,
+            },
+        ];
+
+        let response = LlmResponse {
+            content: "Hi there".to_string(),
+            role: "assistant".to_string(),
+            tool_calls: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            model_used: None,
+            provider_id: None,
+        };
+        dump_llm_io("test", "test-model", &messages, &response);
+
+        let last_req_path = workspace
+            .join("memory")
+            .join("debug")
+            .join("llm")
+            .join("last_request.json");
+
+        assert!(
+            last_req_path.exists(),
+            "last_request.json が生成されているはず"
+        );
+
+        let content = fs::read_to_string(&last_req_path).unwrap();
+        let size = content.len();
+        assert!(
+            size < 5_120,
+            "last_request.json が 5KB 未満のはず (実際: {} bytes)",
+            size
+        );
+
+        let val: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(val["model"].is_string());
+        assert!(val["message_count"].is_number());
+        assert!(val["messages"].is_array());
+
+        unsafe {
+            std::env::remove_var("RUSTYCLAW_WORKSPACE_DIR");
+        }
     }
 }
 
