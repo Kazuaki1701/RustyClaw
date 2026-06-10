@@ -1079,6 +1079,8 @@ Rules:
         {
             system_context.push_str(&continuation);
         }
+        let now = chrono::Local::now();
+        system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
 
         // 1. 過去履歴のロードとトークン圧縮処理の適用
         let logger = SessionLogger::new(workspace_dir);
@@ -1381,6 +1383,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         {
             system_context.push_str(&continuation);
         }
+        let now = chrono::Local::now();
+        system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
         // セッション履歴のロード（RAG クエリ構築にも使用するため先行ロード）
         let history_messages = if session_id.starts_with("cron:") {
             Vec::new()
@@ -1510,6 +1514,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         {
             system_context.push_str(&continuation);
         }
+        let now = chrono::Local::now();
+        system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
 
         // RAG: ユーザーメッセージに関連する記憶を動的注入（rag が初期化済みの場合のみ）
         let top_k = self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
