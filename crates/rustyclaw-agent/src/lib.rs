@@ -1006,14 +1006,6 @@ Rules:
             .tools(wrapped_tools)
             .build();
 
-        let initial_messages = vec![
-            Message {
-                role: "system".to_string(),
-                content: system_context.clone(),
-                ..Default::default()
-            },
-            user_msg.clone(),
-        ];
         let rig_history: Vec<rig_core::completion::Message> = Vec::new();
         let response_text = rig_core::agent::PromptRequest::from_agent(&agent, user_message)
             .with_history(rig_history)
