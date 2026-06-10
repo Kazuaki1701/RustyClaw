@@ -2,8 +2,9 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-10 (Phase 44-2 リクエストサイズ削減・完了)  
-> **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。
+> **最終更新日**: 2026-06-11 (Phase 44-1〜44-5 LLM I/O 最適化・完了)  
+> **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
+> **最新アーカイブ**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md) (Phase 44-1〜44-5)
 
 ---
 
@@ -23,24 +24,9 @@
 
 #### Phase 44: LLM I/O 最適化と Dashboard 遅延削減
 > **目的**: Dashboard の LLM リクエスト/レスポンス遅延を削減し、ユーザー体感速度を向上させる。  
-> **優先順位の根拠**: 改善効果が高く副作用・実装コストが低い順に番号を振っている。
+> **優先順位の根拠**: 改善効果が高く副作用・実装コストが低い順に番号を振っている。  
+> **完了済み (44-1〜44-5)**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md)
 
-- `[x]` **Phase 44-1. Dashboard のタイムアウト調整** ⚡ 即効・副作用ゼロ
-  - タイムアウトを 300 s → 120 s に短縮し、遅延があれば再試行＋キャッシュ返却を実装。
-- `[x]` **Phase 44-2. リクエストサイズ削減** 🏆 全リクエストに効く・最高費用対効果
-  - 不要な長文（SOUL.md、AGENTS.md、MEMORY.md 全文）を要点のみ（数百バイト）に圧縮してダンプ。
-  - `last_request.json` のサイズ目標: **< 5 KB**。
-  - ※ 44-3 より先に実施することで、固定化すべきプロンプトの最小サイズを把握できる。
-- `[x]` **Phase 44-3. システムプロンプトの固定化** 💡 プロバイダの Prefix Caching 活用
-  - エージェント起動時に基本プロンプトのみ設定し、動的情報は差分メッセージとして追加する。
-  - `rustyclaw-agent/src/lib.rs` の `dump_request`/`dump_response` を NOP にし、コメントで搬送先はプロバイダ層と明示。
-  - ※ 44-2 でサイズ感を確認した後に設計すること。動的情報の差分注入ロジックを誤ると挙動が変わるため慎重に。
-- `[x]` **Phase 44-4. ダンプロジックのプロバイダ層へ集約** 🔧 44-5 の前提作業
-  - `crates/rustyclaw-providers/src/lib.rs` に `dump_llm_io` を実装し、リクエスト/レスポンス JSON を統一的に保存。
-  - 保存先を `workspace/memory/debug/llm/<date>/` に整理し、過去ログ検索を容易にする。
-- `[x]` **Phase 44-5. エラーハンドリングとディレクトリ作成** 🛡️ 44-4 完了後に実施
-  - `dump_llm_io` 内でディレクトリ作成失敗時は警告のみ出し、処理は続行。
-  - 古いデバッグディレクトリは 5 日以上前のものを自動削除。
 - `[ ]` **Phase 44-6. ストリーミングとキャッシュ** 🚀 体感改善最大・大規模改修
   - `complete_stream` を使用してリアルタイムにレスポンスを流す。
   - 定型レポートはローカルキャッシュ (`memory/debug/llm/cache`) に保存し、同一リクエスト時は再利用。
