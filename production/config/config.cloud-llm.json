@@ -1,30 +1,30 @@
 {
   "agents": {
-    "global_fallback_model_name": "lms-gemma-4-12b",
-    "default": "lms-gemma-4-12b",
-    "tools": "lms-gemma-4-12b",
+    "global_fallback_model_name": "groq-llama-8b",
+    "default": "groq-llama-8b",
+    "tools": "groq-qwen3-32b",
     "discord": [
-      "lms-gemma-4-12b",
-      "cf-gemma-4-26b"
+      "groq-llama-70b",
+      "groq-llama-8b"
     ],
     "line": [
-      "lms-gemma-4-12b",
+      "groq-llama-70b",
       "groq-llama-8b"
     ],
     "heartbeat": [
-      "lms-gemma-4-12b",
-      "groq-llama-8b"
+      "groq-llama-8b",
+      "cf-gemma-4-26b"
     ],
     "patrol": [
-      "lms-gemma-4-12b",
+      "groq-llama-70b",
       "groq-llama-8b"
     ],
     "summary": [
-      "lms-gemma-4-12b",
+      "cf-gemma-4-26b",
       "groq-llama-8b"
     ],
     "memory": [
-      "lms-gemma-4-12b",
+      "cf-qwen3-30b",
       "groq-llama-8b"
     ],
     "embedding": "lms-bge-m3"
