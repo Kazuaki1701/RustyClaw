@@ -320,14 +320,6 @@
     "brave-search": {
       "enabled": true,
       "api_key": "$vault:brave-search-api-key"
-    },
-    "google-workspace": {
-      "enabled": true,
-      "writable_calendar_ids": [
-        "6e0d089e7daae8c3b936cc2cf811dfe81dc4905749abed4d395f0655e837e57f@group.calendar.google.com",
-        "d9s8vq1em9a7qvav030igh90ao@group.calendar.google.com"
-      ],
-      "gmail_deletable_label": "_ai-agent"
     }
   },
   "mcp": {}

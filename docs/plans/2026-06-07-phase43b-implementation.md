@@ -1,6 +1,6 @@
 # Phase 43-B Dashboard 統一 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **ステータス**: `[DONE]` — 実装完了・main にマージ済み（2026-06-07、コミット 8803d03）
 
 **Goal:** `execute_with_tools`（dead code）の削除・`dashboard_top_k` 設定フィールドの除去・Dashboard セッションの usage trigger ラベルバグ修正を行い、Dashboard / Discord チャットのコードパスを完全統一する。
 
