@@ -396,6 +396,7 @@ impl Pipeline {
     pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
         // 静的ブロック（SOUL/USER）を先に並べてプロンプトキャッシュの prefix を安定させる。
         // 動的な [now:] は末尾に置くことで毎回変わる部分がキャッシュ prefix を破壊しないようにする。
+        const MAX_CONTEXT_CHARS_PER_FILE: usize = 3_000;
         let files = ["SOUL.md", "USER.md"];
         let mut context = String::new();
 
@@ -413,11 +414,9 @@ impl Pipeline {
                 }
             };
 
-            context.push_str(&format!(
-                "# {}\n\n{}\n\n",
-                filename,
-                Self::strip_comments(&content)
-            ));
+            let stripped = Self::strip_comments(&content);
+            let truncated = Self::truncate_context_content(&stripped, MAX_CONTEXT_CHARS_PER_FILE);
+            context.push_str(&format!("# {}\n\n{}\n\n", filename, truncated));
         }
 
         // proactive-posts.md を注入（最終1件のみ）
@@ -4166,6 +4165,30 @@ Keep it short.\n\
             !context.contains("[now: "),
             "build_heartbeat_context must not include [now:] — dynamic content belongs in execute_heartbeat"
         );
+    }
+
+    #[test]
+    fn test_build_system_context_truncates_large_files() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let workspace = dir.path();
+
+        let soul_content = "S".repeat(5_000);
+        fs::write(workspace.join("SOUL.md"), &soul_content).unwrap();
+        let user_content = "U".repeat(4_000);
+        fs::write(workspace.join("USER.md"), &user_content).unwrap();
+
+        let config = make_test_config_with_url("http://localhost");
+        let flush_sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, flush_sem);
+        let result = pipeline.build_system_context(workspace).unwrap();
+
+        let soul_section_start = result.find("# SOUL.md").unwrap();
+        let user_section_start = result.find("# USER.md").unwrap();
+        let soul_section = &result[soul_section_start..user_section_start];
+        assert!(soul_section.contains("[RustyClaw]"), "SOUL.md が切り詰められているはず");
     }
 }
 
