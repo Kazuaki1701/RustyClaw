@@ -10,6 +10,8 @@ use rand::Rng;
 
 use tokio::net::TcpListener;
 
+const CHAT_TIMEOUT_SECS: u64 = 120;
+
 /// セッション別キャンセル通知用マップ。
 /// `/chat` ハンドラが oneshot::Sender を登録し、`/chat/cancel` が send() で通知する。
 type CancelMap = Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>;
@@ -494,8 +496,10 @@ impl HealthServer {
                                                                     }
                                                             }
                                                         } => { chat_resp = res; }
-                                                        _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
-                                                            chat_resp = "Error: Request timeout".to_string();
+                                                        _ = tokio::time::sleep(std::time::Duration::from_secs(CHAT_TIMEOUT_SECS)) => {
+                                                            chat_resp =
+                                                                "⚠️ タイムアウト: LLM の応答を受信できませんでした。再度お試しください。"
+                                                                    .to_string();
                                                         }
                                                         _ = cancel_rx => {
                                                             chat_resp = "⚠️ 応答を中断しました。".to_string();
@@ -1371,4 +1375,15 @@ setInterval(updateQueue,1000);setInterval(updateConcurrency,1000);setInterval(up
 </body>
 </html>
 "##.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_timeout_secs_is_reasonable() {
+        assert!(CHAT_TIMEOUT_SECS >= 30, "タイムアウトが短すぎる: {}", CHAT_TIMEOUT_SECS);
+        assert!(CHAT_TIMEOUT_SECS <= 300, "タイムアウトが長すぎる: {}", CHAT_TIMEOUT_SECS);
+    }
 }
