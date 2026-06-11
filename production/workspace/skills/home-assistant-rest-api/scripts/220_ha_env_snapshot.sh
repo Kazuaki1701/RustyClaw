@@ -70,10 +70,16 @@ UPDATED=$(printf '%s' "$PREV_JSON" | jq \
     --argjson s "$NEW_SAMPLE" \
     '.samples += [$s] | .samples = (.samples | if length > 6 then .[-6:] else . end) | .latest = $s')
 
+# 破損した STATE_FILE の場合の安全フォールバック
+if [ -z "$UPDATED" ]; then
+    UPDATED=$(jq -cn --argjson s "$NEW_SAMPLE" '{samples:[$s], latest:$s}')
+fi
+
 # 4. トレンド計算
 trend_arrow() {
     CURR="$1"; PREV_VAL="$2"; THRESH="$3"
-    [ "$CURR" = "unknown" ] || [ "$PREV_VAL" = "unknown" ] && { echo "→"; return; }
+    { [ "$CURR" = "unknown" ] || [ "$CURR" = "unavailable" ] || \
+      [ "$PREV_VAL" = "unknown" ] || [ "$PREV_VAL" = "unavailable" ]; } && { echo "→"; return; }
     DIFF=$(awk -v c="$CURR" -v p="$PREV_VAL" -v t="$THRESH" \
         'BEGIN { d=c-p; if(d>t) print "up"; else if(d<-t) print "down"; else print "flat"}')
     case "$DIFF" in up) echo "↑" ;; down) echo "↓" ;; *) echo "→" ;; esac

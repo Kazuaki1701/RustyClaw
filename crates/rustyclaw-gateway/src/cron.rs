@@ -435,7 +435,7 @@ impl CronService {
                 .join("scripts")
                 .join("220_ha_env_snapshot.sh");
 
-            if !script_path.exists() {
+            if !tokio::fs::try_exists(&script_path).await.unwrap_or(false) {
                 tracing::info!(
                     "CronService: HA snapshot script not found at {:?}. HA polling disabled.",
                     script_path
@@ -468,13 +468,14 @@ impl CronService {
                         }
                         if output.status.code() == Some(2) {
                             // exit 2 = CO2 スパイク検知 → 即時 Heartbeat を発火
-                            tracing::warn!("CronService: HA CO2 spike detected! Triggering immediate Heartbeat...");
+                            let spike_msg = String::from_utf8_lossy(&output.stderr);
+                            tracing::warn!("CronService: HA CO2 spike detected! Triggering immediate Heartbeat. Detail: {}", spike_msg.trim());
                             let event = SystemEvent::IncomingMessage {
                                 session_id: "cron:heartbeat".to_string(),
                                 user_id: "cron".to_string(),
                                 channel_id: "cron".to_string(),
                                 content: "heartbeat".to_string(),
-                                priority: Priority::Background,
+                                priority: Priority::Normal,
                             };
                             let _ = bus_ha.publish(event);
                         }
