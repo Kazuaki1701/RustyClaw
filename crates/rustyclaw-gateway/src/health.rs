@@ -1138,7 +1138,7 @@ async function updateQueue(){
       const eta=h>0?`${h}h${m}m`:m>0?`${m}m`:`<1m`;
       const matched=SERVICE_BADGES.find(b=>('cron:'+s.id).startsWith(b.prefix));
       const svc=matched||{label:'CRON',color:'#aaaaaa'};
-      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span>${badgeHtml(svc)}<span class="q-desc">${escapeHtml(s.name||'')}</span><span class="q-time">in ${eta}</span></div>`;
+      qHtml+=`<div class="q-item"><span class="q-pill pill-wait">SCHED</span>${badgeHtml(svc)}<span class="q-desc">${escapeHtml(s.name||'')}</span><span class="q-time">${eta}</span></div>`;
     });
     if(!qHtml)qHtml='<div style="color:var(--muted);text-align:center;padding:10px;font-size:10px;">待機なし</div>';
 
