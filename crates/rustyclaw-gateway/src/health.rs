@@ -814,7 +814,7 @@ header{
 .lane-desc{max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .q-list-area{flex:1;overflow-y:auto;min-height:0}
 @keyframes pulse-dot{0%{transform:scale(.9);opacity:.6}50%{transform:scale(1.2);opacity:1}100%{transform:scale(.9);opacity:.6}}
-.lanes-split{display:grid;grid-template-columns:136px 1fr;gap:0;height:100%}
+.lanes-split{display:grid;grid-template-columns:136px 1fr 148px;gap:0;height:100%}
 .lanes-left{display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-right:1px solid rgba(255,255,255,0.07)}
 .lanes-right{display:flex;flex-direction:column;gap:2px;padding:6px 8px;overflow-y:auto}
 .lane-badge-row{display:flex;align-items:center;gap:6px;font-size:11px;font-family:'Fira Code',monospace;white-space:nowrap}
@@ -822,6 +822,36 @@ header{
 .lane-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;font-family:'Fira Code',monospace}
 .lane-badge-idle{color:var(--muted);font-family:'Fira Code',monospace;font-size:10px}
 .lane-elapsed{color:var(--muted);font-size:10px;margin-left:auto}
+.lanes-diag{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:2px;
+  padding:2px 6px;
+  border-left:1px solid rgba(255,255,255,0.07);
+  font-family:'Fira Code',monospace;
+  font-size:7.5px;
+  line-height:1.2;
+  color:var(--muted);
+  background:rgba(0,0,0,0.15);
+}
+.diag-title{font-size:8px;font-weight:700;color:var(--pink);margin-bottom:3px;text-shadow:0 0 6px rgba(255,0,110,.3);letter-spacing:0.02em}
+.diag-box{
+  border:1px solid rgba(255,255,255,0.1);
+  background:rgba(255,255,255,0.01);
+  border-radius:3px;
+  padding:1px 3px;
+  text-align:center;
+  width:100%;
+  box-sizing:border-box;
+}
+.diag-box.active{
+  border-color:rgba(0,212,255,0.25);
+  color:var(--cyan);
+  background:rgba(0,212,255,0.03);
+}
+.diag-arrow{color:rgba(255,255,255,0.15);font-size:7px;margin:0}
 .slot-row{display:flex;gap:4px;margin:10px 0 12px}
 .slot{flex:1;height:16px;border-radius:3px;border:1px solid rgba(0,212,255,.15);background:rgba(255,255,255,.03)}
 .slot.active{background:rgba(0,212,255,.25);border-color:var(--blue);box-shadow:0 0 6px rgba(0,212,255,.4)}
@@ -1076,7 +1106,7 @@ async function updateQueue(){
     const panel=document.getElementById('queuePanel');
 
     const executing=items.filter(i=>i.status==='Executing');
-    const waiting=items.filter(i=>i.status!=='Executing');
+    const waiting=items.filter(i=>i.status!=='Executing').sort((a,b)=>a.enqueued_at_ms-b.enqueued_at_ms);
 
     // Left column: LANES (capacity from updateConcurrency cache)
     let lanesHtml='';
@@ -1093,9 +1123,10 @@ async function updateQueue(){
 
     // Right column: PENDING + SCHEDULED
     let qHtml='';
+    let waitIdx = 1;
     waiting.forEach(item=>{
       const cls=item.status==='Waiting'?'pill-wait':'pill-cool';
-      const lbl=item.status==='Waiting'?'WAIT':'COOL';
+      const lbl=item.status==='Waiting'?`WAIT #${waitIdx++}`:item.status==='Cooldown'?'COOL':'WAIT';
       const elapsed=Math.floor((Date.now()-item.enqueued_at_ms)/1000);
       const s=serviceBadge(item.session_id);
       qHtml+=`<div class="q-item"><span class="q-pill ${cls}">${lbl}</span>${badgeHtml(s)}<span class="q-desc">${escapeHtml(item.description||'')}</span><span class="q-time">${elapsed}s</span></div>`;
@@ -1112,7 +1143,23 @@ async function updateQueue(){
     if(!qHtml)qHtml='<div style="color:var(--muted);text-align:center;padding:10px;font-size:10px;">待機なし</div>';
 
     const scrollPos=panel.querySelector('.lanes-right')?.scrollTop??0;
-    panel.innerHTML=`<div class="lanes-split"><div class="lanes-left">${lanesHtml}</div><div class="lanes-right">${qHtml}</div></div>`;
+    panel.innerHTML=`<div class="lanes-split">
+      <div class="lanes-left">${lanesHtml}</div>
+      <div class="lanes-right">${qHtml}</div>
+      <div class="lanes-diag">
+        <div class="diag-title">LANE ARCHITECTURE</div>
+        <div class="diag-box">1. Incoming Request</div>
+        <div class="diag-arrow">│</div>
+        <div class="diag-arrow">▼</div>
+        <div class="diag-box active">2. Session Serializer<br>(FIFO Queue / Lane)</div>
+        <div class="diag-arrow">│</div>
+        <div class="diag-arrow">▼</div>
+        <div class="diag-box active">3. Concurrency Lock<br>(gmn_sem: Max 4)</div>
+        <div class="diag-arrow">│</div>
+        <div class="diag-arrow">▼</div>
+        <div class="diag-box">4. Agent Exec (gmn)</div>
+      </div>
+    </div>`;
     const newRight=panel.querySelector('.lanes-right');
     if(newRight)newRight.scrollTop=scrollPos;
   }catch{}
