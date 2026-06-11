@@ -44,9 +44,10 @@ pub(crate) fn find_next_session_needing_summary(
                 .and_then(|m| m.modified().ok())
                 .and_then(|sm| now.duration_since(sm).ok())
                 .map(|d| d.as_secs())
-                && summary_age_secs < 600 {
-                    continue;
-                }
+            && summary_age_secs < 600
+        {
+            continue;
+        }
 
         let needs_summary = if !summary_path.exists() {
             true
@@ -219,25 +220,26 @@ impl CronService {
                 {
                     let logger = rustyclaw_storage::SessionLogger::new(&ws_path);
                     if let Ok(history) = logger.load_history(&safe_session_id)
-                        && !history.is_empty() {
-                            tracing::info!(
-                                "CronService: Session {} has been idle for 5+ mins and needs summary. Triggering...",
-                                safe_session_id
+                        && !history.is_empty()
+                    {
+                        tracing::info!(
+                            "CronService: Session {} has been idle for 5+ mins and needs summary. Triggering...",
+                            safe_session_id
+                        );
+                        let event = SystemEvent::IncomingMessage {
+                            session_id: format!("cron:session-summary:{}", safe_session_id),
+                            user_id: "cron".to_string(),
+                            channel_id: "cron".to_string(),
+                            content: "session-summary".to_string(),
+                            priority: Priority::Background,
+                        };
+                        if let Err(e) = bus_summary.publish(event) {
+                            tracing::error!(
+                                "CronService: Failed to publish Session Summary event: {:#}",
+                                e
                             );
-                            let event = SystemEvent::IncomingMessage {
-                                session_id: format!("cron:session-summary:{}", safe_session_id),
-                                user_id: "cron".to_string(),
-                                channel_id: "cron".to_string(),
-                                content: "session-summary".to_string(),
-                                priority: Priority::Background,
-                            };
-                            if let Err(e) = bus_summary.publish(event) {
-                                tracing::error!(
-                                    "CronService: Failed to publish Session Summary event: {:#}",
-                                    e
-                                );
-                            }
                         }
+                    }
                 }
             }
         });

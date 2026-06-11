@@ -152,9 +152,10 @@ fn setup_logging() -> Result<()> {
 /// VAULT_PASSPHRASE 環境変数、または対話的入力でパスフレーズを取得する
 fn prompt_passphrase() -> Result<String> {
     if let Ok(p) = vault::resolve_passphrase(None)
-        && !p.is_empty() {
-            return Ok(p);
-        }
+        && !p.is_empty()
+    {
+        return Ok(p);
+    }
     print!("Vault passphrase (Enter for none): ");
     io::stdout().flush()?;
     read_secret()
@@ -354,14 +355,15 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
         }
     }
     if let Some(ref d) = config.channels.discord
-        && let Some(k) = d.token.strip_prefix("$vault:") {
-            add_vault_ref(
-                &mut vault_map,
-                k,
-                "channels.discord.token".to_string(),
-                d.enabled,
-            );
-        }
+        && let Some(k) = d.token.strip_prefix("$vault:")
+    {
+        add_vault_ref(
+            &mut vault_map,
+            k,
+            "channels.discord.token".to_string(),
+            d.enabled,
+        );
+    }
     if let Some(ref l) = config.channels.line {
         if let Some(k) = l.channel_access_token.strip_prefix("$vault:") {
             add_vault_ref(

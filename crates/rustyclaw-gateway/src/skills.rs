@@ -105,28 +105,27 @@ pub fn load_skills(workspace_path: &Path) -> Vec<Skill> {
             let skill_md_path = path.join("SKILL.md");
             if skill_md_path.exists()
                 && let Ok(content) = std::fs::read_to_string(&skill_md_path)
-                    && let Some(skill) = parse_standard_skill(&content, &path, &matter) {
-                        skills.push(skill);
-                        continue;
-                    }
+                && let Some(skill) = parse_standard_skill(&content, &path, &matter)
+            {
+                skills.push(skill);
+                continue;
+            }
         }
 
         // パターン2: 従来互換フラットファイル [skill-name].md (フォールバック)
-        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md")
-            && let Ok(content) = std::fs::read_to_string(&path) {
-                let skill_name = path
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                let skill = parse_fallback_skill(
-                    &content,
-                    &skill_name,
-                    path.parent().unwrap(),
-                    &matter,
-                );
-                skills.push(skill);
-            }
+        if path.is_file()
+            && path.extension().and_then(|e| e.to_str()) == Some("md")
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            let skill_name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let skill =
+                parse_fallback_skill(&content, &skill_name, path.parent().unwrap(), &matter);
+            skills.push(skill);
+        }
     }
     skills
 }
@@ -170,12 +169,13 @@ fn validate_manifest(manifest: &SkillManifest, dir_path: &Path) -> Result<(), St
 
     // 親ディレクトリ名との一致検証
     if let Some(dir_name) = dir_path.file_name().and_then(|n| n.to_str())
-        && name != dir_name {
-            return Err(format!(
-                "Skill name '{}' does not match its parent directory name '{}'",
-                name, dir_name
-            ));
-        }
+        && name != dir_name
+    {
+        return Err(format!(
+            "Skill name '{}' does not match its parent directory name '{}'",
+            name, dir_name
+        ));
+    }
 
     // 2. description の検証
     if manifest.description.is_empty() || manifest.description.len() > 1024 {
@@ -184,9 +184,10 @@ fn validate_manifest(manifest: &SkillManifest, dir_path: &Path) -> Result<(), St
 
     // 3. compatibility の検証
     if let Some(ref compat) = manifest.compatibility
-        && (compat.is_empty() || compat.len() > 500) {
-            return Err("Skill compatibility length must be between 1 and 500 characters".to_string());
-        }
+        && (compat.is_empty() || compat.len() > 500)
+    {
+        return Err("Skill compatibility length must be between 1 and 500 characters".to_string());
+    }
 
     Ok(())
 }

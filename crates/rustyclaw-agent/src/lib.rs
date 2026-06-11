@@ -1,11 +1,6 @@
 use anyhow::{Context, Result};
 use futures_util::{Stream, StreamExt};
-use rig_core::OneOrMany;
-use rig_core::embeddings::Embedding;
-use rig_core::vector_store::VectorStoreIndex;
-use rig_core::vector_store::in_memory_store::InMemoryVectorStore;
-use rig_core::vector_store::request::VectorSearchRequest;
-use rustyclaw_config::{Config, AutonomyLevel};
+use rustyclaw_config::{AutonomyLevel, Config};
 use rustyclaw_providers::{
     CompletionOptions, LlmProvider, LlmResponse, Message, StreamChunk, create_provider,
 };
@@ -18,40 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
-const DISCORD_RAG_HISTORY_TURNS: usize = 2;
-
-fn build_discord_rag_query(history: &[rustyclaw_providers::Message], raw_user_message: &str) -> String {
-    // tool ロールおよび空 content の assistant（tool_call のみ）を除外
-    let filtered: Vec<&rustyclaw_providers::Message> = history
-        .iter()
-        .filter(|m| {
-            (m.role == "user" || m.role == "assistant")
-                && !m.content.is_empty()
-        })
-        .collect();
-
-    // 直近 N ターン分（user + assistant を 1 ターンとして N*2 メッセージ）を取得
-    let take = DISCORD_RAG_HISTORY_TURNS * 2;
-    let start = filtered.len().saturating_sub(take);
-    let recent = &filtered[start..];
-
-    let mut parts: Vec<String> = recent
-        .iter()
-        .map(|m| {
-            let role_label = if m.role == "user" { "User" } else { "Assistant" };
-            format!("{}: {}", role_label, m.content.trim())
-        })
-        .collect();
-
-    parts.push(format!("User: {}", raw_user_message));
-    parts.join("\n")
-}
-
 const HEARTBEAT_RAG_TAIL_LINES: usize = 10;
-const HEARTBEAT_STEP2_RAG_QUERY: &str =
-    "user interests hobbies routine habits long-term memory";
-const HEARTBEAT_STEP6_RAG_QUERY: &str =
-    "errors bugs pending tasks todo improvements";
 
 pub fn build_heartbeat_rag_query(digest: &str) -> String {
     let lines: Vec<&str> = digest.lines().collect();
@@ -61,7 +23,10 @@ pub fn build_heartbeat_rag_query(digest: &str) -> String {
 }
 
 fn is_write_operation(tool_name: &str) -> bool {
-    if tool_name == "workspace_write" || tool_name == "workspace_execute_script" || tool_name == "cron_schedule" {
+    if tool_name == "workspace_write"
+        || tool_name == "workspace_execute_script"
+        || tool_name == "cron_schedule"
+    {
         return true;
     }
     let lower = tool_name.to_lowercase();
@@ -78,9 +43,10 @@ fn is_write_operation(tool_name: &str) -> bool {
 async fn run_confirmation_gate(tool_name: &str, args: &str, workspace_dir: &Path) -> Result<bool> {
     let approval_file = workspace_dir.join("pending_approval.json");
     let req_id = format!("req-{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
-    
-    let parsed_args: serde_json::Value = serde_json::from_str(args).unwrap_or(serde_json::Value::String(args.to_string()));
-    
+
+    let parsed_args: serde_json::Value =
+        serde_json::from_str(args).unwrap_or(serde_json::Value::String(args.to_string()));
+
     let req_data = serde_json::json!({
         "id": req_id,
         "tool_name": tool_name,
@@ -88,28 +54,28 @@ async fn run_confirmation_gate(tool_name: &str, args: &str, workspace_dir: &Path
         "status": "pending",
         "created_at": chrono::Local::now().to_rfc3339()
     });
-    
+
     let file_content = serde_json::to_string_pretty(&req_data)?;
     fs::write(&approval_file, file_content)?;
-    
+
     tracing::warn!(
         "⚠️ [CONFIRMATION REQUIRED] Tool '{}' wants to execute.\nArguments: {}\nTo approve, modify 'status' to 'approved' in {}.",
         tool_name,
         args,
         approval_file.display()
     );
-    
+
     let start_time = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(300);
     let mut approved = false;
-    
+
     while start_time.elapsed() < timeout {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        
+
         if !approval_file.exists() {
             break;
         }
-        
+
         if let Ok(content) = fs::read_to_string(&approval_file)
             && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
             && let Some(status) = val.get("status").and_then(|s| s.as_str())
@@ -122,11 +88,11 @@ async fn run_confirmation_gate(tool_name: &str, args: &str, workspace_dir: &Path
             }
         }
     }
-    
+
     if approval_file.exists() {
         let _ = fs::remove_file(&approval_file);
     }
-    
+
     Ok(approved)
 }
 
@@ -186,8 +152,18 @@ struct AgentHook {
 }
 
 impl AgentHook {
-    fn new(workspace_dir: PathBuf, session_id: String, autonomy_level: AutonomyLevel, log_results: bool) -> Self {
-        Self { workspace_dir, session_id, autonomy_level, log_results }
+    fn new(
+        workspace_dir: PathBuf,
+        session_id: String,
+        autonomy_level: AutonomyLevel,
+        log_results: bool,
+    ) -> Self {
+        Self {
+            workspace_dir,
+            session_id,
+            autonomy_level,
+            log_results,
+        }
     }
 }
 
@@ -198,7 +174,8 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
         _tool_call_id: Option<String>,
         _internal_call_id: &str,
         args: &str,
-    ) -> impl std::future::Future<Output = rig_core::agent::ToolCallHookAction> + rig_core::wasm_compat::WasmCompatSend {
+    ) -> impl std::future::Future<Output = rig_core::agent::ToolCallHookAction>
+    + rig_core::wasm_compat::WasmCompatSend {
         let is_write = is_write_operation(tool_name);
         let autonomy_level = self.autonomy_level;
         let workspace_dir = self.workspace_dir.clone();
@@ -211,7 +188,10 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
                     AutonomyLevel::ReadOnly => {
                         tracing::warn!("Operation '{}' rejected in ReadOnly mode.", tool_name);
                         rig_core::agent::ToolCallHookAction::Skip {
-                            reason: format!("Operation '{}' rejected: RustyClaw is running in ReadOnly mode.", tool_name),
+                            reason: format!(
+                                "Operation '{}' rejected: RustyClaw is running in ReadOnly mode.",
+                                tool_name
+                            ),
                         }
                     }
                     AutonomyLevel::Supervised => {
@@ -235,9 +215,7 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
                             }
                         }
                     }
-                    AutonomyLevel::Autonomous => {
-                        rig_core::agent::ToolCallHookAction::cont()
-                    }
+                    AutonomyLevel::Autonomous => rig_core::agent::ToolCallHookAction::cont(),
                 }
             } else {
                 rig_core::agent::ToolCallHookAction::cont()
@@ -252,7 +230,8 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
         _internal_call_id: &str,
         _args: &str,
         result: &str,
-    ) -> impl std::future::Future<Output = rig_core::agent::HookAction> + rig_core::wasm_compat::WasmCompatSend {
+    ) -> impl std::future::Future<Output = rig_core::agent::HookAction>
+    + rig_core::wasm_compat::WasmCompatSend {
         let logger = SessionLogger::new(&self.workspace_dir);
         let session_id = self.session_id.clone();
         let tool_name = tool_name.to_string();
@@ -280,7 +259,8 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
         &self,
         _prompt: &rig_core::completion::Message,
         response: &rig_core::completion::CompletionResponse<M::Response>,
-    ) -> impl std::future::Future<Output = rig_core::agent::HookAction> + rig_core::wasm_compat::WasmCompatSend {
+    ) -> impl std::future::Future<Output = rig_core::agent::HookAction>
+    + rig_core::wasm_compat::WasmCompatSend {
         let logger = SessionLogger::new(&self.workspace_dir);
         let session_id = self.session_id.clone();
         let log_results = self.log_results;
@@ -307,7 +287,11 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
             }
         }
 
-        let tool_calls_opt = if tool_calls.is_empty() { None } else { Some(tool_calls) };
+        let tool_calls_opt = if tool_calls.is_empty() {
+            None
+        } else {
+            Some(tool_calls)
+        };
         let assistant_msg = Message {
             role: "assistant".to_string(),
             content: filter_json_leaks(&content),
@@ -316,9 +300,7 @@ impl<M: rig_core::completion::CompletionModel> rig_core::agent::PromptHook<M> fo
         };
 
         async move {
-            if log_results
-                && let Err(e) = logger.append_message(&session_id, &assistant_msg)
-            {
+            if log_results && let Err(e) = logger.append_message(&session_id, &assistant_msg) {
                 tracing::error!("Failed to save assistant response in session log: {}", e);
             }
             rig_core::agent::HookAction::cont()
@@ -342,8 +324,6 @@ impl Pipeline {
             flush_sem,
         }
     }
-
-
 
     /// context_window ベースのメッセージ件数ハードキャップ。
     /// モデルの context_window 文字列を parse_context_window() で解釈し、
@@ -376,9 +356,7 @@ impl Pipeline {
         let truncated: String = content.chars().take(max_chars).collect();
         format!(
             "{}\n\n> ⚠️ [RustyClaw] 以降を省略（全 {} 文字中 先頭 {} 文字を注入）",
-            truncated,
-            char_count,
-            max_chars
+            truncated, char_count, max_chars
         )
     }
 
@@ -791,7 +769,11 @@ Rules:
             },
             conversation_text,
         );
-        let model = rustyclaw_providers::RustyclawCompletionModel::new(config.clone(), "memory", session_id);
+        let model = rustyclaw_providers::RustyclawCompletionModel::new(
+            config.clone(),
+            "memory",
+            session_id,
+        );
         let usage_sink = model.usage_sink();
 
         let agent = rig_core::agent::AgentBuilder::new(model)
@@ -813,15 +795,11 @@ Rules:
             extract_delimited_block(&response_text, "---DAILY_LOG---", "---END_DAILY_LOG---");
 
         // 1. MEMORY.md の全書き換え (fail-open)
-        if let Some(final_content) = new_memory {
-            if let Err(e) =
+        if let Some(final_content) = new_memory
+            && let Err(e) =
                 rustyclaw_storage::atomic_write(&memory_path, final_content.as_bytes()).await
-            {
-                tracing::warn!("memory flush: failed to write MEMORY.md: {}", e);
-            } else {
-                // MEMORY.md 更新成功時のみ RAG ingestion を実行 (fail-open)
-                ingest_memory_md(workspace_dir, &config, &db_path, None).await;
-            }
+        {
+            tracing::warn!("memory flush: failed to write MEMORY.md: {}", e);
         }
 
         // 2. memory/logs/YYYY-MM-DD.md への反映 (fail-open)
@@ -891,63 +869,13 @@ Rules:
         workspace_dir: &Path,
         session_id: &str,
         user_message: &str,
-        rag_query: Option<&str>,
+        _rag_query: Option<&str>, // Phase 02 で ctx_search へ移行予定
         tool_registry: &ToolRegistry,
         db_path: &Path,
     ) -> Result<LlmResponse> {
         let mut system_context = self.build_heartbeat_context(workspace_dir)?;
         let now = chrono::Local::now();
         system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
-
-        // RAG: heartbeat プロンプトに関連チャンクを注入 (ISSUE-27)
-        let hb_top_k = self
-            .config
-            .embedding
-            .as_ref()
-            .and_then(|e| e.heartbeat_top_k)
-            .unwrap_or(3);
-        let heartbeat_config = {
-            let mut cfg = self.config.clone();
-            if let Some(ref mut emb) = cfg.embedding {
-                emb.top_k = hb_top_k;
-            }
-            cfg
-        };
-        let effective_rag = rag_query.unwrap_or(user_message);
-        {
-            if let Some(client) = make_embed_client(&heartbeat_config) {
-                let rag_ctx =
-                    retrieve_rag_context_local(effective_rag, &heartbeat_config, &client, db_path, hb_top_k)
-                        .await;
-                if !rag_ctx.is_empty() {
-                    system_context.push_str(&rag_ctx);
-                }
-                let step2_ctx = retrieve_rag_context_local(
-                    HEARTBEAT_STEP2_RAG_QUERY,
-                    &heartbeat_config,
-                    &client,
-                    db_path,
-                    hb_top_k,
-                )
-                .await;
-                if !step2_ctx.is_empty() {
-                    system_context.push_str("## Step 2 関連記憶\n");
-                    system_context.push_str(&step2_ctx);
-                }
-                let step6_ctx = retrieve_rag_context_local(
-                    HEARTBEAT_STEP6_RAG_QUERY,
-                    &heartbeat_config,
-                    &client,
-                    db_path,
-                    hb_top_k,
-                )
-                .await;
-                if !step6_ctx.is_empty() {
-                    system_context.push_str("## Step 6 関連記憶\n");
-                    system_context.push_str(&step6_ctx);
-                }
-            }
-        }
 
         let logger = SessionLogger::new(workspace_dir);
         let user_msg = Message {
@@ -982,7 +910,12 @@ Rules:
         let rig_history: Vec<rig_core::completion::Message> = Vec::new();
         let response_text = rig_core::agent::PromptRequest::from_agent(&agent, user_message)
             .with_history(rig_history)
-            .with_hook(AgentHook::new(workspace_dir.to_path_buf(), session_id.to_string(), self.config.autonomy_level, true))
+            .with_hook(AgentHook::new(
+                workspace_dir.to_path_buf(),
+                session_id.to_string(),
+                self.config.autonomy_level,
+                true,
+            ))
             .await
             .map_err(|e| anyhow::anyhow!("heartbeat agent error: {}", e))?;
 
@@ -1079,9 +1012,7 @@ Rules:
         // 履歴を rig_core::completion::Message に変換
         let rig_history = rustyclaw_providers::provider_messages_to_rig(&history.messages);
 
-        let agent = AgentBuilder::new(model)
-            .preamble(&system_content)
-            .build();
+        let agent = AgentBuilder::new(model).preamble(&system_content).build();
 
         let response_text = rig_core::agent::PromptRequest::from_agent(&agent, user_message)
             .with_history(rig_history)
@@ -1214,7 +1145,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 existing_content, new_conversation_text
             );
 
-            let model = rustyclaw_providers::RustyclawCompletionModel::new(self.config.clone(), "summary", target_session_id);
+            let model = rustyclaw_providers::RustyclawCompletionModel::new(
+                self.config.clone(),
+                "summary",
+                target_session_id,
+            );
             let usage_sink = model.usage_sink();
 
             let agent = rig_core::agent::AgentBuilder::new(model)
@@ -1257,7 +1192,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 target_session_id, conversation_text
             );
 
-            let model = rustyclaw_providers::RustyclawCompletionModel::new(self.config.clone(), "summary", target_session_id);
+            let model = rustyclaw_providers::RustyclawCompletionModel::new(
+                self.config.clone(),
+                "summary",
+                target_session_id,
+            );
             let usage_sink = model.usage_sink();
 
             let agent = rig_core::agent::AgentBuilder::new(model)
@@ -1288,22 +1227,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let _ = fs::create_dir_all(&summaries_dir);
         let _ = fs::write(&existing_summary_path, &final_summary);
 
-        // セッション要約を DB に保存（rag_engine は Pipeline.rag 経由で Task 7 で接続）
-        {
-            let db_path = workspace_dir.join("memory.db");
-            ingest_session_summary(
-                target_session_id,
-                &final_summary,
-                &self.config,
-                &db_path,
-                None,
-            )
-            .await;
-        }
-
         Ok(final_summary)
     }
-
 
     /// rig::agent::Agent を使ったツール実行。
     /// RustyclawCompletionModel を通じてフェイルオーバーチェーンを保ちつつ、
@@ -1342,30 +1267,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
                 .context("Failed to load session history")?
         };
 
-        // channel_top_k 優先、未設定時はグローバル top_k にフォールバック
-        let top_k = self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
-        let channel_top_k = self
-            .config
-            .embedding
-            .as_ref()
-            .and_then(|e| e.channel_top_k)
-            .unwrap_or(top_k);
-
-        // RAG クエリ: 直近 N ターン会話 + 現在メッセージ（cron: は raw_user_message のみ）
-        let rag_query = if session_id.starts_with("cron:") {
-            raw_user_message.to_string()
-        } else {
-            build_discord_rag_query(&history_messages, raw_user_message)
-        };
-
-        if let Some(client) = make_embed_client(&self.config) {
-            let db_path = workspace_dir.join("memory.db");
-            let rag_ctx =
-                retrieve_rag_context_local(&rag_query, &self.config, &client, &db_path, channel_top_k).await;
-            if !rag_ctx.is_empty() {
-                system_context.push_str(&rag_ctx);
-            }
-        }
         let cleaned_history =
             self.process_proactive_posts(session_id, history_messages, &mut system_context);
         let mut history = ConversationHistory::new(cleaned_history);
@@ -1406,7 +1307,12 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             // rig ReAct ループ実行 (LLMにはインジェクション済みのメッセージを渡す)
             let res = rig_core::agent::PromptRequest::from_agent(&agent, injected_user_message)
                 .with_history(rig_history.clone())
-                .with_hook(AgentHook::new(workspace_dir.to_path_buf(), session_id.to_string(), self.config.autonomy_level, false))
+                .with_hook(AgentHook::new(
+                    workspace_dir.to_path_buf(),
+                    session_id.to_string(),
+                    self.config.autonomy_level,
+                    false,
+                ))
                 .await;
 
             match res {
@@ -1427,15 +1333,18 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
                         tracing::warn!(
                             "Detected UnknownToolCall for tool `{}` in Session {}. Attempting to feed error back to the model and retry (attempt {}/{})",
-                            tool_name, session_id, attempt, max_attempts
+                            tool_name,
+                            session_id,
+                            attempt,
+                            max_attempts
                         );
 
                         let call_id = format!("err_call_{}_{}", tool_name, attempt);
 
                         use rig_core::OneOrMany;
                         use rig_core::completion::message::{
-                            AssistantContent, Text, ToolCall as RigToolCall, ToolFunction, ToolResult,
-                            ToolResultContent, UserContent,
+                            AssistantContent, Text, ToolCall as RigToolCall, ToolFunction,
+                            ToolResult, ToolResultContent, UserContent,
                         };
 
                         rig_history.push(rig_core::completion::Message::Assistant {
@@ -1513,17 +1422,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         }
         let now = chrono::Local::now();
         system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
-
-        // RAG: ユーザーメッセージに関連する記憶を動的注入
-        let top_k = self.config.embedding.as_ref().map(|e| e.top_k).unwrap_or(5);
-        if let Some(client) = make_embed_client(&self.config) {
-            let db_path = workspace_dir.join("memory.db");
-            let rag_ctx =
-                retrieve_rag_context_local(user_message, &self.config, &client, &db_path, top_k).await;
-            if !rag_ctx.is_empty() {
-                system_context.push_str(&rag_ctx);
-            }
-        }
 
         // 1. 過去履歴のロードとトークン圧縮処理の適用
         let logger = SessionLogger::new(workspace_dir);
@@ -1682,151 +1580,6 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
     }
 }
 
-// ── RAG Helpers ──────────────────────────────────────────────────────────────
-
-/// rig-core InMemoryVectorStore を使った統合 RAG エンジン。
-/// SQLite（永続化）と InMemoryVectorStore（高速検索）のハイブリッド構成。
-/// source 情報は SQLite の source 列を source_map に保持し、検索時に参照する。
-pub struct UnifiedRagEngine {
-    store: std::sync::Mutex<InMemoryVectorStore<String>>,
-    /// id → source のマッピング（DB の source 列を保持）
-    source_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    /// id → parent_id のマッピング
-    parent_map: std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
-    /// id → text のマッピング（親チャンクテキストのキャッシュも含む）
-    text_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    model: rustyclaw_providers::CloudflareEmbeddingModel,
-}
-
-impl UnifiedRagEngine {
-    pub fn new(model: rustyclaw_providers::CloudflareEmbeddingModel) -> Self {
-        Self {
-            store: std::sync::Mutex::new(InMemoryVectorStore::default()),
-            source_map: std::sync::Mutex::new(std::collections::HashMap::new()),
-            parent_map: std::sync::Mutex::new(std::collections::HashMap::new()),
-            text_map: std::sync::Mutex::new(std::collections::HashMap::new()),
-            model,
-        }
-    }
-
-    /// SQLite の全 embedding データを InMemoryVectorStore に再ロードする。
-    pub fn rebuild_from_db(&self, db: &rustyclaw_storage::DbManager) -> anyhow::Result<()> {
-        let rows = db.load_all_embeddings_with_ids()?;
-        let mut store = self.store.lock().unwrap();
-        let mut smap = self.source_map.lock().unwrap();
-        let mut pmap = self.parent_map.lock().unwrap();
-        let mut tmap = self.text_map.lock().unwrap();
-        *store = InMemoryVectorStore::default();
-        smap.clear();
-        pmap.clear();
-        tmap.clear();
-        let mut documents: Vec<(String, String, OneOrMany<Embedding>)> = Vec::new();
-        for (id, source, text, vec_f32, parent_id) in rows {
-            smap.insert(id.clone(), source);
-            pmap.insert(id.clone(), parent_id);
-            tmap.insert(id.clone(), text.clone());
-            if !vec_f32.is_empty() {
-                let emb = Embedding {
-                    document: text.clone(),
-                    vec: vec_f32.iter().map(|&x| x as f64).collect(),
-                };
-                documents.push((id, text, OneOrMany::one(emb)));
-            }
-        }
-        store.add_documents_with_ids(documents);
-        Ok(())
-    }
-
-    /// 1件を InMemoryVectorStore に追加する（SQLite への書き込みは呼び出し元が行う）。
-    pub fn add_one(
-        &self,
-        id: &str,
-        source: &str,
-        _session_id: Option<&str>,
-        text: &str,
-        vec_f32: &[f32],
-        parent_id: Option<&str>,
-    ) {
-        let mut store = self.store.lock().unwrap();
-        if !vec_f32.is_empty() {
-            let emb = Embedding {
-                document: text.to_string(),
-                vec: vec_f32.iter().map(|&x| x as f64).collect(),
-            };
-            store.add_documents_with_ids([(id.to_string(), text.to_string(), OneOrMany::one(emb))]);
-        }
-        self.source_map
-            .lock()
-            .unwrap()
-            .insert(id.to_string(), source.to_string());
-        self.parent_map
-            .lock()
-            .unwrap()
-            .insert(id.to_string(), parent_id.map(|s| s.to_string()));
-        self.text_map
-            .lock()
-            .unwrap()
-            .insert(id.to_string(), text.to_string());
-    }
-
-    /// top_k 件の (source, text, score) を返す。
-    /// source は DB の source カラムから取得（source_map 経由）。
-    /// 親子関係 (parent_id) が存在する場合は自動的に親チャンクのテキストに解決し、
-    /// 重複排除を行って返す。
-    pub async fn search(
-        &self,
-        query_text: &str,
-        top_k: usize,
-    ) -> anyhow::Result<Vec<(String, String, f64)>> {
-        let req = VectorSearchRequest::builder()
-            .query(query_text.to_string())
-            .samples(top_k as u64)
-            .build();
-        let (store_clone, model_clone) = {
-            let store = self.store.lock().unwrap();
-            (store.clone(), self.model.clone())
-        };
-        let index = store_clone.index(model_clone);
-        let id_scores = index
-            .top_n_ids(req)
-            .await
-            .map_err(|e| anyhow::anyhow!("RAG search failed: {}", e))?;
-
-        let smap = self.source_map.lock().unwrap();
-        let pmap = self.parent_map.lock().unwrap();
-        let tmap = self.text_map.lock().unwrap();
-
-        let mut results = Vec::new();
-        let mut seen_texts = std::collections::HashSet::new();
-        for (score, id) in id_scores {
-            let source = smap.get(&id).cloned().unwrap_or_else(|| {
-                tracing::warn!("UnifiedRagEngine::search: source not found for id={}", id);
-                "unknown".to_string()
-            });
-            let text = if let Some(Some(parent_id)) = pmap.get(&id) {
-                tmap.get(parent_id).cloned().unwrap_or_else(|| {
-                    tmap.get(&id).cloned().unwrap_or_default()
-                })
-            } else {
-                tmap.get(&id).cloned().unwrap_or_default()
-            };
-
-            if !text.is_empty() && seen_texts.insert(text.clone()) {
-                results.push((source, text, score));
-            }
-        }
-        Ok(results)
-    }
-
-    pub fn len(&self) -> usize {
-        self.store.lock().unwrap().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.store.lock().unwrap().is_empty()
-    }
-}
-
 /// MEMORY.md のバレット行を 1件 1チャンクに分割する。
 /// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
 #[allow(dead_code)]
@@ -1841,7 +1594,11 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
         let trimmed = line.trim();
         if trimmed.starts_with('#') {
             if !current_bullets.is_empty() {
-                chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
+                chunks.push(format!(
+                    "[{}] {}",
+                    current_section,
+                    current_bullets.join("\n")
+                ));
                 current_bullets.clear();
                 current_len = 0;
             }
@@ -1853,7 +1610,11 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
             };
         } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
             if current_len + trimmed.len() + 1 > MAX_CHUNK && !current_bullets.is_empty() {
-                chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
+                chunks.push(format!(
+                    "[{}] {}",
+                    current_section,
+                    current_bullets.join("\n")
+                ));
                 current_bullets.clear();
                 current_len = 0;
             }
@@ -1862,638 +1623,13 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
         }
     }
     if !current_bullets.is_empty() {
-        chunks.push(format!("[{}] {}", current_section, current_bullets.join("\n")));
+        chunks.push(format!(
+            "[{}] {}",
+            current_section,
+            current_bullets.join("\n")
+        ));
     }
     chunks.into_iter().filter(|s| !s.is_empty()).collect()
-}
-
-/// 静的マークダウンを `##` / `###` 見出し単位でチャンク分割する。
-/// 各チャンク先頭に `[ファイル名 > 見出し]` の文脈を付与し、800 文字で切り捨てる。
-pub(crate) fn chunk_static_document(file_name: &str, content: &str) -> Vec<String> {
-    let mut chunks: Vec<String> = Vec::new();
-    let mut current_header = String::new();
-    let mut current_body = String::new();
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
-            let body = current_body.trim().to_string();
-            if !body.is_empty() && !current_header.is_empty() {
-                let raw = format!("[{} > {}]\n{}", file_name, current_header, body);
-                chunks.push(raw.chars().take(800).collect());
-            }
-            current_header = trimmed.to_string();
-            current_body.clear();
-        } else if !trimmed.starts_with("# ") && trimmed != "#" {
-            // 最上位見出し (#) 行はスキップ（ドキュメントタイトルはチャンク対象外）
-            current_body.push_str(line);
-            current_body.push('\n');
-        }
-    }
-    let body = current_body.trim().to_string();
-    if !body.is_empty() && !current_header.is_empty() {
-        let raw = format!("[{} > {}]\n{}", file_name, current_header, body);
-        chunks.push(raw.chars().take(800).collect());
-    }
-    chunks
-}
-
-pub struct HierarchicalChunk {
-    pub parent_text: String,
-    pub children: Vec<String>,
-}
-
-pub(crate) fn chunk_document_hierarchical(file_name: &str, content: &str) -> Vec<HierarchicalChunk> {
-    let mut sections = Vec::new();
-    let mut current_header = String::new();
-    let mut current_body = String::new();
-    let mut document_title = String::new();
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            document_title = trimmed.trim_start_matches("#").trim().to_string();
-        } else if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
-            let body = current_body.trim().to_string();
-            if !body.is_empty() {
-                sections.push((current_header.clone(), body));
-            }
-            current_header = trimmed.to_string();
-            current_body.clear();
-        } else {
-            current_body.push_str(line);
-            current_body.push('\n');
-        }
-    }
-    let body = current_body.trim().to_string();
-    if !body.is_empty() {
-        sections.push((current_header.clone(), body));
-    }
-
-    if sections.is_empty() && !content.trim().is_empty() {
-        sections.push((String::new(), content.trim().to_string()));
-    }
-
-    let mut result = Vec::new();
-    for (header, body) in sections {
-        let parent_title = if header.is_empty() {
-            if document_title.is_empty() {
-                file_name.to_string()
-            } else {
-                format!("{} > General", document_title)
-            }
-        } else {
-            if document_title.is_empty() {
-                format!("{} > {}", file_name, header)
-            } else {
-                format!("{} > {} > {}", file_name, document_title, header)
-            }
-        };
-        let parent_text = format!("[{}]\n{}", parent_title, body);
-
-        let mut children = Vec::new();
-        let mut current_child = String::new();
-        for line in body.lines() {
-            let line_trimmed = line.trim();
-            if line_trimmed.is_empty() {
-                continue;
-            }
-
-            if line_trimmed.starts_with("- ") || line_trimmed.starts_with("* ") {
-                if !current_child.is_empty() {
-                    children.push(format!("[{}]\n{}", parent_title, current_child.trim()));
-                    current_child.clear();
-                }
-                children.push(format!("[{}]\n{}", parent_title, line_trimmed));
-            } else {
-                if !current_child.is_empty() {
-                    current_child.push('\n');
-                }
-                current_child.push_str(line);
-                if current_child.len() >= 200 {
-                    children.push(format!("[{}]\n{}", parent_title, current_child.trim()));
-                    current_child.clear();
-                }
-            }
-        }
-        if !current_child.is_empty() {
-            children.push(format!("[{}]\n{}", parent_title, current_child.trim()));
-        }
-
-        result.push(HierarchicalChunk {
-            parent_text,
-            children,
-        });
-    }
-    result
-}
-
-pub(crate) enum EmbedClientKind {
-    Local(rustyclaw_providers::LocalEmbeddingClient),
-}
-
-impl EmbedClientKind {
-    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
-        match self {
-            Self::Local(c) => c.embed(texts).await,
-        }
-    }
-}
-
-fn make_embed_client(_config: &Config) -> Option<EmbedClientKind> {
-    let cache_dir = rustyclaw_config::get_app_dir().join("fastembed_cache");
-    match rustyclaw_providers::LocalEmbeddingClient::new(&cache_dir) {
-        Ok(c) => Some(EmbedClientKind::Local(c)),
-        Err(e) => {
-            tracing::warn!("make_embed_client: LocalEmbeddingClient init failed: {}", e);
-            None
-        }
-    }
-}
-
-/// workspace_dir 内の AGENTS.md, USER.md, skills/*.md, memory/logs/*.md, memory/summaries/*.md, patrol/findings.md をチャンク化し、
-/// ハッシュ差分がある場合のみ memory.db に embedding を保存する。Fail-open。
-pub async fn ingest_static_documents(
-    workspace_dir: &std::path::Path,
-    config: &Config,
-    db_path: &std::path::Path,
-) {
-    let client = match make_embed_client(config) {
-        Some(c) => c,
-        None => return,
-    };
-    let db = match rustyclaw_storage::DbManager::new(db_path) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!("ingest_static_documents: db open error: {}", e);
-            return;
-        }
-    };
-    if let Err(e) = db.migrate_embedding_dims_if_needed(384) {
-        tracing::warn!("ingest_static_documents: migration error: {}", e);
-    }
-
-    // スキャン対象ファイル: AGENTS.md + USER.md + skills/**/*.md + memory/logs/*.md (直近14日) + memory/summaries/*.md + patrol/findings.md
-    let mut files = vec![workspace_dir.join("AGENTS.md"), workspace_dir.join("USER.md")];
-    
-    // skills
-    let skills_dir = workspace_dir.join("skills");
-    if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-        let mut skill_files: Vec<_> = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-                skill_files.push(path);
-            } else if let Ok(sub_entries) = std::fs::read_dir(&path) {
-                for sub_entry in sub_entries.flatten() {
-                    let sub_path = sub_entry.path();
-                    if sub_path.is_file()
-                        && sub_path.extension().is_some_and(|ext| ext == "md")
-                    {
-                        skill_files.push(sub_path);
-                    }
-                }
-            }
-        }
-        skill_files.sort();
-        files.extend(skill_files);
-    }
-
-    // memory/logs (直近14日間のみインジェスト)
-    let logs_dir = workspace_dir.join("memory").join("logs");
-    let now_utc = chrono::Utc::now().date_naive();
-    if let Ok(entries) = std::fs::read_dir(&logs_dir) {
-        let mut log_files = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let is_valid = path.is_file()
-                && path.extension().is_some_and(|ext| ext == "md")
-                && path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .and_then(|stem| chrono::NaiveDate::parse_from_str(stem, "%Y-%m-%d").ok())
-                    .map(|date| (now_utc - date).num_days() <= 14)
-                    .unwrap_or(false);
-            if is_valid {
-                log_files.push(path);
-            }
-        }
-        log_files.sort();
-        files.extend(log_files);
-    }
-
-    // memory/summaries
-    let summaries_dir = workspace_dir.join("memory").join("summaries");
-    if let Ok(entries) = std::fs::read_dir(&summaries_dir) {
-        let mut summary_files = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-                summary_files.push(path);
-            }
-        }
-        summary_files.sort();
-        files.extend(summary_files);
-    }
-
-    // patrol/findings.md
-    let findings_path = workspace_dir.join("patrol").join("findings.md");
-    if findings_path.is_file() {
-        files.push(findings_path);
-    }
-
-    use sha2::{Digest, Sha256};
-    for file_path in files {
-        let content = match std::fs::read_to_string(&file_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        // workspace_dir からの相対パスをキーにする
-        let file_name: String = file_path
-            .strip_prefix(workspace_dir)
-            .ok()
-            .and_then(|p| p.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                file_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            });
-
-        let hash_str = format!("{:x}", Sha256::digest(content.as_bytes()));
-
-        let is_changed = db
-            .check_and_update_doc_state(&file_name, &hash_str)
-            .unwrap_or(true);
-
-        if !is_changed {
-            tracing::debug!(
-                "ingest_static_documents: '{}' unchanged, skipping",
-                file_name
-            );
-            continue;
-        }
-
-        tracing::info!(
-            "ingest_static_documents: '{}' changed, ingesting...",
-            file_name
-        );
-
-        let is_hierarchical = file_name == "AGENTS.md"
-            || file_name == "USER.md"
-            || file_name.starts_with("skills/")
-            || file_name.starts_with("memory/logs/")
-            || file_name.starts_with("memory/summaries/");
-
-        let source_id = format!("doc:{}", file_name);
-
-        if is_hierarchical {
-            let h_chunks = chunk_document_hierarchical(&file_name, &content);
-            if let Err(e) = db.delete_embeddings_by_source(&source_id) {
-                tracing::warn!(
-                    "ingest_static_documents: delete error for '{}': {}",
-                    file_name,
-                    e
-                );
-                continue;
-            }
-
-            for (p_idx, h_chunk) in h_chunks.iter().enumerate() {
-                let parent_id = format!("doc-{}-p-{}", file_name.replace(['.', '/', '\\'], "_"), p_idx);
-                // 親チャンクを upsert (ベクトルは空、parent_id も None)
-                if let Err(e) = db.upsert_embedding(&parent_id, &source_id, None, &h_chunk.parent_text, &[], None) {
-                    tracing::warn!("ingest_static_documents: parent upsert error: {}", e);
-                    continue;
-                }
-
-                if !h_chunk.children.is_empty() {
-                    let text_refs: Vec<&str> = h_chunk.children.iter().map(|s| s.as_str()).collect();
-                    match client.embed(&text_refs).await {
-                        Ok(embeddings) => {
-                            for (c_idx, (child_text, emb)) in h_chunk.children.iter().zip(embeddings.iter()).enumerate() {
-                                let child_id = format!("doc-{}-c-{}-{}", file_name.replace(['.', '/', '\\'], "_"), p_idx, c_idx);
-                                if let Err(e) = db.upsert_embedding(&child_id, &source_id, None, child_text, emb, Some(&parent_id)) {
-                                    tracing::warn!("ingest_static_documents: child upsert error: {}", e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "ingest_static_documents: child embed API error for '{}': {}",
-                                file_name,
-                                e
-                            );
-                            let _ = db.check_and_update_doc_state(&file_name, "");
-                        }
-                    }
-                }
-            }
-        } else {
-            // フラットチャンキング
-            let chunks = chunk_static_document(&file_name, &content);
-            if chunks.is_empty() {
-                continue;
-            }
-
-            if let Err(e) = db.delete_embeddings_by_source(&source_id) {
-                tracing::warn!(
-                    "ingest_static_documents: delete error for '{}': {}",
-                    file_name,
-                    e
-                );
-                continue;
-            }
-
-            let text_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
-            match client.embed(&text_refs).await {
-                Ok(embeddings) => {
-                    let saved = embeddings.len().min(chunks.len());
-                    for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-                        let id = format!("doc-{}-{}", file_name.replace(['.', '/', '\\'], "_"), i);
-                        if let Err(e) = db.upsert_embedding(&id, &source_id, None, chunk, emb, None) {
-                            tracing::warn!("ingest_static_documents: upsert error: {}", e);
-                        }
-                    }
-                    tracing::info!(
-                        "ingest_static_documents: ingested {} chunks from '{}'",
-                        saved,
-                        file_name
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "ingest_static_documents: embed API error for '{}': {}",
-                        file_name,
-                        e
-                    );
-                    let _ = db.check_and_update_doc_state(&file_name, "");
-                }
-            }
-        }
-    }
-
-    // 古いログ (memory/logs/*.md) embedding のクレンジング
-    if let Err(e) = db.delete_old_log_embeddings(14) {
-        tracing::warn!("ingest_static_documents: log TTL cleanup error: {}", e);
-    }
-}
-
-/// MEMORY.md を読み込み、バレット行をチャンク化してベクトル化し memory.db に保存する。
-/// Fail-open: エラーは warn ログのみで処理を継続する。
-pub async fn ingest_memory_md(
-    workspace_dir: &Path,
-    config: &Config,
-    db_path: &Path,
-    rag_engine: Option<&UnifiedRagEngine>,
-) {
-    let client = match make_embed_client(config) {
-        Some(c) => c,
-        None => {
-            if config
-                .embedding
-                .as_ref()
-                .map(|e| e.enabled)
-                .unwrap_or(false)
-            {
-                tracing::warn!(
-                    "ingest_memory_md: embedding enabled but no valid client (check use_local_embedding or API config)"
-                );
-            }
-            return;
-        }
-    };
-    let memory_path = workspace_dir.join("MEMORY.md");
-    let content = match std::fs::read_to_string(&memory_path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("ingest_memory_md: failed to read MEMORY.md: {}", e);
-            return;
-        }
-    };
-    let h_chunks = chunk_document_hierarchical("MEMORY.md", &content);
-    if h_chunks.is_empty() {
-        tracing::debug!("ingest_memory_md: no chunks found in MEMORY.md");
-        return;
-    }
-
-    let db = match rustyclaw_storage::DbManager::new(db_path) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!("ingest_memory_md: db open error: {}", e);
-            return;
-        }
-    };
-    if let Err(e) = db.delete_embeddings_by_source("memory") {
-        tracing::warn!("ingest_memory_md: failed to delete old embeddings: {}", e);
-        return;
-    }
-
-    for (p_idx, h_chunk) in h_chunks.iter().enumerate() {
-        let parent_id = format!("memory-p-{}", p_idx);
-        if let Err(e) = db.upsert_embedding(&parent_id, "memory", None, &h_chunk.parent_text, &[], None) {
-            tracing::warn!("ingest_memory_md: parent upsert error: {}", e);
-            continue;
-        }
-        if let Some(rag) = rag_engine {
-            rag.add_one(&parent_id, "memory", None, &h_chunk.parent_text, &[], None);
-        }
-
-        if !h_chunk.children.is_empty() {
-            let text_refs: Vec<&str> = h_chunk.children.iter().map(|s| s.as_str()).collect();
-            match client.embed(&text_refs).await {
-                Ok(embeddings) => {
-                    for (c_idx, (child_text, emb)) in h_chunk.children.iter().zip(embeddings.iter()).enumerate() {
-                        let child_id = format!("memory-c-{}-{}", p_idx, c_idx);
-                        if let Err(e) = db.upsert_embedding(&child_id, "memory", None, child_text, emb, Some(&parent_id)) {
-                            tracing::warn!("ingest_memory_md: child upsert error: {}", e);
-                        }
-                        if let Some(rag) = rag_engine {
-                            rag.add_one(&child_id, "memory", None, child_text, emb, Some(&parent_id));
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("ingest_memory_md: child embed API error: {}", e);
-                }
-            }
-        }
-    }
-    tracing::info!(
-        "ingest_memory_md: ingested {} hierarchical chunks from MEMORY.md",
-        h_chunks.len()
-    );
-}
-
-/// セッション要約テキストを embedding して SQLite + UnifiedRagEngine に保存する。Fail-open。
-/// rag_engine が Some の場合は InMemoryVectorStore にも追加する。
-pub(crate) async fn ingest_session_summary(
-    session_id: &str,
-    summary_text: &str,
-    config: &Config,
-    db_path: &Path,
-    rag_engine: Option<&UnifiedRagEngine>,
-) {
-    let client = match make_embed_client(config) {
-        Some(c) => c,
-        None => return,
-    };
-    let text_short: String = summary_text.chars().take(1024).collect();
-    let embeddings = match client.embed(&[text_short.as_str()]).await {
-        Ok(v) if !v.is_empty() => v,
-        Ok(_) => {
-            tracing::warn!("ingest_session_summary: empty embedding result");
-            return;
-        }
-        Err(e) => {
-            tracing::warn!("ingest_session_summary: embed error: {}", e);
-            return;
-        }
-    };
-    let db = match rustyclaw_storage::DbManager::new(db_path) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!("ingest_session_summary: db open error: {}", e);
-            return;
-        }
-    };
-    let id = format!("session::{}", session_id.replace(':', "-"));
-    if let Err(e) = db.upsert_embedding(
-        &id,
-        "session",
-        Some(session_id),
-        &text_short,
-        &embeddings[0],
-        None,
-    ) {
-        tracing::warn!("ingest_session_summary: upsert error: {}", e);
-        return;
-    }
-    if let Some(rag) = rag_engine {
-        rag.add_one(
-            &id,
-            "session",
-            Some(session_id),
-            &text_short,
-            &embeddings[0],
-            None,
-        );
-    }
-    let ttl_days = config
-        .embedding
-        .as_ref()
-        .and_then(|e| e.session_summary_ttl_days)
-        .unwrap_or(7);
-    if let Err(e) = db.delete_old_session_embeddings(ttl_days) {
-        tracing::warn!("ingest_session_summary: TTL cleanup error: {}", e);
-    }
-    tracing::info!(
-        "ingest_session_summary: stored embedding for session '{}'",
-        session_id
-    );
-}
-
-/// RAG 検索結果をシステムプロンプト注入用の Markdown に変換する。
-/// source="doc:*" を最初に、source="memory"、source="session" の順で別セクション表示する。
-pub(crate) fn format_rag_context(items: &[(String, String, f64)]) -> String {
-    if items.is_empty() {
-        return String::new();
-    }
-
-    let doc_items: Vec<&str> = items
-        .iter()
-        .filter(|(src, _, _)| src.starts_with("doc:"))
-        .map(|(_, txt, _)| txt.as_str())
-        .collect();
-    let memory_items: Vec<&str> = items
-        .iter()
-        .filter(|(src, _, _)| src == "memory")
-        .map(|(_, txt, _)| txt.as_str())
-        .collect();
-    let session_items: Vec<&str> = items
-        .iter()
-        .filter(|(src, _, _)| src == "session")
-        .map(|(_, txt, _)| txt.as_str())
-        .collect();
-
-    let mut out = String::new();
-
-    if !doc_items.is_empty() {
-        out.push_str("\n\n## Relevant Specifications & Rules\n");
-        out.push_str("Use the following guidelines for task execution:\n\n");
-        for text in &doc_items {
-            out.push_str(text);
-            out.push('\n');
-        }
-    }
-    if !memory_items.is_empty() {
-        out.push_str("\n\n## Relevant Memory\n");
-        out.push_str("The following memories are relevant to the current conversation:\n\n");
-        for text in &memory_items {
-            out.push_str(text);
-            out.push('\n');
-        }
-    }
-    if !session_items.is_empty() {
-        out.push_str("\n\n## Relevant Past Sessions\n");
-        out.push_str("The following session summaries are relevant:\n\n");
-        for text in &session_items {
-            out.push_str(text);
-            out.push('\n');
-        }
-    }
-    out
-}
-
-/// ローカル embedding モデルを使って query_text に関連する記憶・ドキュメントを SQLite から検索し、
-/// システムプロンプト注入用の文字列を返す。Fail-open。
-pub(crate) async fn retrieve_rag_context_local(
-    query_text: &str,
-    config: &Config,
-    embed_client: &EmbedClientKind,
-    db_path: &Path,
-    top_k: usize,
-) -> String {
-    let query_short: String = query_text.chars().take(512).collect();
-    let embeddings = match embed_client.embed(&[query_short.as_str()]).await {
-        Ok(v) if !v.is_empty() => v,
-        Ok(_) => return String::new(),
-        Err(e) => {
-            tracing::warn!("retrieve_rag_context_local: embed error: {}", e);
-            return String::new();
-        }
-    };
-    let db = match rustyclaw_storage::DbManager::new(db_path) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!("retrieve_rag_context_local: db open error: {}", e);
-            return String::new();
-        }
-    };
-    let threshold = config
-        .embedding
-        .as_ref()
-        .map(|e| e.similarity_threshold)
-        .unwrap_or(0.60);
-    let half_life = config
-        .embedding
-        .as_ref()
-        .and_then(|e| e.time_decay_half_life_days);
-    let search_result = match half_life {
-        Some(hl) => db.search_similar_with_decay(&embeddings[0], top_k, threshold, hl),
-        None => db.search_similar_with_source(&embeddings[0], top_k, threshold),
-    };
-    match search_result {
-        Ok(results) if !results.is_empty() => {
-            tracing::debug!("retrieve_rag_context_local: {} hits", results.len());
-            format_rag_context(&results)
-        }
-        Ok(_) => String::new(),
-        Err(e) => {
-            tracing::warn!("retrieve_rag_context_local: search error: {}", e);
-            String::new()
-        }
-    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -2530,7 +1666,6 @@ fn parse_context_window(context_window: Option<&str>) -> usize {
         s.parse::<usize>().unwrap_or(32_768)
     }
 }
-
 
 /// 70/20/10 戦略でテキストを `max_bytes` 以内に切り詰める。
 fn truncate_70_20(content: &str, max_bytes: usize) -> String {
@@ -2730,28 +1865,38 @@ mod tests {
     #[tokio::test]
     async fn test_autonomy_level_read_only_blocks_write() {
         use rig_core::agent::PromptHook;
-        
+
         let hook = AgentHook::new(
             PathBuf::from("/tmp"),
             "test_session".to_string(),
             AutonomyLevel::ReadOnly,
             false,
         );
-        
+
         // 書き込み系ツールはブロックされるべき
         let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
-            &hook, "workspace_write", None, "call_id", "{}"
-        ).await;
+            &hook,
+            "workspace_write",
+            None,
+            "call_id",
+            "{}",
+        )
+        .await;
         match action {
             rig_core::agent::ToolCallHookAction::Skip { reason } => {
                 assert!(reason.contains("ReadOnly mode"));
             }
             _ => panic!("Expected Skip action"),
         }
-        
+
         let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
-            &hook, "workspace_execute_script", None, "call_id", "{}"
-        ).await;
+            &hook,
+            "workspace_execute_script",
+            None,
+            "call_id",
+            "{}",
+        )
+        .await;
         match action {
             rig_core::agent::ToolCallHookAction::Skip { reason } => {
                 assert!(reason.contains("ReadOnly mode"));
@@ -2761,14 +1906,30 @@ mod tests {
 
         // 読み取り系ツールは許可されるべき
         let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
-            &hook, "workspace_read", None, "call_id", "{}"
-        ).await;
-        assert!(matches!(action, rig_core::agent::ToolCallHookAction::Continue));
-        
+            &hook,
+            "workspace_read",
+            None,
+            "call_id",
+            "{}",
+        )
+        .await;
+        assert!(matches!(
+            action,
+            rig_core::agent::ToolCallHookAction::Continue
+        ));
+
         let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
-            &hook, "web_search", None, "call_id", "{}"
-        ).await;
-        assert!(matches!(action, rig_core::agent::ToolCallHookAction::Continue));
+            &hook,
+            "web_search",
+            None,
+            "call_id",
+            "{}",
+        )
+        .await;
+        assert!(matches!(
+            action,
+            rig_core::agent::ToolCallHookAction::Continue
+        ));
     }
 
     #[tokio::test]
@@ -2776,7 +1937,7 @@ mod tests {
         use rig_core::agent::PromptHook;
         let dir = tempdir().unwrap();
         let ws_path = dir.path().to_path_buf();
-        
+
         let hook = AgentHook::new(
             ws_path.clone(),
             "test_session".to_string(),
@@ -2794,21 +1955,32 @@ mod tests {
                     break;
                 }
             }
-            
+
             if approval_file.exists()
                 && let Ok(content) = fs::read_to_string(&approval_file)
                 && let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content)
                 && let Some(obj) = val.as_object_mut()
             {
-                obj.insert("status".to_string(), serde_json::Value::String("approved".to_string()));
+                obj.insert(
+                    "status".to_string(),
+                    serde_json::Value::String("approved".to_string()),
+                );
                 let _ = fs::write(&approval_file, serde_json::to_string_pretty(&val).unwrap());
             }
         });
 
         let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
-            &hook, "workspace_write", None, "call_id", "{}"
-        ).await;
-        assert!(matches!(action, rig_core::agent::ToolCallHookAction::Continue));
+            &hook,
+            "workspace_write",
+            None,
+            "call_id",
+            "{}",
+        )
+        .await;
+        assert!(matches!(
+            action,
+            rig_core::agent::ToolCallHookAction::Continue
+        ));
     }
 
     #[tokio::test]
@@ -2816,7 +1988,7 @@ mod tests {
         use rig_core::agent::PromptHook;
         let dir = tempdir().unwrap();
         let ws_path = dir.path().to_path_buf();
-        
+
         let hook = AgentHook::new(
             ws_path.clone(),
             "test_session".to_string(),
@@ -2834,20 +2006,28 @@ mod tests {
                     break;
                 }
             }
-            
+
             if approval_file.exists()
                 && let Ok(content) = fs::read_to_string(&approval_file)
                 && let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content)
                 && let Some(obj) = val.as_object_mut()
             {
-                obj.insert("status".to_string(), serde_json::Value::String("rejected".to_string()));
+                obj.insert(
+                    "status".to_string(),
+                    serde_json::Value::String("rejected".to_string()),
+                );
                 let _ = fs::write(&approval_file, serde_json::to_string_pretty(&val).unwrap());
             }
         });
 
         let action = PromptHook::<rustyclaw_providers::RustyclawCompletionModel>::on_tool_call(
-            &hook, "workspace_write", None, "call_id", "{}"
-        ).await;
+            &hook,
+            "workspace_write",
+            None,
+            "call_id",
+            "{}",
+        )
+        .await;
         match action {
             rig_core::agent::ToolCallHookAction::Skip { reason } => {
                 assert!(reason.contains("rejected by user"));
@@ -3555,153 +2735,6 @@ Keep it short.\n\
     }
 
     #[test]
-    fn test_format_rag_context_empty() {
-        let result = format_rag_context(&[]);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_format_rag_context_with_items() {
-        let items = vec![
-            ("memory".to_string(), "- Rust is fast".to_string(), 0.92_f64),
-            (
-                "memory".to_string(),
-                "- RPi4 has 8GB RAM".to_string(),
-                0.85_f64,
-            ),
-        ];
-        let result = format_rag_context(&items);
-        assert!(result.contains("Rust is fast"));
-        assert!(result.contains("RPi4 has 8GB RAM"));
-        assert!(result.contains("## Relevant Memory"));
-    }
-
-    #[test]
-    fn test_format_rag_context_with_doc_items() {
-        let items = vec![
-            (
-                "doc:AGENTS.md".to_string(),
-                "## Tool Usage\nUse tools carefully.".to_string(),
-                0.85_f64,
-            ),
-            (
-                "memory".to_string(),
-                "User prefers brevity".to_string(),
-                0.80_f64,
-            ),
-            (
-                "session".to_string(),
-                "Previously discussed weather".to_string(),
-                0.75_f64,
-            ),
-        ];
-        let result = format_rag_context(&items);
-        assert!(
-            result.contains("## Relevant Specifications & Rules"),
-            "doc: セクションが含まれること"
-        );
-        assert!(
-            result.contains("Tool Usage"),
-            "doc: チャンク内容が含まれること"
-        );
-        assert!(
-            result.contains("## Relevant Memory"),
-            "memory セクションが含まれること"
-        );
-        assert!(
-            result.contains("## Relevant Past Sessions"),
-            "session セクションが含まれること"
-        );
-        // doc セクションが memory セクションより先に来ること
-        let doc_pos = result.find("## Relevant Specifications").unwrap();
-        let mem_pos = result.find("## Relevant Memory").unwrap();
-        assert!(
-            doc_pos < mem_pos,
-            "doc セクションが memory より先であること"
-        );
-    }
-
-    #[test]
-    fn test_unified_rag_engine_rebuild_from_db() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("memory.db");
-        let db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
-        db.upsert_embedding("memory::0", "memory", None, "大森駅周辺", &[1.0f32; 4], None)
-            .unwrap();
-        db.upsert_embedding(
-            "session::s1",
-            "session",
-            Some("s1"),
-            "RAG 検証完了",
-            &[0.5f32; 4],
-            None,
-        )
-        .unwrap();
-
-        let client =
-            rustyclaw_providers::CloudflareEmbeddingClient::new("http://127.0.0.1:1", "dummy");
-        let model = rustyclaw_providers::CloudflareEmbeddingModel::new(client, 4);
-        let engine = UnifiedRagEngine::new(model);
-        engine.rebuild_from_db(&db).unwrap();
-        assert_eq!(engine.len(), 2);
-    }
-
-    #[test]
-    fn test_hierarchical_chunking_and_retrieval() {
-        // 1. chunk_document_hierarchical の検証
-        let md = "# Doc Title\n\n## Section A\n- bullet 1\n- bullet 2\n\n## Section B\n- bullet 3";
-        let h_chunks = chunk_document_hierarchical("test.md", md);
-        
-        assert_eq!(h_chunks.len(), 2);
-        assert_eq!(h_chunks[0].children.len(), 2);
-        assert_eq!(h_chunks[1].children.len(), 1);
-        assert!(h_chunks[0].parent_text.contains("Section A"));
-        assert!(h_chunks[0].children[0].contains("bullet 1"));
-
-        // 2. DB を経由した親子解決の検証
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("memory.db");
-        let db = rustyclaw_storage::DbManager::new(&db_path).unwrap();
-
-        let parent_id = "p1";
-        let child_id1 = "c1";
-        let child_id2 = "c2";
-        let source_id = "doc:test.md";
-
-        // 親チャンク (embeddingは空)
-        db.upsert_embedding(parent_id, source_id, None, "PARENT TEXT SECTION A", &[], None).unwrap();
-        // 子チャンク (類似検索用embeddingを付与)
-        db.upsert_embedding(child_id1, source_id, None, "CHILD BULLET 1", &[1.0, 0.0], Some(parent_id)).unwrap();
-        db.upsert_embedding(child_id2, source_id, None, "CHILD BULLET 2", &[0.9, 0.1], Some(parent_id)).unwrap();
-
-        // 類似検索を実行 (クエリ [1.0, 0.0] -> c1, c2 が近い)
-        let results = db.search_similar_with_source(&[1.0, 0.0], 5, 0.5).unwrap();
-        
-        // 2つの子チャンクがヒットするが、resolved_text はいずれも "PARENT TEXT SECTION A" になっていること
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].1, "PARENT TEXT SECTION A");
-        assert_eq!(results[1].1, "PARENT TEXT SECTION A");
-
-        // 3. UnifiedRagEngine での検索と重複排除の検証
-        let client = rustyclaw_providers::CloudflareEmbeddingClient::new("http://127.0.0.1:1", "dummy");
-        let model = rustyclaw_providers::CloudflareEmbeddingModel::new(client, 2);
-        let engine = UnifiedRagEngine::new(model);
-        engine.rebuild_from_db(&db).unwrap();
-
-        // engine にはベクトルを持つ子チャンクの 2 件のみがインデックス登録される (親は embedding が空なので除外)
-        assert_eq!(engine.len(), 2);
-
-        // クエリ検索 (ダミーの HTTP クライアントを使用するため、mocking されている top_n_ids をテストできるように in-memory 検索で検証)
-        let smap = engine.source_map.lock().unwrap();
-        let pmap = engine.parent_map.lock().unwrap();
-        let tmap = engine.text_map.lock().unwrap();
-
-        assert_eq!(smap.len(), 3); // p1, c1, c2
-        assert_eq!(pmap.get("c1").cloned().flatten().unwrap(), "p1");
-        assert_eq!(tmap.get("p1").unwrap().as_str(), "PARENT TEXT SECTION A");
-    }
-
-    #[test]
     fn test_pipeline_has_rig_agent_builder() {
         use rustyclaw_config::Config;
         use rustyclaw_providers::RustyclawCompletionModel;
@@ -3773,13 +2806,11 @@ Keep it short.\n\
         let call_args =
             r#"{"script_name":"skills/calendar/scripts/calendar-ops.sh","args":["list"]}"#;
 
-        let result1 =
-            filter_seen_tool_result("run_workspace_script", call_args, &tool_result, &db);
+        let result1 = filter_seen_tool_result("run_workspace_script", call_args, &tool_result, &db);
         assert!(result1.contains("evt1"));
         assert!(db.is_item_seen("calendar:evt1").unwrap());
 
-        let result2 =
-            filter_seen_tool_result("run_workspace_script", call_args, &tool_result, &db);
+        let result2 = filter_seen_tool_result("run_workspace_script", call_args, &tool_result, &db);
         assert!(!result2.contains("evt1"));
     }
 
@@ -3839,35 +2870,6 @@ Keep it short.\n\
             "Should mention already-seen count: {}",
             result
         );
-    }
-
-    #[test]
-    fn test_chunk_static_document_splits_by_heading() {
-        let content =
-            "# Doc\n\n## Section A\nContent A line1\nContent A line2\n\n## Section B\nContent B\n";
-        let chunks = chunk_static_document("test.md", content);
-        assert_eq!(chunks.len(), 2, "## 見出し単位で 2 チャンクになること");
-        assert!(
-            chunks[0].contains("Section A"),
-            "チャンク0 に Section A を含むこと"
-        );
-        assert!(
-            chunks[0].contains("[test.md >"),
-            "ファイル名コンテキストが付くこと"
-        );
-        assert!(
-            chunks[1].contains("Section B"),
-            "チャンク1 に Section B を含むこと"
-        );
-    }
-
-    #[test]
-    fn test_chunk_static_document_truncates_long_chunks() {
-        let long_line = "x".repeat(900);
-        let content = format!("## Big\n{}", long_line);
-        let chunks = chunk_static_document("big.md", &content);
-        assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].chars().count() <= 800, "800文字を超えないこと");
     }
 
     // ── ISSUE-26: test_heartbeat_messages_are_not_trimmed ──
@@ -3973,16 +2975,16 @@ Keep it short.\n\
                 if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
                     collected.push(path);
                 } else if path.is_dir()
-                    && let Ok(sub_entries) = std::fs::read_dir(&path) {
-                        for sub_entry in sub_entries.flatten() {
-                            let sub_path = sub_entry.path();
-                            if sub_path.is_file()
-                                && sub_path.extension().is_some_and(|ext| ext == "md")
-                            {
-                                collected.push(sub_path);
-                            }
+                    && let Ok(sub_entries) = std::fs::read_dir(&path)
+                {
+                    for sub_entry in sub_entries.flatten() {
+                        let sub_path = sub_entry.path();
+                        if sub_path.is_file() && sub_path.extension().is_some_and(|ext| ext == "md")
+                        {
+                            collected.push(sub_path);
                         }
                     }
+                }
             }
         }
 
@@ -4026,7 +3028,10 @@ Keep it short.\n\
             .collect();
 
         assert_eq!(keys.len(), 2);
-        assert_ne!(keys[0], keys[1], "異なるサブディレクトリのキーは重複しないこと");
+        assert_ne!(
+            keys[0], keys[1],
+            "異なるサブディレクトリのキーは重複しないこと"
+        );
         assert!(keys[0].contains("skill-a") || keys[1].contains("skill-a"));
         assert!(keys[0].contains("skill-b") || keys[1].contains("skill-b"));
     }
@@ -4056,7 +3061,10 @@ Keep it short.\n\
         // build_heartbeat_context のファイルリストを再現
         let files: &[&str] = &["SOUL.md", "HEARTBEAT.md"]; // MEMORY.md を含まない
         let contains_memory = files.contains(&"MEMORY.md");
-        assert!(!contains_memory, "build_heartbeat_context は MEMORY.md を静的ロードしないべき");
+        assert!(
+            !contains_memory,
+            "build_heartbeat_context は MEMORY.md を静的ロードしないべき"
+        );
     }
 
     #[test]
@@ -4100,7 +3108,10 @@ Keep it short.\n\
         let soul_section_start = result.find("# SOUL.md").unwrap();
         let user_section_start = result.find("# USER.md").unwrap();
         let soul_section = &result[soul_section_start..user_section_start];
-        assert!(soul_section.contains("[RustyClaw]"), "SOUL.md が切り詰められているはず");
+        assert!(
+            soul_section.contains("[RustyClaw]"),
+            "SOUL.md が切り詰められているはず"
+        );
     }
 }
 
@@ -4160,103 +3171,6 @@ mod heartbeat_rag_tests {
     fn test_build_heartbeat_rag_query_prefix() {
         let result = build_heartbeat_rag_query("some content");
         assert!(result.starts_with("recent errors tasks memory updates: "));
-    }
-}
-
-#[cfg(test)]
-mod heartbeat_step_rag_tests {
-    use super::*;
-
-    #[test]
-    fn test_heartbeat_step2_rag_query_value() {
-        assert_eq!(
-            HEARTBEAT_STEP2_RAG_QUERY,
-            "user interests hobbies routine habits long-term memory"
-        );
-    }
-
-    #[test]
-    fn test_heartbeat_step6_rag_query_value() {
-        assert_eq!(
-            HEARTBEAT_STEP6_RAG_QUERY,
-            "errors bugs pending tasks todo improvements"
-        );
-    }
-}
-
-#[cfg(test)]
-mod discord_rag_tests {
-    use super::*;
-    use rustyclaw_providers::Message;
-
-    fn msg(role: &str, content: &str) -> Message {
-        Message {
-            role: role.to_string(),
-            content: content.to_string(),
-            ..Default::default()
-        }
-    }
-
-    fn tool_call_msg() -> Message {
-        Message {
-            role: "assistant".to_string(),
-            content: "".to_string(),
-            tool_calls: Some(vec![]),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn test_build_discord_rag_query_no_history() {
-        let result = build_discord_rag_query(&[], "Hello");
-        assert_eq!(result, "User: Hello");
-    }
-
-    #[test]
-    fn test_build_discord_rag_query_one_turn() {
-        let history = vec![
-            msg("user", "What is the weather?"),
-            msg("assistant", "It is sunny."),
-        ];
-        let result = build_discord_rag_query(&history, "And tomorrow?");
-        assert_eq!(
-            result,
-            "User: What is the weather?\nAssistant: It is sunny.\nUser: And tomorrow?"
-        );
-    }
-
-    #[test]
-    fn test_build_discord_rag_query_skips_tool_role() {
-        let history = vec![
-            msg("user", "Find coords"),
-            tool_call_msg(),
-            msg("tool", "35.6762, 139.6503"),
-            msg("assistant", "Coords are 35.67 N."),
-        ];
-        let result = build_discord_rag_query(&history, "Thanks");
-        assert_eq!(
-            result,
-            "User: Find coords\nAssistant: Coords are 35.67 N.\nUser: Thanks"
-        );
-        assert!(!result.contains("35.6762, 139.6503"));
-    }
-
-    #[test]
-    fn test_build_discord_rag_query_truncates_to_n_turns() {
-        // DISCORD_RAG_HISTORY_TURNS = 2 なので 3 ターン以上は最新 2 ターンのみ
-        let history = vec![
-            msg("user", "Turn 1 user"),
-            msg("assistant", "Turn 1 assistant"),
-            msg("user", "Turn 2 user"),
-            msg("assistant", "Turn 2 assistant"),
-            msg("user", "Turn 3 user"),
-            msg("assistant", "Turn 3 assistant"),
-        ];
-        let result = build_discord_rag_query(&history, "Current");
-        assert!(!result.contains("Turn 1"), "Turn 1 should be truncated");
-        assert!(result.contains("Turn 2 user"));
-        assert!(result.contains("Turn 3 assistant"));
-        assert!(result.ends_with("User: Current"));
     }
 }
 

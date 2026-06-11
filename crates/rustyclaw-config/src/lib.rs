@@ -518,7 +518,8 @@ impl Config {
             return None;
         }
         if let Some(ref emb) = self.embedding
-            && emb.enabled && !emb.api_endpoint.is_empty()
+            && emb.enabled
+            && !emb.api_endpoint.is_empty()
         {
             return Some((
                 emb.api_endpoint.clone(),
@@ -1010,13 +1011,15 @@ mod tests {
     #[test]
     fn test_embedding_config_channel_top_k_default() {
         let cfg: EmbeddingConfig = serde_json::from_str(r#"{}"#).unwrap();
-        assert!(cfg.channel_top_k.is_none(), "channel_top_k default should be None");
+        assert!(
+            cfg.channel_top_k.is_none(),
+            "channel_top_k default should be None"
+        );
     }
 
     #[test]
     fn test_embedding_config_channel_top_k_value() {
-        let cfg: EmbeddingConfig =
-            serde_json::from_str(r#"{"channel_top_k": 3}"#).unwrap();
+        let cfg: EmbeddingConfig = serde_json::from_str(r#"{"channel_top_k": 3}"#).unwrap();
         assert_eq!(cfg.channel_top_k, Some(3));
     }
 
@@ -1061,8 +1064,6 @@ mod tests {
     fn test_embedding_config_time_decay_half_life_days_set() {
         let cfg: EmbeddingConfig =
             serde_json::from_str(r#"{"time_decay_half_life_days": 30.0}"#).unwrap();
-        assert!(
-            (cfg.time_decay_half_life_days.unwrap() - 30.0).abs() < 1e-9
-        );
+        assert!((cfg.time_decay_half_life_days.unwrap() - 30.0).abs() < 1e-9);
     }
 }
