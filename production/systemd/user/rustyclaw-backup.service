@@ -1,0 +1,13 @@
+[Unit]
+Description=RustyClaw workspace backup to NAS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.rustyclaw/workspace/scripts/backup.sh
+# NAS バックアップ先は下記で上書き可能（または backup.sh 内の BACKUP_DEST を直接編集）
+# Environment=RUSTYCLAW_BACKUP_DEST=qnap:/backup/rustyclaw
+
+[Install]
+WantedBy=default.target

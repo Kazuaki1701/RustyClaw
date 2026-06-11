@@ -190,4 +190,38 @@ vault → config.json: "token": "$vault:HOMEASSISTANT_TOKEN"
 
 ### 本番環境の自動バックアップ体制
 
-`production/workspace/`（`memory.db`・`sessions/*.jsonl`・`patrol/findings.md` 等）を NAS（QNAP 等）へ定時 rsync する自動バックアップ体制の整備。
+`production/workspace/`（`memory.db`・`sessions/*.jsonl`・`patrol/findings.md` 等）を NAS（QNAP 等）へ定時 rsync する。  
+実装ファイル: `production/systemd/user/rustyclaw-backup.{service,timer}`・`production/workspace/scripts/backup.sh`
+
+#### 初期設定手順（RPi4 で一度だけ実行）
+
+```bash
+# 1. NAS への SSH 鍵認証を設定
+ssh-copy-id kazuaki@<NAS_HOST>      # または QNAP 管理画面で公開鍵登録
+
+# 2. バックアップ先を backup.sh に設定
+#    production/workspace/scripts/backup.sh 冒頭の BACKUP_DEST を編集
+#    例: BACKUP_DEST="kazuaki@qnap:/backup/rustyclaw"
+#    または環境変数: export RUSTYCLAW_BACKUP_DEST="kazuaki@qnap:/backup/rustyclaw"
+
+# 3. chmod + systemd user unit をインストール
+chmod +x ~/.rustyclaw/workspace/scripts/backup.sh
+mkdir -p ~/.config/systemd/user
+cp ~/.rustyclaw/systemd/user/rustyclaw-backup.{service,timer} ~/.config/systemd/user/
+
+# 4. timer を有効化
+systemctl --user daemon-reload
+systemctl --user enable --now rustyclaw-backup.timer
+
+# 5. 動作確認
+systemctl --user start rustyclaw-backup.service   # 即時実行テスト
+systemctl --user status rustyclaw-backup.service
+journalctl --user -u rustyclaw-backup.service -n 20
+```
+
+| 項目 | 値 |
+|---|---|
+| スケジュール | 毎日 03:00（最大 5 分ランダム遅延） |
+| 対象 | `memory.db`・`sessions/`・`patrol/` |
+| ログ | `journalctl --user -u rustyclaw-backup.service` |
+| スキップ補完 | `Persistent=true`（停止中に発火時刻を過ぎた場合、次回起動時に実行） |
