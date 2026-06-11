@@ -16,7 +16,7 @@
   - セッション終了後に `ctx_index` でサマリを登録、Heartbeat・Discord で `ctx_search` を使う実装
   - 対象: `crates/rustyclaw-agent/src/lib.rs`（"Phase 02 で ctx_search へ移行予定" コメント箇所）
 
-- [ ] **Phase 28b-3: Dashboard LANE QUEUE 表示名フォーマット変更**
+- [x] **Phase 28b-3: Dashboard LANE QUEUE 表示名フォーマット変更**
   - `{cron title} ({HH:MM})` 形式に変更
   - 対象: `crates/rustyclaw-gateway/src/lib.rs`（cron キュー登録箇所）
 
