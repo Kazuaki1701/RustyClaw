@@ -295,7 +295,18 @@ grep "sem\|timed out\|permit" ~/.rustyclaw/rustyclaw.log | tail -20
 
 ---
 
-## 7. 関連ドキュメント
+## 7. 将来拡張 `[将来拡張]`
+
+### Phase 27-1: ディスク空き容量監視と SSD 保護
+
+USB SSD の空き容量を定期監視し、残り容量が 5% 以下になった際に Discord 等へ警告アラートを送信する保護タスクの実装。
+
+- 定期 Cron（Lane B）として実装し、容量チェック → 閾値判定 → Discord 通知の流れで動作する。
+- RPi4 の USB SSD は書き込み寿命があるため、早期の容量枯渇検知がストレージ保護に直結する。
+
+---
+
+## 8. 関連ドキュメント
 
 - [`05_heartbeat.md`](05_heartbeat.md) — Heartbeat の設計仕様
 - [`01_pipeline.md`](01_pipeline.md) — Lane Control 設計

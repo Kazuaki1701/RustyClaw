@@ -113,3 +113,33 @@ tokio::task::spawn_blocking(|| {
 ```
 
 > **注意**: ONNX Runtime の初期化コストが高いため、モデルインスタンスは `once_cell::sync::Lazy` 等でプロセス内キャッシュする。毎リクエスト初期化は禁止。
+
+---
+
+## 16. マルチチャンネル対応（LINE + Notifications）`[将来拡張]`
+
+### 16.1 LINE チャンネル導入（Phase 39）
+
+- `rustyclaw-channels` に `LineConnector` を実装。設定スキーマ（`channel_type: "line"`）はすでに定義済み。
+- 導入確定後に一般課題へ昇格し、Discord チャンネルの実装を参照して実装する。
+- 調査資料: `docs/review/2026-06-03-geminiclaw-nonok-delivery-analysis.md`
+
+### 16.2 Notifications チャンネル
+
+- LINE 導入と同期して設計。システム通知・アラートを専用チャンネルへルーティングする軽量コネクタ。LINE が加わることで `notifications` チャンネルの配信先が増え、価値が高まる。
+
+---
+
+## 17. Upstream 先進機能・外部ツール統合 `[将来拡張]`
+
+### 17.1 Hook Manager / Steering / Spawn（Phase 30）
+
+PicoClaw (Go Upstream) が実装している以下の 3 機能を将来的に取り込む。
+
+- **Hook Manager**: パイプラインの各ステージに差し込める副作用フック（ログ収集・監視・フィルタリング）。
+- **Steering 割り込み**: 実行中のパイプラインに外部から指示を注入して応答を誘導する機構。
+- **非同期 Spawn**: サブタスクを独立したエージェントとして非同期に生成・管理する機構。
+
+### 17.2 Google Drive / Sheets / Docs ツール
+
+gws CLI 経由で実装可能。Sheets へのデータ書き込み・Docs の参照など、ユースケースが明確になった時点でツールとして追加する。

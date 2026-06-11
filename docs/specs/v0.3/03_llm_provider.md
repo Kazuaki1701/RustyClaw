@@ -160,3 +160,13 @@ Neurons 使用量は `~/.rustyclaw/neuron_usage.json` に UTC 日付単位で累
 | CF gemma-4-26b | summary | ~177 neurons | 10,000/日 ✓ |
 | CF qwen3-30b | memory | ~150 neurons | 10,000/日 ✓ |
 | **CF 合計** | | **~327 neurons/日** | **余裕 97%** |
+
+### Provider 追加候補 `[将来拡張]`
+
+レートリミット・品質の観点で追加を検討中の Provider とモデル。
+
+| Provider | モデル候補 | 特性 |
+|---|---|---|
+| **Cerebras** | `gpt-oss-120b` | 14,400 RPD・TPM/TPD 余裕大・120B 無料 |
+| **Google AI Studio** | Gemma 3 27B | 14,400 RPD・無料（日本からはデータ学習対象に注意） |
+| **OpenRouter** | `qwen3-coder:free`・`qwen3-next-80b:free` | 1M context・新モデル随時追加 |

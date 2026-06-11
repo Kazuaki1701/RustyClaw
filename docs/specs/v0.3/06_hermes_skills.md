@@ -95,3 +95,14 @@ last_updated: {{YYYY-MM-DD}}
 
 - **コンパクション**: `self_improved/` 内に類似目的の Skill が複数乱立した場合、1 つの高位 Skill へマージし古いファイルを削除。
 - **忘却（デリート）**: 過去 30 日間のセッションで 1 度も RAG からヒットされなかった動的 Skill は一時的な揮発性知識とみなし、物理ファイルを自動削除してインデックスから抹消。
+
+---
+
+## 将来拡張（Phase 30-4）`[将来拡張]`
+
+### ClawHub 互換の動的 Skill ダウンローダー
+
+`rustyclaw skills install <skill-name>` サブコマンドと `workspace/skills/` へのリモート展開ロジックの実装。
+
+- **前提**: 外部 Skill Hub（ClawHub 相当）が現時点で存在しないため保留。外部 Hub が整備された時点で着手する。
+- **想定実装**: Hub URL からスキル定義 Markdown をダウンロードし、`skills/standard/` または `skills/self_improved/` へ配置して RAG インデックスを更新する。

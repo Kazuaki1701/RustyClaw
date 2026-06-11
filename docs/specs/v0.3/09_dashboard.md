@@ -119,3 +119,23 @@ function escapeHtml(str) {
 - `cron:topic-patrol-explore` / `cron:topic-patrol-deliver`
 - `cron:vitals-morning` / `cron:vitals-night`
 - `cron:daily-briefing`
+
+---
+
+## 5. 将来拡張 `[将来拡張]`
+
+### Phase 44-6: ストリーミング応答とキャッシュ
+
+- `/chat` エンドポイントで `complete_stream` を使用し、SSE（Server-Sent Events）でトークンをリアルタイムにブラウザへストリーミングする。
+- 定型レポートはローカルキャッシュ（`memory/debug/llm/cache`）に保存し、同一リクエスト時はキャッシュを返却する（キャッシュ無効化設計を慎重に行うこと）。
+- **前提**: 44-1〜44-5 施策で十分な遅延削減を達成してから着手する。
+
+### Phase 44-7: パフォーマンステストとベンチマーク
+
+- 改修前後でレスポンスタイムスタンプを `dashboard_response_analysis.md` に記録し、**50% 以上の遅延削減**を目標として検証。
+- CI にベンチマークスクリプトを追加し、毎プルリクでパフォーマンス回帰を検知する体制を整備。
+
+### ISSUE-25: STOP 制御のセキュリティ強化
+
+- 現在の `●ACTIVE → daemon STOP` 制御は無認証 LAN へのプロセス停止操作を露出している。
+- **前提**: LAN 内認証の仕組みと、`START` 操作との非対称性（STOP のみ許可・START は不許可）のセキュリティポリシーを確定してから実装する。
