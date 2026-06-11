@@ -207,7 +207,6 @@ impl ExternalMcpController {
 
 - Gateway 起動時に `spawn()` → Gateway シャットダウン時に `SIGTERM`
 - context-mode がクラッシュした場合は指数バックオフで再起動（Phase 26 Auto-Reconnect と同様）
-- Lane B 経由で JSON-RPC を仲介し、CPU コアは最大 1 枚占有に制限
 
 ---
 
@@ -256,10 +255,9 @@ v0.3 不変ルール（[`../v0.3/00_rustyclaw.md` §17](../v0.3/00_rustyclaw.md)
 
 17. **context-mode は Gateway 起動時に子プロセスとして spawn し、Gateway シャットダウンまで常駐させる**
 18. **context-mode の stdin/stdout は `rmcp` stdio transport 経由で接続し、ポートを開けない**
-19. **context-mode への JSON-RPC 呼び出しは必ず Lane B 経由でシリアライズする**（CPU コア占有 1 枚制限）
-20. **`.context-mode/` ディレクトリは context-mode プロセスが自律管理し、Rust 側から直接 read/write しない**
-21. **context-mode がクラッシュした場合は fail-open とし、該当ツール呼び出しはエラーを返すが Pipeline は停止しない**
-22. **`workspace_execute_script`（bwrap）と `memory_search` ツールを Rust 側から削除し、`ctx_execute` / `ctx_search` に一本化する**
-23. **Node.js バージョンは ≥ 22.5 を必須とする**（`node:sqlite` 内蔵で C++ ネイティブビルド不要）
-24. **Gateway は Heartbeat 直前に `try_ctx_search` を呼び、セッション終了後に `try_ctx_index` を呼ぶ**（Phase 45-1）。Agent Pipeline を経由せず `tool_server_handle.call_tool()` を直接使用し、両操作とも fail-open とする
-25. **Cron の `"cron"` タイプは `croner` crate の `Cron::find_next_occurrence()` で次回時刻を計算する**（Phase 48-1）。サービス停止後の catch-up は `>=` 比較で一度だけ実行し、多重起動しない
+19. **`.context-mode/` ディレクトリは context-mode プロセスが自律管理し、Rust 側から直接 read/write しない**
+20. **context-mode がクラッシュした場合は fail-open とし、該当ツール呼び出しはエラーを返すが Pipeline は停止しない**
+21. **`workspace_execute_script`（bwrap）と `memory_search` ツールを Rust 側から削除し、`ctx_execute` / `ctx_search` に一本化する**
+22. **Node.js バージョンは ≥ 22.5 を必須とする**（`node:sqlite` 内蔵で C++ ネイティブビルド不要）
+23. **Gateway は Heartbeat 直前に `try_ctx_search` を呼び、セッション終了後に `try_ctx_index` を呼ぶ**（Phase 45-1）。Agent Pipeline を経由せず `tool_server_handle.call_tool()` を直接使用し、両操作とも fail-open とする
+24. **Cron の `"cron"` タイプは `croner` crate の `Cron::find_next_occurrence()` で次回時刻を計算する**（Phase 48-1）。サービス停止後の catch-up は `>=` 比較で一度だけ実行し、多重起動しない
