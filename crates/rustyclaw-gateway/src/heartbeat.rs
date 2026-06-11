@@ -546,6 +546,33 @@ impl HeartbeatService {
         Ok(())
     }
 
+    /// HA 環境サマリを読み込む (memory/ha-env-summary.txt)
+    /// - ファイルが存在し非空 → Some(trimmed_content)
+    /// - ファイルが存在しないか空 → None
+    pub fn get_ha_env_context(&self) -> Option<String> {
+        let path = self.workspace_path.join("memory").join("ha-env-summary.txt");
+        let content = fs::read_to_string(&path).ok()?;
+        let trimmed = content.trim().to_string();
+        if trimmed.is_empty() { None } else { Some(trimmed) }
+    }
+
+    /// HA スパイク検出チェック (memory/ha-state.json)
+    /// - `.spike_detected == true` → Some(alert_string) (CO2 値を含む)
+    /// - それ以外 → None
+    pub fn check_ha_spike(&self) -> Option<String> {
+        let path = self.workspace_path.join("memory").join("ha-state.json");
+        let content = fs::read_to_string(&path).ok()?;
+        let val: serde_json::Value = serde_json::from_str(&content).ok()?;
+        if val["spike_detected"].as_bool() != Some(true) {
+            return None;
+        }
+        let co2 = val["latest"]["co2"].as_str().unwrap_or("不明");
+        Some(format!(
+            "⚠️ [HA SPIKE ALERT] CO2 レベルが危険域に達しています（{} ppm）。換気を促すなど、ユーザーへ即座に通知してください。HEARTBEAT_OK を返してはいけません。",
+            co2
+        ))
+    }
+
     /// Heartbeat Step 4: Weather / Rain Patrol (雨雲パトロール)
     /// 指定された現在地の緯度経度から降水量をチェックし、必要に応じて雨雲接近アラートのプロンプトを返す。
     pub async fn run_weather_patrol(&self, db_path: &std::path::Path) -> Result<Option<String>> {
@@ -964,6 +991,49 @@ mod tests {
             content.contains("雨が近づいています"),
             "投稿内容が記録されるべき"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_ha_env_context_reads_summary_file() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let ws = dir.path().to_path_buf();
+        let memory_dir = ws.join("memory");
+        std::fs::create_dir_all(&memory_dir)?;
+
+        let bus = std::sync::Arc::new(MessageBus::new());
+        let svc = HeartbeatService::new(Config::default(), ws.clone(), bus.clone());
+        // File missing → None
+        assert!(svc.get_ha_env_context().is_none());
+
+        // File present → Some
+        let summary = "[HA_ENV|14:30] [Room: 27.5°C→ / 62%→] [CO2: 850ppm→]";
+        std::fs::write(memory_dir.join("ha-env-summary.txt"), summary)?;
+        assert_eq!(svc.get_ha_env_context().as_deref(), Some(summary));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_check_ha_spike_returns_alert_when_spike() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let ws = dir.path().to_path_buf();
+        let memory_dir = ws.join("memory");
+        std::fs::create_dir_all(&memory_dir)?;
+
+        let bus = std::sync::Arc::new(MessageBus::new());
+        let svc = HeartbeatService::new(Config::default(), ws.clone(), bus);
+
+        // spike_detected = false → None
+        let no_spike = r#"{"samples":[],"latest":{"co2":"900"},"spike_detected":false}"#;
+        std::fs::write(memory_dir.join("ha-state.json"), no_spike)?;
+        assert!(svc.check_ha_spike().is_none());
+
+        // spike_detected = true → Some with CO2 value
+        let spike = r#"{"samples":[],"latest":{"co2":"1600"},"spike_detected":true}"#;
+        std::fs::write(memory_dir.join("ha-state.json"), spike)?;
+        let alert = svc.check_ha_spike();
+        assert!(alert.is_some());
+        assert!(alert.unwrap().contains("1600"));
         Ok(())
     }
 
