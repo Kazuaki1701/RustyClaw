@@ -189,6 +189,7 @@ rustyclaw-storage
 | [`08_deployment.md`](08_deployment.md) | §16 | 運用ドキュメント | 運用・デプロイ手順 |
 | [`09_dashboard.md`](09_dashboard.md) | — | `[実装済]` | Web Dashboard・管理 API |
 | [`10_mcp.md`](10_mcp.md) | — | `[実装済 + 将来拡張を含む]` | MCP クライアント（堅牢化・SSE は将来拡張） |
+| [`11_operation.md`](11_operation.md) | — | `[実装済]` | 稼働点検ガイド（クイック/詳細点検・週次チェックリスト） |
 
 ---
 
