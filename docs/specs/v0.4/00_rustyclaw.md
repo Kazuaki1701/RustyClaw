@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]`
 > **バージョン**: v0.4
-> **最終更新日**: 2026-06-11（Phase 01〜03 実装完了）
+> **最終更新日**: 2026-06-11（Phase 01〜03, 28b-3, 45-1, 47-1, 48-1 実装完了）
 > **対象コード**: `crates/` 全クレート + `context-mode` 外部 MCP サーバー
 > **前バージョン比較**: v0.3 からの変更点は §4 参照
 > **Upstream 比較**: [`../v0.3/91_upstream_comparison.md`](../v0.3/91_upstream_comparison.md)
@@ -92,7 +92,8 @@ rustyclaw/
 | キャンセル | `tokio-util` (CancellationToken) | `[実装済]` |
 | 日時 | `chrono` | `[実装済]` |
 | Web UI | `axum` (0.7) | `[実装済]` |
-| LLM 抽象 | `rig-core` | `[将来拡張]` |
+| LLM 抽象 | `rig-core` (0.38, rmcp feature) | `[実装済]` |
+| cron 次回時刻計算 | `croner` (3.0.1) | `[実装済]`（Phase 48-1） |
 
 ---
 
@@ -156,15 +157,16 @@ rustyclaw-storage (削減版)
 
 ### 4.1 Rust 側から削除するコード
 
-| 削除対象 | 所在 | 委譲先 |
-|---|---|---|
-| `SearchIndexManager`（tantivy BM25） | `rustyclaw-storage/src/search.rs` | `ctx_search` |
-| `memory_embeddings` テーブル全体 | `rustyclaw-storage/src/lib.rs` | `ctx_search` / `ctx_index` |
-| `search_similar_with_source` / `search_similar_with_decay` | `rustyclaw-storage` | `ctx_search` |
-| `ingest_memory_md` / `ingest_session_summary` / `ingest_static_documents` | `rustyclaw-agent` | `ctx_index` |
-| `LocalEmbeddingClient` / `EmbeddingConfig.use_local_embedding` | `rustyclaw-providers` | context-mode 内部 |
-| `workspace_execute_script`（bwrap） | `rustyclaw-tools` | `ctx_execute` |
-| `memory_search` ツール | `rustyclaw-tools` | `ctx_search` |
+| 削除対象 | 所在 | 委譲先 | ステータス |
+|---|---|---|---|
+| `SearchIndexManager`（tantivy BM25） | `rustyclaw-storage/src/search.rs` | `ctx_search` | `[削除済]` |
+| `memory_embeddings` テーブル全体 | `rustyclaw-storage/src/lib.rs` | `ctx_search` / `ctx_index` | `[削除済]` |
+| `search_similar_with_source` / `search_similar_with_decay` | `rustyclaw-storage` | `ctx_search` | `[削除済]` |
+| `ingest_memory_md` / `ingest_session_summary` / `ingest_static_documents` | `rustyclaw-agent` | `ctx_index` | `[削除済]` |
+| `LocalEmbeddingClient` / `EmbeddingConfig.use_local_embedding` | `rustyclaw-providers` | context-mode 内部 | `[削除済]` |
+| `workspace_execute_script`（bwrap） | `rustyclaw-tools` | `ctx_execute` | `[削除済]` |
+| `memory_search` ツール | `rustyclaw-tools` | `ctx_search` | `[削除済]` |
+| `rustyclaw-summary-proto` crate（PoC） | `crates/rustyclaw-summary-proto/` | Phase 45-1 実装に統合 | `[削除済]`（Phase 47-1） |
 
 ### 4.2 Rust 側に追加するコード
 
@@ -172,6 +174,14 @@ rustyclaw-storage (削減版)
 |---|---|---|
 | `ExternalMcpController` | `rustyclaw-gateway` | context-mode 子プロセスのライフサイクル管理 `[実装済]` |
 | `ctx_execute` / `ctx_search` / `ctx_index` / `ctx_patch` | McpClientHandler 自動登録 | Rust ラッパー不要・context-mode が MCP ツールとして公開 `[実装済]` |
+| `try_ctx_search` / `try_ctx_index` | `rustyclaw-gateway/src/lib.rs` | Gateway から ctx_search/ctx_index を呼ぶ fail-open ヘルパー `[実装済]`（Phase 45-1） |
+
+#### try_ctx_search / try_ctx_index 概要
+
+- **Heartbeat**: プロンプト生成前に `try_ctx_search(query, limit=3, sort="timeline")` を呼び、結果を "Past context (from episodic memory):" としてプロンプトに注入する
+- **Session-summary**: `generate_session_summary()` 成功後に `try_ctx_index(content, source="session-summary:{id}")` でエピソード記憶に登録する
+- どちらも失敗時は `warn!` ログのみ。Pipeline/Heartbeat を停止しない（fail-open）
+- `tool_server_handle.call_tool(name, args_json)` を直接使用し、Agent Pipeline を経由しない
 
 ### 4.3 context-mode プロセス管理
 
@@ -251,3 +261,5 @@ v0.3 不変ルール（[`../v0.3/00_rustyclaw.md` §17](../v0.3/00_rustyclaw.md)
 21. **context-mode がクラッシュした場合は fail-open とし、該当ツール呼び出しはエラーを返すが Pipeline は停止しない**
 22. **`workspace_execute_script`（bwrap）と `memory_search` ツールを Rust 側から削除し、`ctx_execute` / `ctx_search` に一本化する**
 23. **Node.js バージョンは ≥ 22.5 を必須とする**（`node:sqlite` 内蔵で C++ ネイティブビルド不要）
+24. **Gateway は Heartbeat 直前に `try_ctx_search` を呼び、セッション終了後に `try_ctx_index` を呼ぶ**（Phase 45-1）。Agent Pipeline を経由せず `tool_server_handle.call_tool()` を直接使用し、両操作とも fail-open とする
+25. **Cron の `"cron"` タイプは `croner` crate の `Cron::find_next_occurrence()` で次回時刻を計算する**（Phase 48-1）。サービス停止後の catch-up は `>=` 比較で一度だけ実行し、多重起動しない
