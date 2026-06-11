@@ -75,26 +75,30 @@ impl HeartbeatService {
         // 既存のダイジェスト行をセッションIDごとにパースしてマップに格納
         let mut existing_digest_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
-        if !is_deep_scan && last_run_at.is_some() && digest_path.exists()
-            && let Ok(content) = fs::read_to_string(&digest_path) {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
+        if !is_deep_scan
+            && last_run_at.is_some()
+            && digest_path.exists()
+            && let Ok(content) = fs::read_to_string(&digest_path)
+        {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if trimmed.starts_with('[')
+                    && let Some(close_bracket_idx) = trimmed.find("] ")
+                {
+                    let body = &trimmed[close_bracket_idx + 2..];
+                    if let Some(colon_idx) = body.find(": ") {
+                        let session_id = body[..colon_idx].to_string();
+                        existing_digest_map
+                            .entry(session_id)
+                            .or_default()
+                            .push(trimmed.to_string());
                     }
-                    if trimmed.starts_with('[')
-                        && let Some(close_bracket_idx) = trimmed.find("] ") {
-                            let body = &trimmed[close_bracket_idx + 2..];
-                            if let Some(colon_idx) = body.find(": ") {
-                                let session_id = body[..colon_idx].to_string();
-                                existing_digest_map
-                                    .entry(session_id)
-                                    .or_default()
-                                    .push(trimmed.to_string());
-                            }
-                        }
                 }
             }
+        }
 
         // sessions/*.jsonl をスキャンしてアクティブなセッションを収集
         let mut active_sessions = Vec::new();
@@ -117,14 +121,15 @@ impl HeartbeatService {
 
                 // ファイル変更時刻チェック
                 if let Ok(metadata) = fs::metadata(&path)
-                    && let Ok(modified_time) = metadata.modified() {
-                        let modified: DateTime<Local> = modified_time.into();
-                        // 過去24時間以内に更新されたアクティブな対話のみ対象
-                        if now_dt.signed_duration_since(modified).num_hours() < 24 {
-                            let session_id = filename.trim_end_matches(".jsonl").to_string();
-                            active_sessions.push((modified, path, session_id));
-                        }
+                    && let Ok(modified_time) = metadata.modified()
+                {
+                    let modified: DateTime<Local> = modified_time.into();
+                    // 過去24時間以内に更新されたアクティブな対話のみ対象
+                    if now_dt.signed_duration_since(modified).num_hours() < 24 {
+                        let session_id = filename.trim_end_matches(".jsonl").to_string();
+                        active_sessions.push((modified, path, session_id));
                     }
+                }
             }
         }
 
@@ -192,10 +197,9 @@ impl HeartbeatService {
 
                             let mut response = None;
                             for msg in messages[(i + 1)..next_user_idx].iter() {
-                                if msg.role == "assistant"
-                                    && !msg.content.trim().is_empty() {
-                                        response = Some(&msg.content);
-                                    }
+                                if msg.role == "assistant" && !msg.content.trim().is_empty() {
+                                    response = Some(&msg.content);
+                                }
                             }
 
                             if let Some(resp_content) = response {
@@ -212,9 +216,10 @@ impl HeartbeatService {
 
                                 let mut time_str = "--:--".to_string();
                                 if let Some(ref ts) = messages[i].timestamp
-                                    && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
-                                        time_str = dt.format("%H:%M").to_string();
-                                    }
+                                    && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts)
+                                {
+                                    time_str = dt.format("%H:%M").to_string();
+                                }
 
                                 session_lines.push(format!(
                                     "[{}] {}: {} → {}",
@@ -398,29 +403,30 @@ impl HeartbeatService {
                 if let Ok(entries) = fs::read_dir(&sessions_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.is_file() && path.extension().map(|e| e == "jsonl").unwrap_or(false)
+                        if path.is_file()
+                            && path.extension().map(|e| e == "jsonl").unwrap_or(false)
                             && let Some(file_name) = path.file_stem().and_then(|s| s.to_str())
-                                && !file_name.starts_with("cron:")
-                                    && !file_name.starts_with("cli-")
-                                    && !file_name.starts_with("http-")
-                                    && let Ok(meta) = path.metadata()
-                                        && let Ok(mtime) = meta.modified()
-                                            && (active_session.is_none()
-                                                || mtime > active_session.as_ref().unwrap().0)
-                                            {
-                                                let session_id = file_name.replace('-', ":");
-                                                active_session =
-                                                    Some((mtime, path.clone(), session_id));
-                                            }
+                            && !file_name.starts_with("cron:")
+                            && !file_name.starts_with("cli-")
+                            && !file_name.starts_with("http-")
+                            && let Ok(meta) = path.metadata()
+                            && let Ok(mtime) = meta.modified()
+                            && (active_session.is_none()
+                                || mtime > active_session.as_ref().unwrap().0)
+                        {
+                            let session_id = file_name.replace('-', ":");
+                            active_session = Some((mtime, path.clone(), session_id));
+                        }
                     }
                 }
 
                 if let Some((_, _, ref session_id)) = active_session {
                     let mut channel_id = String::new();
                     if session_id.starts_with("discord-C")
-                        && let Some(dash_idx) = session_id[9..].find('-') {
-                            channel_id = session_id[9..9 + dash_idx].to_string();
-                        }
+                        && let Some(dash_idx) = session_id[9..].find('-')
+                    {
+                        channel_id = session_id[9..9 + dash_idx].to_string();
+                    }
                     (session_id.clone(), channel_id)
                 } else {
                     tracing::warn!(
@@ -447,17 +453,18 @@ impl HeartbeatService {
                 let mut kept = Vec::new();
                 let cutoff = now - chrono::Duration::hours(24);
                 if posts_path.exists()
-                    && let Ok(existing) = fs::read_to_string(&posts_path) {
-                        for line in existing.lines() {
-                            if line.starts_with('[')
-                                && let Some(end) = line.find(']')
-                                    && let Ok(dt) =
-                                        chrono::DateTime::parse_from_rfc3339(&line[1..end])
-                                        && dt.with_timezone(&Local) >= cutoff {
-                                            kept.push(line.to_string());
-                                        }
+                    && let Ok(existing) = fs::read_to_string(&posts_path)
+                {
+                    for line in existing.lines() {
+                        if line.starts_with('[')
+                            && let Some(end) = line.find(']')
+                            && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&line[1..end])
+                            && dt.with_timezone(&Local) >= cutoff
+                        {
+                            kept.push(line.to_string());
                         }
                     }
+                }
                 kept.push(new_entry);
                 if kept.len() > 5 {
                     kept = kept.split_off(kept.len() - 5);
@@ -761,20 +768,23 @@ fn extract_coordinates(workspace_path: &std::path::Path) -> Option<(f64, f64)> {
     let user_md_path = workspace_path.join("USER.md");
     if let Ok(content) = std::fs::read_to_string(&user_md_path) {
         for line in content.lines() {
-            if line.contains("Coordinates:") && !line.contains("Commute")
-                && let Some(pos) = line.find("Coordinates:") {
-                    let s = &line[pos + "Coordinates:".len()..];
-                    let end_pos = s.find('(').unwrap_or(s.len());
-                    let clean_s = &s[..end_pos].trim();
-                    let parts: Vec<&str> = clean_s.split(',').collect();
-                    if parts.len() == 2
-                        && let (Ok(lat), Ok(lon)) = (
-                            parts[0].trim().parse::<f64>(),
-                            parts[1].trim().parse::<f64>(),
-                        ) {
-                            return Some((lat, lon));
-                        }
+            if line.contains("Coordinates:")
+                && !line.contains("Commute")
+                && let Some(pos) = line.find("Coordinates:")
+            {
+                let s = &line[pos + "Coordinates:".len()..];
+                let end_pos = s.find('(').unwrap_or(s.len());
+                let clean_s = &s[..end_pos].trim();
+                let parts: Vec<&str> = clean_s.split(',').collect();
+                if parts.len() == 2
+                    && let (Ok(lat), Ok(lon)) = (
+                        parts[0].trim().parse::<f64>(),
+                        parts[1].trim().parse::<f64>(),
+                    )
+                {
+                    return Some((lat, lon));
                 }
+            }
         }
     }
     None

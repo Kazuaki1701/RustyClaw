@@ -37,7 +37,9 @@ impl ToolRegistry {
         self.tools.get(name)
     }
 
-    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, String, Arc<dyn rig_core::tool::ToolDyn>> {
+    pub fn iter(
+        &self,
+    ) -> std::collections::hash_map::Iter<'_, String, Arc<dyn rig_core::tool::ToolDyn>> {
         self.tools.iter()
     }
 
@@ -164,7 +166,10 @@ pub struct WorkspaceWriteTool {
 
 impl WorkspaceWriteTool {
     pub fn new(workspace_path: std::path::PathBuf, preview_base_url: Option<String>) -> Self {
-        Self { workspace_path, preview_base_url }
+        Self {
+            workspace_path,
+            preview_base_url,
+        }
     }
 }
 
@@ -227,64 +232,6 @@ impl rig_core::tool::Tool for WorkspaceWriteTool {
                 format!("OK: wrote to {}{}", rel, preview_suffix)
             })
             .map_err(|e| ToolCallError(format!("Write failed {}: {}", rel, e)))
-    }
-}
-
-// ─── MemorySearchTool ────────────────────────────────────────────────────────
-
-#[derive(serde::Deserialize)]
-pub struct MemorySearchArgs {
-    pub query: String,
-}
-
-#[derive(Clone)]
-pub struct MemorySearchTool {
-    workspace_path: std::path::PathBuf,
-}
-
-impl MemorySearchTool {
-    pub fn new(workspace_path: std::path::PathBuf) -> Self {
-        Self { workspace_path }
-    }
-}
-
-impl rig_core::tool::Tool for MemorySearchTool {
-    const NAME: &'static str = "memory_search";
-    type Error = ToolCallError;
-    type Args = MemorySearchArgs;
-    type Output = String;
-
-    async fn definition(&self, _prompt: String) -> rig_core::completion::ToolDefinition {
-        rig_core::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Search the agent's long-term memory (session summaries) by keyword. Returns file paths of matching summaries.".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Search query" }
-                },
-                "required": ["query"]
-            }),
-        }
-    }
-
-    async fn call(&self, args: MemorySearchArgs) -> Result<String, ToolCallError> {
-        let index_dir = self.workspace_path.join("memory").join("index");
-        match rustyclaw_storage::SearchIndexManager::new(&index_dir) {
-            Ok(mgr) => match mgr.search(&args.query) {
-                Ok(paths) if paths.is_empty() => Ok("No results found.".into()),
-                Ok(paths) => Ok(paths
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")),
-                Err(e) => Err(ToolCallError(format!("Search failed: {}", e))),
-            },
-            Err(e) => Err(ToolCallError(format!(
-                "Memory index not available (may not have summaries yet): {}",
-                e
-            ))),
-        }
     }
 }
 
@@ -500,215 +447,6 @@ impl rig_core::tool::Tool for WebFetchTool {
     }
 }
 
-#[derive(serde::Deserialize)]
-pub struct WorkspaceExecuteScriptArgs {
-    pub script_name: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub env: std::collections::HashMap<String, String>,
-}
-
-fn is_bwrap_available() -> bool {
-    std::process::Command::new("bwrap")
-        .arg("--ro-bind")
-        .arg("/")
-        .arg("/")
-        .arg("--")
-        .arg("true")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-/// workspace/scripts/ 配下のスクリプトを実行するツール
-#[derive(Clone)]
-pub struct WorkspaceExecuteScriptTool {
-    workspace_dir: std::path::PathBuf,
-}
-
-impl WorkspaceExecuteScriptTool {
-    pub fn new(workspace_dir: std::path::PathBuf) -> Self {
-        Self { workspace_dir }
-    }
-}
-
-impl rig_core::tool::Tool for WorkspaceExecuteScriptTool {
-    const NAME: &'static str = "run_workspace_script";
-    type Error = ToolCallError;
-    type Args = WorkspaceExecuteScriptArgs;
-    type Output = String;
-
-    async fn definition(&self, _prompt: String) -> rig_core::completion::ToolDefinition {
-        rig_core::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Executes a custom script located strictly within the `workspace/scripts/` or a localized skill directory (e.g. `skills/[skill-name]/scripts/`) to run local computations, API interactions, or data operations.".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "script_name": {
-                        "type": "string",
-                        "description": "The script path relative to workspace. Examples: '500_get-vital-data-garmin.sh' or 'skills/vitals-coach/scripts/500_get-vital-data-garmin.sh'. Path traversal sequences like '..' or absolute paths are forbidden."
-                    },
-                    "args": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Optional list of arguments to pass to the script."
-                    },
-                    "env": {
-                        "type": "object",
-                        "description": "Optional environment variables. Supports '$vault:key_name' syntax to resolve from vault.",
-                        "additionalProperties": { "type": "string" }
-                    }
-                },
-                "required": ["script_name"]
-            }),
-        }
-    }
-
-    async fn call(&self, args: WorkspaceExecuteScriptArgs) -> Result<String, ToolCallError> {
-        let script_name = &args.script_name;
-        if script_name.contains("..") || script_name.starts_with('/') || script_name.contains('\\')
-        {
-            return Err(ToolCallError("Error: Security violation. Path traversal ('..'), absolute paths, or backward slashes ('\\') are strictly prohibited.".into()));
-        }
-        let (script_path, scripts_dir) = if script_name.starts_with("skills/") {
-            let path = self.workspace_dir.join(script_name);
-            let dir = path.parent().unwrap_or(&self.workspace_dir).to_path_buf();
-            (path, dir)
-        } else {
-            let dir = self.workspace_dir.join("scripts");
-            let path = dir.join(script_name);
-            (path, dir)
-        };
-        if !script_path.exists() {
-            return Err(ToolCallError(format!(
-                "Error: Script '{}' does not exist at expected location: {:?}",
-                script_name, script_path
-            )));
-        }
-        let ext = script_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        let use_sandbox = is_bwrap_available();
-
-        let original_args_base = match ext {
-            "sh" | "py" | "js" => vec![script_path.to_str().unwrap_or("").to_string()],
-            "ts" => vec!["run".to_string(), script_path.to_str().unwrap_or("").to_string()],
-            _ => vec![],
-        };
-
-        let mut original_args = original_args_base;
-        original_args.extend(args.args.clone());
-
-        let original_program = match ext {
-            "sh" => "bash",
-            "py" => "python3",
-            "js" => "node",
-            "ts" => "bun",
-            _ => script_path.to_str().unwrap_or(""),
-        };
-
-        let mut cmd = if use_sandbox {
-            tracing::info!("Running script '{}' inside Bubblewrap sandbox", script_name);
-            // workspace_dir がシンボリックリンク経由の NFS パスを含む場合、
-            // bwrap の --bind はマウント先作成に失敗する。canonical path を使う。
-            let workspace_bind = self.workspace_dir.canonicalize()
-                .unwrap_or_else(|_| self.workspace_dir.clone());
-            let mut c = tokio::process::Command::new("bwrap");
-            c.arg("--ro-bind").arg("/").arg("/")
-             .arg("--dev").arg("/dev")
-             .arg("--proc").arg("/proc")
-             .arg("--tmpfs").arg("/tmp")
-             .arg("--bind").arg(&workspace_bind).arg(&workspace_bind);
-            // $HOME/.config を RW バインドする。
-            // gws 等の外部認証ツールはトークンキャッシュを ~/.config/<tool>/ に書き込む。
-            // --ro-bind / / だけだとそのディレクトリが読み取り専用になり
-            // "Read-only file system (os error 30)" で認証に失敗するため、
-            // $HOME/.config が存在する場合のみ書き込み可能にオーバーレイする。
-            if let Some(home) = std::env::var_os("HOME") {
-                let config_dir = std::path::Path::new(&home).join(".config");
-                if config_dir.exists() {
-                    c.arg("--bind").arg(&config_dir).arg(&config_dir);
-                }
-            }
-            c.arg("--share-net")
-             .arg("--")
-             .arg(original_program);
-            c.args(&original_args);
-            c
-        } else {
-            tracing::warn!("bwrap command not found. Running script '{}' without sandbox protection!", script_name);
-            let mut c = tokio::process::Command::new(original_program);
-            c.args(&original_args);
-            c
-        };
-        for (key, val_str) in &args.env {
-            let resolved = if let Some(vault_key) = val_str.strip_prefix("$vault:") {
-                let mut resolved_opt = match rustyclaw_config::vault::load_vault(None) {
-                    Ok(secrets) => secrets.get(vault_key).cloned(),
-                    Err(_) => None,
-                };
-                if resolved_opt.is_none() {
-                    let json_path = rustyclaw_config::get_config_dir().join("vault.json");
-                    if let Ok(file) = std::fs::File::open(json_path)
-                        && let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(
-                            std::io::BufReader::new(file),
-                        )
-                        && let Some(v) = json.get(vault_key).and_then(|v| v.as_str())
-                    {
-                        resolved_opt = Some(v.to_string());
-                    }
-                }
-                let env_var_name = vault_key.replace('-', "_").to_uppercase();
-                if resolved_opt.is_none()
-                    && let Ok(env_val) = std::env::var(&env_var_name)
-                {
-                    resolved_opt = Some(env_val);
-                }
-                match resolved_opt {
-                    Some(val) => val,
-                    None => {
-                        return Err(ToolCallError(format!(
-                            "Error: Failed to resolve vault reference '$vault:{}'. \n\
-                         Key '{}' was not found in vault.enc, vault.json, or env var '{}'. \n\
-                         To configure: `rustyclaw vault set {} <value>`",
-                            vault_key, vault_key, env_var_name, vault_key
-                        )));
-                    }
-                }
-            } else {
-                val_str.clone()
-            };
-            cmd.env(key, resolved);
-        }
-        cmd.current_dir(&scripts_dir);
-        match cmd.output().await {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let mut content = format!("--- STDOUT ---\n{}", stdout);
-                if !stderr.is_empty() {
-                    content.push_str(&format!("\n--- STDERR ---\n{}", stderr));
-                }
-                content.push_str(&format!("\n--- EXIT STATUS ---\n{}", output.status));
-                if output.status.success() {
-                    Ok(content)
-                } else {
-                    Err(ToolCallError(content))
-                }
-            }
-            Err(e) => Err(ToolCallError(format!(
-                "Error: Failed to spawn script process: {:#}",
-                e
-            ))),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,167 +615,6 @@ mod tests {
         assert!(!plain.contains("秘密"), "script内容が除去されること");
     }
 
-    #[tokio::test]
-    async fn test_memory_search_tool_schema() {
-        use rig_core::tool::ToolDyn;
-        let dir = tempfile::tempdir().unwrap();
-        let tool = MemorySearchTool::new(dir.path().to_path_buf());
-        assert_eq!(tool.name(), "memory_search");
-        let def = tool.definition("".to_string()).await;
-        assert!(def.parameters["properties"]["query"].is_object());
-        assert_eq!(def.parameters["required"][0], "query");
-    }
-
-    #[tokio::test]
-    async fn test_memory_search_missing_query() {
-        use rig_core::tool::ToolDyn;
-        let dir = tempfile::tempdir().unwrap();
-        let tool = MemorySearchTool::new(dir.path().to_path_buf());
-        let res = tool.call("{}".to_string()).await;
-        assert!(res.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_memory_search_empty_index() {
-        use rig_core::tool::ToolDyn;
-        let dir = tempfile::tempdir().unwrap();
-        let tool = MemorySearchTool::new(dir.path().to_path_buf());
-        // インデックスが存在しない場合は graceful に処理（クラッシュしないこと）
-        let res = tool.call(r#"{"query":"rust"}"#.to_string()).await;
-        // エラーになっても文字列は返る（空でない）
-        let text = match res {
-            Ok(s) => s,
-            Err(e) => e.to_string(),
-        };
-        assert!(!text.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_workspace_execute_script_tool_schema() {
-        use rig_core::tool::ToolDyn;
-        let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        assert_eq!(tool.name(), "run_workspace_script");
-        let def = tool.definition("".to_string()).await;
-        assert!(def.parameters["properties"]["script_name"].is_object());
-    }
-
-    #[tokio::test]
-    async fn test_workspace_execute_script_path_traversal() {
-        use rig_core::tool::ToolDyn;
-        let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        let res = tool
-            .call(r#"{"script_name":"../etc/passwd"}"#.to_string())
-            .await;
-        assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("Security violation"));
-    }
-
-    #[tokio::test]
-    async fn test_workspace_execute_script_absolute_path() {
-        use rig_core::tool::ToolDyn;
-        let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        let res = tool
-            .call(r#"{"script_name":"/etc/passwd"}"#.to_string())
-            .await;
-        assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("Security violation"));
-    }
-
-    #[tokio::test]
-    async fn test_workspace_execute_script_localized_success() {
-        use rig_core::tool::ToolDyn;
-        let dir = tempfile::tempdir().unwrap();
-        let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
-
-        // 局所化したダミースクリプトを作成
-        let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
-        std::fs::create_dir_all(&localized_script_dir).unwrap();
-
-        let script_path = localized_script_dir.join("test-run.sh");
-        std::fs::write(&script_path, "#!/bin/bash\necho 'hello vitals'").unwrap();
-
-        // 実行権限の付与（Unix系のみ）
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&script_path, perms).unwrap();
-        }
-
-        let res = tool
-            .call(r#"{"script_name":"skills/vitals-coach/scripts/test-run.sh"}"#.to_string())
-            .await;
-
-        assert!(res.is_ok(), "Tool reported error: {:?}", res);
-        assert!(res.unwrap().contains("hello vitals"));
-    }
-
-    #[tokio::test]
-    async fn test_workspace_execute_script_vault_injection_success() {
-        use rig_core::tool::ToolDyn;
-        let dir = tempfile::tempdir().unwrap();
-        let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
-
-        let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
-        std::fs::create_dir_all(&localized_script_dir).unwrap();
-
-        let script_path = localized_script_dir.join("test-env.sh");
-        std::fs::write(&script_path, "#!/bin/bash\necho \"VAL is $TEST_VAL\"").unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&script_path, perms).unwrap();
-        }
-
-        // 環境変数フォールバックが働くように親プロセスにセット
-        unsafe {
-            std::env::set_var("TEST_KEY", "resolved-secret-from-env");
-        }
-
-        let res = tool.call(r#"{"script_name":"skills/vitals-coach/scripts/test-env.sh","env":{"TEST_VAL":"$vault:test-key"}}"#.to_string()).await;
-
-        unsafe {
-            std::env::remove_var("TEST_KEY");
-        }
-
-        assert!(res.is_ok(), "Tool reported error: {:?}", res);
-        assert!(res.unwrap().contains("VAL is resolved-secret-from-env"));
-    }
-
-    #[tokio::test]
-    async fn test_workspace_execute_script_vault_injection_fail_fast() {
-        use rig_core::tool::ToolDyn;
-        let dir = tempfile::tempdir().unwrap();
-        let tool = WorkspaceExecuteScriptTool::new(dir.path().to_path_buf());
-
-        let localized_script_dir = dir.path().join("skills/vitals-coach/scripts");
-        std::fs::create_dir_all(&localized_script_dir).unwrap();
-
-        let script_path = localized_script_dir.join("test-env.sh");
-        std::fs::write(&script_path, "#!/bin/bash\necho \"VAL is $TEST_VAL\"").unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&script_path, perms).unwrap();
-        }
-
-        // キーが一切解決できない状態
-        let res = tool.call(r#"{"script_name":"skills/vitals-coach/scripts/test-env.sh","env":{"TEST_VAL":"$vault:non-existent-secret-key-xyz"}}"#.to_string()).await;
-
-        // 方式A: 即座にフェイルファスト（エラー）になり、スクリプト実行は行われない
-        assert!(res.is_err());
-        let err = res.unwrap_err().to_string();
-        assert!(err.contains("Failed to resolve vault reference"));
-        assert!(err.contains("rustyclaw vault set non-existent-secret-key-xyz"));
-    }
-
     // ── Task 1: rig_core::tool::Tool 直接実装テスト ──
     #[tokio::test]
     async fn test_web_fetch_rig_core_tool_name() {
@@ -1109,48 +686,15 @@ mod tests {
     async fn test_workspace_write_preview_url() {
         use rig_core::tool::ToolDyn;
         let dir = tempfile::tempdir().unwrap();
-        let tool = WorkspaceWriteTool::new(dir.path().to_path_buf(), Some("http://100.100.100.100:4000".to_string()));
-        let res = tool.call(r#"{"path":"previews/index.html","content":"<h1>hello</h1>"}"#.to_string())
+        let tool = WorkspaceWriteTool::new(
+            dir.path().to_path_buf(),
+            Some("http://100.100.100.100:4000".to_string()),
+        );
+        let res = tool
+            .call(r#"{"path":"previews/index.html","content":"<h1>hello</h1>"}"#.to_string())
             .await
             .unwrap();
         assert!(res.contains("Preview URL: http://100.100.100.100:4000/index.html"));
-    }
-
-    // ── Task 3: 残りのツール rig-core impl ──
-    #[tokio::test]
-    async fn test_memory_search_rig_core_missing_query() {
-        use rig_core::tool::ToolDyn;
-        let dir = tempfile::tempdir().unwrap();
-        let tool = MemorySearchTool::new(dir.path().to_path_buf());
-        let result = tool.call("{}".to_string()).await;
-        assert!(result.is_err()); // "query" is required
-    }
-
-    #[tokio::test]
-    async fn test_web_search_rig_core_missing_query() {
-        use rig_core::tool::ToolDyn;
-        let tool = WebSearchTool::new("dummy-key".to_string());
-        let result = tool.call("{}".to_string()).await;
-        assert!(result.is_err()); // "query" is required
-    }
-
-    #[tokio::test]
-    async fn test_cron_schedule_rig_core_call() {
-        use rig_core::tool::ToolDyn;
-        let tool = CronScheduleTool::new(|| serde_json::json!([{"id":"job1"}]));
-        let result = tool.call("{}".to_string()).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().contains("job1"));
-    }
-
-    #[tokio::test]
-    async fn test_workspace_execute_script_rig_core_path_traversal() {
-        use rig_core::tool::ToolDyn;
-        let tool = WorkspaceExecuteScriptTool::new(std::path::PathBuf::from("/tmp"));
-        let result = tool
-            .call(r#"{"script_name":"../etc/passwd"}"#.to_string())
-            .await;
-        assert!(result.is_err());
     }
 
     // ── Task 4: ToolRegistry rig-core ToolDyn ──
@@ -1174,5 +718,4 @@ mod tests {
         assert!(!defs[0].description.is_empty());
         assert!(defs[0].parameters.get("properties").is_some());
     }
-
 }

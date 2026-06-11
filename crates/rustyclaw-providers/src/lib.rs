@@ -1,15 +1,15 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
+use rig_core::OneOrMany;
+use rig_core::client::CompletionClient;
+use rig_core::completion::CompletionModel;
+use rig_core::completion::CompletionRequest;
 use rustyclaw_config::{Config, LlmModelConfig, get_app_dir};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use rig_core::OneOrMany;
-use rig_core::client::CompletionClient;
-use rig_core::completion::CompletionModel;
-use rig_core::completion::CompletionRequest;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
@@ -54,9 +54,7 @@ impl ProviderError {
 
                     // リセット時間文の直後の区切り（ピリオド、改行、ダブルクォーテーション等）で切り出し、
                     // メッセージ後半に含まれる "model" 等の 'm' に誤反応するのを防ぐ
-                    let limit_part = if let Some(end_pos) =
-                        sub.find(['.', '\n', '"', '\\'])
-                    {
+                    let limit_part = if let Some(end_pos) = sub.find(['.', '\n', '"', '\\']) {
                         &sub[..end_pos]
                     } else {
                         sub
@@ -473,22 +471,25 @@ impl LlmProvider for OpenAiCompatProvider {
             output_schema: None,
         };
 
-        tracing::info!("Sending LLM request to OpenAI compat API (via rig-core) for model: {}", resolved_model);
+        tracing::info!(
+            "Sending LLM request to OpenAI compat API (via rig-core) for model: {}",
+            resolved_model
+        );
 
-        let response = model
-            .completion(request)
-            .await
-            .map_err(|e| {
-                let err_str = e.to_string();
-                if err_str.contains("insufficient_quota") || err_str.contains("rate_limit") || err_str.contains("429") {
-                    let err = ProviderError::RateLimit(err_str);
-                    let provider_id = resolve_provider_id(&self.model);
-                    set_provider_cooldown_from_error(&provider_id, &err);
-                    err
-                } else {
-                    ProviderError::ExecutionFailed(err_str)
-                }
-            })?;
+        let response = model.completion(request).await.map_err(|e| {
+            let err_str = e.to_string();
+            if err_str.contains("insufficient_quota")
+                || err_str.contains("rate_limit")
+                || err_str.contains("429")
+            {
+                let err = ProviderError::RateLimit(err_str);
+                let provider_id = resolve_provider_id(&self.model);
+                set_provider_cooldown_from_error(&provider_id, &err);
+                err
+            } else {
+                ProviderError::ExecutionFailed(err_str)
+            }
+        })?;
 
         let mut content = String::new();
         let mut tool_calls = Vec::new();
@@ -511,7 +512,11 @@ impl LlmProvider for OpenAiCompatProvider {
                 _ => {}
             }
         }
-        let tool_calls_opt = if tool_calls.is_empty() { None } else { Some(tool_calls) };
+        let tool_calls_opt = if tool_calls.is_empty() {
+            None
+        } else {
+            Some(tool_calls)
+        };
 
         let prompt_tokens = response.usage.input_tokens as u32;
         let completion_tokens = response.usage.output_tokens as u32;
@@ -591,20 +596,20 @@ impl LlmProvider for OpenAiCompatProvider {
             resolved_model
         );
 
-        let mut res = model
-            .stream(request)
-            .await
-            .map_err(|e| {
-                let err_str = e.to_string();
-                if err_str.contains("insufficient_quota") || err_str.contains("rate_limit") || err_str.contains("429") {
-                    let err = ProviderError::RateLimit(err_str);
-                    let provider_id = resolve_provider_id(&self.model);
-                    set_provider_cooldown_from_error(&provider_id, &err);
-                    err
-                } else {
-                    ProviderError::ExecutionFailed(err_str)
-                }
-            })?;
+        let mut res = model.stream(request).await.map_err(|e| {
+            let err_str = e.to_string();
+            if err_str.contains("insufficient_quota")
+                || err_str.contains("rate_limit")
+                || err_str.contains("429")
+            {
+                let err = ProviderError::RateLimit(err_str);
+                let provider_id = resolve_provider_id(&self.model);
+                set_provider_cooldown_from_error(&provider_id, &err);
+                err
+            } else {
+                ProviderError::ExecutionFailed(err_str)
+            }
+        })?;
 
         let resolved_model_clone = resolved_model.clone();
         let resolved_category = opts
@@ -743,50 +748,6 @@ impl CloudflareEmbeddingClient {
                 .map(|r| r.data)
                 .ok_or_else(|| anyhow::anyhow!("CF embedding: result field is null"))
         }
-    }
-}
-
-/// fastembed (ONNX Runtime) を使ったローカル埋め込みクライアント。
-/// `intfloat/multilingual-e5-small` (384 次元) をローカル推論する。
-/// 初回呼び出し時にモデルファイルをダウンロード・キャッシュする (~30MB)。
-#[derive(Clone)]
-pub struct LocalEmbeddingClient {
-    // fastembed 5 の embed は &mut self を要求するため Mutex で包む
-    model: Arc<Mutex<fastembed::TextEmbedding>>,
-}
-
-impl LocalEmbeddingClient {
-    /// ONNX モデルを初期化する。
-    /// cache_dir: モデルキャッシュ先ディレクトリ（例: `~/.rustyclaw/models/`）。
-    pub fn new(cache_dir: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
-        let model = fastembed::TextEmbedding::try_new(
-            fastembed::InitOptions::new(fastembed::EmbeddingModel::MultilingualE5Small)
-                .with_show_download_progress(true)
-                .with_cache_dir(cache_dir.as_ref().to_path_buf()),
-        )
-        .map_err(|e| anyhow::anyhow!("fastembed init failed: {}", e))?;
-        Ok(Self {
-            model: Arc::new(Mutex::new(model)),
-        })
-    }
-
-    /// テキストをベクトル化する（384 次元）。空の入力は即座に `Ok(vec![])` を返す。
-    pub async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
-        if texts.is_empty() {
-            return Ok(vec![]);
-        }
-        let owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
-        let model = Arc::clone(&self.model);
-        tokio::task::spawn_blocking(move || {
-            let mut guard = model
-                .lock()
-                .map_err(|e| anyhow::anyhow!("fastembed mutex poisoned: {}", e))?;
-            guard
-                .embed(owned, None)
-                .map_err(|e| anyhow::anyhow!("fastembed embed failed: {}", e))
-        })
-        .await
-        .context("LocalEmbeddingClient: spawn_blocking panicked")?
     }
 }
 
@@ -2416,8 +2377,7 @@ mod tests {
         use rig_core::OneOrMany;
         use rig_core::completion::Message as RigMsg;
         use rig_core::completion::message::{
-            AssistantContent, Text, ToolResult, ToolResultContent,
-            UserContent,
+            AssistantContent, Text, ToolResult, ToolResultContent, UserContent,
         };
 
         let history = [
@@ -2473,27 +2433,6 @@ mod tests {
         );
         let sink = model.usage_sink();
         assert!(sink.lock().unwrap().is_none());
-    }
-
-    #[tokio::test]
-    #[ignore = "requires fastembed model download (~30MB) on first run; cached after"]
-    async fn test_local_embedding_client_embed_dims() {
-        let cache_dir = std::env::temp_dir().join("rustyclaw_fastembed_test");
-        let client = LocalEmbeddingClient::new(&cache_dir).expect("model init failed");
-        let result = client
-            .embed(&["Hello world", "こんにちは"])
-            .await
-            .expect("embed failed");
-        assert_eq!(result.len(), 2);
-        assert_eq!(
-            result[0].len(),
-            384,
-            "expected 384 dims for multilingual-e5-small"
-        );
-        assert_ne!(
-            result[0], result[1],
-            "different texts should produce different vectors"
-        );
     }
 
     #[test]
@@ -2621,4 +2560,3 @@ mod tests {
         }
     }
 }
-

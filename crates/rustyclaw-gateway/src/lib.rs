@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rustyclaw_agent::{build_heartbeat_rag_query, Pipeline};
+use rustyclaw_agent::{Pipeline, build_heartbeat_rag_query};
 use rustyclaw_channels::{Channel, DiscordConnector};
 use rustyclaw_config::Config;
 use std::collections::HashMap;
@@ -10,6 +10,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex as TokioMutex, Semaphore, broadcast, mpsc};
 
 pub mod cron;
+mod external_mcp;
 pub mod health;
 pub mod heartbeat;
 pub(crate) mod skills;
@@ -378,7 +379,10 @@ impl LaneRegistry {
                                                     e
                                                 );
                                                 let _ = bus.publish(SystemEvent::SystemError {
-                                                    message: format!("Heartbeat LLM execution failed: {:#}", e),
+                                                    message: format!(
+                                                        "Heartbeat LLM execution failed: {:#}",
+                                                        e
+                                                    ),
                                                 });
                                                 crate::queue_remove(&session_id);
                                                 break;
@@ -463,37 +467,24 @@ impl LaneRegistry {
                                             )
                                             .await;
 
-                                            // Index matching summary in Tantivy
-                                            let index_dir =
-                                                workspace_path.join("memory").join("index");
-                                            if let Ok(search_mgr) =
-                                                rustyclaw_storage::SearchIndexManager::new(
-                                                    &index_dir,
-                                                )
-                                            {
-                                                let _ = search_mgr.index_file(
-                                                    &file_path,
-                                                    &response.content,
-                                                    &today,
-                                                );
-                                            }
                                             if let Ok(db) =
                                                 rustyclaw_storage::DbManager::new(&db_path)
                                             {
-                                                let trigger =
-                                                    if session_id.starts_with("cron:heartbeat") {
-                                                        "heartbeat"
-                                                    } else if session_id.starts_with("cron:") {
-                                                        "cron"
-                                                    } else if session_id.starts_with("discord-") {
-                                                        "discord"
-                                                    } else if session_id.starts_with("http-dashboard") {
-                                                        "dashboard"
-                                                    } else if session_id.starts_with("cli-") {
-                                                        "cli"
-                                                    } else {
-                                                        "unknown"
-                                                    };
+                                                let trigger = if session_id
+                                                    .starts_with("cron:heartbeat")
+                                                {
+                                                    "heartbeat"
+                                                } else if session_id.starts_with("cron:") {
+                                                    "cron"
+                                                } else if session_id.starts_with("discord-") {
+                                                    "discord"
+                                                } else if session_id.starts_with("http-dashboard") {
+                                                    "dashboard"
+                                                } else if session_id.starts_with("cli-") {
+                                                    "cli"
+                                                } else {
+                                                    "unknown"
+                                                };
                                                 let _ = db.record_usage(
                                                     &session_id,
                                                     response.prompt_tokens.unwrap_or(0),
@@ -513,22 +504,41 @@ impl LaneRegistry {
                                             if let Some(err) = e
                                                 .downcast_ref::<rustyclaw_providers::ProviderError>(
                                                 )
-                                                && let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err
-                                                    && attempt < max_attempts {
-                                                        let parsed_reset = err.reset_after();
-                                                        let backoff = parsed_reset
-                                                            .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
-                                                            .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                        crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64(), desc);
-                                                        if let Some(reset_duration) = parsed_reset {
-                                                            tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
-                                                        } else {
-                                                            tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:.1}s. Error: {}", backoff.as_secs_f64(), limit_msg);
-                                                        }
-                                                        tokio::time::sleep(backoff).await;
-                                                        attempt += 1;
-                                                        continue;
-                                                    }
+                                                && let rustyclaw_providers::ProviderError::RateLimit(
+                                                    limit_msg,
+                                                ) = err
+                                                && attempt < max_attempts
+                                            {
+                                                let parsed_reset = err.reset_after();
+                                                let backoff = parsed_reset
+                                                    .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
+                                                    .unwrap_or_else(|| {
+                                                        base_delay * 2u32.pow(attempt)
+                                                    });
+                                                crate::queue_update_or_insert(
+                                                    &session_id,
+                                                    "Cooldown",
+                                                    backoff.as_secs_f64(),
+                                                    desc,
+                                                );
+                                                if let Some(reset_duration) = parsed_reset {
+                                                    tracing::warn!(
+                                                        "Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}",
+                                                        reset_duration.as_secs_f64(),
+                                                        backoff.as_secs_f64(),
+                                                        limit_msg
+                                                    );
+                                                } else {
+                                                    tracing::warn!(
+                                                        "Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:.1}s. Error: {}",
+                                                        backoff.as_secs_f64(),
+                                                        limit_msg
+                                                    );
+                                                }
+                                                tokio::time::sleep(backoff).await;
+                                                attempt += 1;
+                                                continue;
+                                            }
                                             // Non-rate-limit error or max retries exceeded
                                             tracing::error!(
                                                 "Failed to generate Daily Summary: {:#}",
@@ -563,11 +573,10 @@ impl LaneRegistry {
                     }
                     // 3. 通常ユーザーセッション実行処理
                     else {
-                        let desc = if let Some(suffix) = session_id.strip_prefix("cron:session-summary:") {
-                            format!(
-                                "Auto-Summary for Session '{}'",
-                                suffix
-                            )
+                        let desc = if let Some(suffix) =
+                            session_id.strip_prefix("cron:session-summary:")
+                        {
+                            format!("Auto-Summary for Session '{}'", suffix)
                         } else if session_id.starts_with("cron:") {
                             // cron sessions pre-register display name in CronService; keep it
                             String::new()
@@ -653,42 +662,43 @@ impl LaneRegistry {
                                         &workspace_path,
                                         &content,
                                     );
-                                    let exec_res =
-                                        if let Some(target_session_id) = session_id.strip_prefix("cron:session-summary:") {
-                                            pipeline
-                                                .generate_session_summary(
-                                                    &workspace_path,
-                                                    target_session_id,
-                                                )
-                                                .await
-                                                .map(|summary| rustyclaw_providers::LlmResponse {
-                                                    role: "assistant".to_string(),
-                                                    content: summary,
-                                                    tool_calls: None,
-                                                    prompt_tokens: None,
-                                                    completion_tokens: None,
-                                                    total_tokens: None,
-                                                    model_used: None,
-                                                    provider_id: None,
-                                                })
+                                    let exec_res = if let Some(target_session_id) =
+                                        session_id.strip_prefix("cron:session-summary:")
+                                    {
+                                        pipeline
+                                            .generate_session_summary(
+                                                &workspace_path,
+                                                target_session_id,
+                                            )
+                                            .await
+                                            .map(|summary| rustyclaw_providers::LlmResponse {
+                                                role: "assistant".to_string(),
+                                                content: summary,
+                                                tool_calls: None,
+                                                prompt_tokens: None,
+                                                completion_tokens: None,
+                                                total_tokens: None,
+                                                model_used: None,
+                                                provider_id: None,
+                                            })
+                                    } else {
+                                        let run_purpose = if session_id == "cron:topic-patrol" {
+                                            "patrol"
                                         } else {
-                                            let run_purpose = if session_id == "cron:topic-patrol" {
-                                                "patrol"
-                                            } else {
-                                                "discord"
-                                            };
-                                            pipeline
-                                                .execute_with_rig_agent(
-                                                    &workspace_path,
-                                                    &session_id,
-                                                    &content,
-                                                    &injected_content,
-                                                    tool_server_handle.clone(),
-                                                    run_purpose,
-                                                    progress_tx_opt,
-                                                )
-                                                .await
+                                            "discord"
                                         };
+                                        pipeline
+                                            .execute_with_rig_agent(
+                                                &workspace_path,
+                                                &session_id,
+                                                &content,
+                                                &injected_content,
+                                                tool_server_handle.clone(),
+                                                run_purpose,
+                                                progress_tx_opt,
+                                            )
+                                            .await
+                                    };
 
                                     // 進捗表示の終了とクリーンアップ
                                     if let Some(ref rep) = progress_reporter {
@@ -708,16 +718,24 @@ impl LaneRegistry {
                                             });
 
                                             // セッションサマリー RAG 化: ホワイトリスト cron ジョブ完了後に summary イベントを発行 (Phase 41-1)
-                                            if SUMMARIZE_CRON_SESSIONS.contains(&session_id.as_str()) {
-                                                let summary_session_id = format!("cron:session-summary:{}", session_id);
-                                                if let Err(e) = bus.publish(SystemEvent::IncomingMessage {
-                                                    session_id: summary_session_id,
-                                                    user_id: "cron".to_string(),
-                                                    channel_id: "cron".to_string(),
-                                                    content: String::new(),
-                                                    priority: Priority::Background,
-                                                }) {
-                                                    tracing::warn!("Failed to publish session-summary event: {:#}", e);
+                                            if SUMMARIZE_CRON_SESSIONS
+                                                .contains(&session_id.as_str())
+                                            {
+                                                let summary_session_id =
+                                                    format!("cron:session-summary:{}", session_id);
+                                                if let Err(e) =
+                                                    bus.publish(SystemEvent::IncomingMessage {
+                                                        session_id: summary_session_id,
+                                                        user_id: "cron".to_string(),
+                                                        channel_id: "cron".to_string(),
+                                                        content: String::new(),
+                                                        priority: Priority::Background,
+                                                    })
+                                                {
+                                                    tracing::warn!(
+                                                        "Failed to publish session-summary event: {:#}",
+                                                        e
+                                                    );
                                                 }
                                             }
 
@@ -746,11 +764,11 @@ impl LaneRegistry {
                                                         serde_json::from_str::<serde_json::Value>(
                                                             &c,
                                                         )
-                                                    {
-                                                        current_state = parsed;
-                                                        current_state["lastChecks"]["lastUserContact"] =
-                                                            serde_json::json!(now);
-                                                    }
+                                                {
+                                                    current_state = parsed;
+                                                    current_state["lastChecks"]["lastUserContact"] =
+                                                        serde_json::json!(now);
+                                                }
                                                 if let Ok(serialized) =
                                                     serde_json::to_string_pretty(&current_state)
                                                 {
@@ -761,20 +779,21 @@ impl LaneRegistry {
                                                     .await;
                                                 }
 
-                                                let trigger =
-                                                    if session_id.starts_with("cron:heartbeat") {
-                                                        "heartbeat"
-                                                    } else if session_id.starts_with("cron:") {
-                                                        "cron"
-                                                    } else if session_id.starts_with("discord-") {
-                                                        "discord"
-                                                    } else if session_id.starts_with("http-dashboard") {
-                                                        "dashboard"
-                                                    } else if session_id.starts_with("cli-") {
-                                                        "cli"
-                                                    } else {
-                                                        "unknown"
-                                                    };
+                                                let trigger = if session_id
+                                                    .starts_with("cron:heartbeat")
+                                                {
+                                                    "heartbeat"
+                                                } else if session_id.starts_with("cron:") {
+                                                    "cron"
+                                                } else if session_id.starts_with("discord-") {
+                                                    "discord"
+                                                } else if session_id.starts_with("http-dashboard") {
+                                                    "dashboard"
+                                                } else if session_id.starts_with("cli-") {
+                                                    "cli"
+                                                } else {
+                                                    "unknown"
+                                                };
                                                 let _ = db.record_usage(
                                                     &session_id,
                                                     response.prompt_tokens.unwrap_or(0),
@@ -794,22 +813,41 @@ impl LaneRegistry {
                                             if let Some(err) = e
                                                 .downcast_ref::<rustyclaw_providers::ProviderError>(
                                                 )
-                                                && let rustyclaw_providers::ProviderError::RateLimit(limit_msg) = err
-                                                    && attempt < max_attempts {
-                                                        let parsed_reset = err.reset_after();
-                                                        let backoff = parsed_reset
-                                                            .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
-                                                            .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                        crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64(), &desc);
-                                                        if let Some(reset_duration) = parsed_reset {
-                                                            tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
-                                                        } else {
-                                                            tracing::warn!("Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:.1}s. Error: {}", backoff.as_secs_f64(), limit_msg);
-                                                        }
-                                                        tokio::time::sleep(backoff).await;
-                                                        attempt += 1;
-                                                        continue;
-                                                    }
+                                                && let rustyclaw_providers::ProviderError::RateLimit(
+                                                    limit_msg,
+                                                ) = err
+                                                && attempt < max_attempts
+                                            {
+                                                let parsed_reset = err.reset_after();
+                                                let backoff = parsed_reset
+                                                    .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
+                                                    .unwrap_or_else(|| {
+                                                        base_delay * 2u32.pow(attempt)
+                                                    });
+                                                crate::queue_update_or_insert(
+                                                    &session_id,
+                                                    "Cooldown",
+                                                    backoff.as_secs_f64(),
+                                                    &desc,
+                                                );
+                                                if let Some(reset_duration) = parsed_reset {
+                                                    tracing::warn!(
+                                                        "Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}",
+                                                        reset_duration.as_secs_f64(),
+                                                        backoff.as_secs_f64(),
+                                                        limit_msg
+                                                    );
+                                                } else {
+                                                    tracing::warn!(
+                                                        "Rate limit exceeded. No quota reset time detected. Falling back to exponential backoff: {:.1}s. Error: {}",
+                                                        backoff.as_secs_f64(),
+                                                        limit_msg
+                                                    );
+                                                }
+                                                tokio::time::sleep(backoff).await;
+                                                attempt += 1;
+                                                continue;
+                                            }
                                             // Non-rate-limit error or max retries exceeded
                                             tracing::error!(
                                                 "Error in Agent execution for Session {}: {:#}",
@@ -864,6 +902,54 @@ impl LaneRegistry {
 // 4. Gateway (オーケストレーターデーモン) の実装
 // ==============================================================================
 
+/// context-mode を起動し、クラッシュ時に指数バックオフで再接続するループを spawn する。
+/// 接続確立後は tool_server_handle に ctx_execute / ctx_search / ctx_index / ctx_patch が自動登録される。
+async fn start_context_mode(
+    workspace_root: PathBuf,
+    tool_server_handle: rig_core::tool::server::ToolServerHandle,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut delay = Duration::from_secs(1);
+        loop {
+            match external_mcp::ExternalMcpController::spawn(&workspace_root) {
+                Err(e) => {
+                    tracing::error!("context-mode 起動失敗: {e}");
+                }
+                Ok((mut ctrl, stdin, stdout)) => {
+                    let handler = rig_core::tool::rmcp::McpClientHandler::new(
+                        rmcp::model::ClientInfo::default(),
+                        tool_server_handle.clone(),
+                    );
+                    match handler.connect((stdout, stdin)).await {
+                        Ok(service) => {
+                            tracing::info!(
+                                "context-mode 接続完了 (ctx_execute/search/index/patch 登録)"
+                            );
+                            delay = Duration::from_secs(1);
+                            tokio::select! {
+                                _ = ctrl.wait() => {
+                                    tracing::warn!("context-mode プロセスが終了。再起動します...");
+                                }
+                                result = service.waiting() => {
+                                    tracing::warn!(
+                                        "context-mode MCP セッション終了 ({result:?})。再起動します..."
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("context-mode MCP 接続失敗: {e}");
+                        }
+                    }
+                }
+            }
+            tracing::info!("context-mode を {:?} 後に再起動...", delay);
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(Duration::from_secs(60));
+        }
+    })
+}
+
 pub struct Gateway {
     config_path: PathBuf,
     workspace_path: PathBuf,
@@ -887,11 +973,19 @@ impl Gateway {
         // Web Preview Server Startup
         let mut web_preview_task = None;
         let preview_base_url = if config.web_preview.enabled {
-            match crate::web_preview::start_web_preview_server(&config, self.workspace_path.clone()).await {
+            match crate::web_preview::start_web_preview_server(&config, self.workspace_path.clone())
+                .await
+            {
                 Ok((h, bound_addr)) => {
                     web_preview_task = Some(h);
-                    let base = crate::web_preview::get_preview_base_url(&config.web_preview.base_url, bound_addr.port());
-                    tracing::info!("Web Preview Server started successfully. Base URL: {}", base);
+                    let base = crate::web_preview::get_preview_base_url(
+                        &config.web_preview.base_url,
+                        bound_addr.port(),
+                    );
+                    tracing::info!(
+                        "Web Preview Server started successfully. Base URL: {}",
+                        base
+                    );
                     Some(base)
                 }
                 Err(e) => {
@@ -916,6 +1010,10 @@ impl Gateway {
         // 2. ToolServer (rig エージェント用) と ToolRegistry (heartbeat 用) の初期化
         let tool_server_handle = rig_core::tool::server::ToolServer::new().run();
         let mut mcp_service_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+        // context-mode 子プロセスを起動（fail-open: エラーでも Gateway は続行）
+        let _ctx_mode_handle =
+            start_context_mode(self.workspace_path.clone(), tool_server_handle.clone()).await;
 
         // MCP サーバーへの接続 (rig-core rmcp 経由)
         for (name, conf) in &config.mcp {
@@ -962,12 +1060,13 @@ impl Gateway {
 
         // Brave Search ネイティブツール登録
         if let Some(b) = config.tools.brave_search.as_ref().filter(|b| b.enabled)
-            && !b.api_key.is_empty() {
-                let t = rustyclaw_tools::WebSearchTool::new(b.api_key.clone());
-                tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
-                tool_server_handle.add_tool(t).await.ok();
-                tracing::info!("Registered WebSearchTool (Brave Search).");
-            }
+            && !b.api_key.is_empty()
+        {
+            let t = rustyclaw_tools::WebSearchTool::new(b.api_key.clone());
+            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+            tool_server_handle.add_tool(t).await.ok();
+            tracing::info!("Registered WebSearchTool (Brave Search).");
+        }
         // WebFetchTool は常時登録（APIキー不要）
         {
             let t = rustyclaw_tools::WebFetchTool::new();
@@ -982,21 +1081,14 @@ impl Gateway {
             tool_server_handle.add_tool(t).await.ok();
         }
         {
-            let t = rustyclaw_tools::WorkspaceWriteTool::new(self.workspace_path.clone(), preview_base_url.clone());
+            let t = rustyclaw_tools::WorkspaceWriteTool::new(
+                self.workspace_path.clone(),
+                preview_base_url.clone(),
+            );
             tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
             tool_server_handle.add_tool(t).await.ok();
         }
-        {
-            let t = rustyclaw_tools::MemorySearchTool::new(self.workspace_path.clone());
-            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
-            tool_server_handle.add_tool(t).await.ok();
-        }
-        {
-            let t = rustyclaw_tools::WorkspaceExecuteScriptTool::new(self.workspace_path.clone());
-            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
-            tool_server_handle.add_tool(t).await.ok();
-        }
-        tracing::info!("Registered Workspace I/O, Memory Search, and Script Execution tools.");
+        tracing::info!("Registered Workspace I/O tools.");
 
         let ws_path_clone = self.workspace_path.clone();
         let db_path_for_tool = self.workspace_path.join("memory.db");
@@ -1079,9 +1171,10 @@ impl Gateway {
         tokio::spawn(async move {
             while let Ok(event) = rx_bus.recv().await {
                 if matches!(event, SystemEvent::IncomingMessage { .. })
-                    && let Err(e) = registry_clone.dispatch(event).await {
-                        tracing::error!("Failed to dispatch event to LaneRegistry: {}", e);
-                    }
+                    && let Err(e) = registry_clone.dispatch(event).await
+                {
+                    tracing::error!("Failed to dispatch event to LaneRegistry: {}", e);
+                }
             }
         });
 
@@ -1126,13 +1219,14 @@ impl Gateway {
                 {
                     // 数字以外の channel_id（"http" など）は Discord チャンネルではないのでスキップ
                     if channel_id.chars().all(|c| c.is_ascii_digit())
-                        && let Err(e) = discord_sender.send_message(&channel_id, &content).await {
-                            tracing::error!(
-                                "Failed to send agent response to channel {}: {:#}",
-                                channel_id,
-                                e
-                            );
-                        }
+                        && let Err(e) = discord_sender.send_message(&channel_id, &content).await
+                    {
+                        tracing::error!(
+                            "Failed to send agent response to channel {}: {:#}",
+                            channel_id,
+                            e
+                        );
+                    }
                 }
             }
         });
@@ -1168,16 +1262,6 @@ impl Gateway {
         cron_svc.start();
 
         // ④ 静的ドキュメント RAG インジェスト（バックグラウンド、起動時）
-        {
-            let ws = self.workspace_path.clone();
-            let cfg = config.clone();
-            let db = self.workspace_path.join("memory.db");
-            tokio::spawn(async move {
-                rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
-                rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
-            });
-        }
-
         // ③ HealthServer (HTTPサーバー) の起動
         let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(1);
         let health_server = health::HealthServer::new(
@@ -1213,16 +1297,6 @@ impl Gateway {
                     match rustyclaw_config::load_config(&self.config_path) {
                         Ok(new_config) => {
                             registry.update_config(new_config.clone());
-                            // 静的ドキュメント RAG を再インジェスト（変更ファイルのみ）
-                            {
-                                let ws = self.workspace_path.clone();
-                                let cfg = new_config.clone();
-                                let db = self.workspace_path.join("memory.db");
-                                tokio::spawn(async move {
-                                    rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
-                                    rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
-                                });
-                            }
                             let m = new_config.get_model("default");
                             tracing::info!("Configuration reloaded successfully: provider={}, model={}", m.model_provider, m.model_name);
                         }
@@ -1237,16 +1311,6 @@ impl Gateway {
                     match rustyclaw_config::load_config(&self.config_path) {
                         Ok(new_config) => {
                             registry.update_config(new_config.clone());
-                            // 静的ドキュメント RAG を再インジェスト（変更ファイルのみ）
-                            {
-                                let ws = self.workspace_path.clone();
-                                let cfg = new_config.clone();
-                                let db = self.workspace_path.join("memory.db");
-                                tokio::spawn(async move {
-                                    rustyclaw_agent::ingest_static_documents(&ws, &cfg, &db).await;
-                                    rustyclaw_agent::ingest_memory_md(&ws, &cfg, &db, None).await;
-                                });
-                            }
                             let m = new_config.get_model("default");
                             tracing::info!("Configuration reloaded successfully via HTTP: provider={}, model={}", m.model_provider, m.model_name);
                         }
@@ -1373,7 +1437,9 @@ mod tests {
         config.web_preview.host = "127.0.0.1".to_string();
         config.web_preview.port = 0;
 
-        let (handle, bound_addr) = crate::web_preview::start_web_preview_server(&config, ws_dir.path().to_path_buf()).await?;
+        let (handle, bound_addr) =
+            crate::web_preview::start_web_preview_server(&config, ws_dir.path().to_path_buf())
+                .await?;
 
         let url = format!("http://{}/hello.html", bound_addr);
         let resp = reqwest::get(&url).await?;

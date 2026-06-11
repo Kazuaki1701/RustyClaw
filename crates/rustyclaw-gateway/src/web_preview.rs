@@ -11,8 +11,7 @@ pub async fn start_web_preview_server(
     workspace_path: PathBuf,
 ) -> Result<(tokio::task::JoinHandle<()>, SocketAddr)> {
     let preview_dir = workspace_path.join("previews");
-    std::fs::create_dir_all(&preview_dir)
-        .context("Failed to create previews directory")?;
+    std::fs::create_dir_all(&preview_dir).context("Failed to create previews directory")?;
 
     let host = &config.web_preview.host;
     let port = config.web_preview.port;

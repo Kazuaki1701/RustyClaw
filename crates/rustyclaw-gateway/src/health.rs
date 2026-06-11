@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use rand::Rng;
 use rustyclaw_config::get_app_dir;
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -6,7 +7,6 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use rand::Rng;
 
 use tokio::net::TcpListener;
 
@@ -90,13 +90,17 @@ impl HealthServer {
                                 // ── ログ系エンドポイント ─────────────────────────
                                 } else if request.starts_with("GET /logs/memory") {
                                     let path = workspace_path_clone.join("MEMORY.md");
-                                    let content = read_file_content(&path, "(MEMORY.md が見つかりません)");
+                                    let content =
+                                        read_file_content(&path, "(MEMORY.md が見つかりません)");
                                     ("200 OK".to_string(), content, "text/plain; charset=utf-8")
                                 } else if request.starts_with("GET /logs/heartbeat-digest") {
                                     let path = workspace_path_clone
                                         .join("memory")
                                         .join("heartbeat-digest.md");
-                                    let content = read_file_content(&path, "(heartbeat-digest.md が見つかりません)");
+                                    let content = read_file_content(
+                                        &path,
+                                        "(heartbeat-digest.md が見つかりません)",
+                                    );
                                     ("200 OK".to_string(), content, "text/plain; charset=utf-8")
                                 } else if request.starts_with("GET /logs/heartbeat-state") {
                                     let path = workspace_path_clone
@@ -458,59 +462,65 @@ impl HealthServer {
                                         let json_body = request[body_start + 4..].trim();
                                         if let Ok(val) =
                                             serde_json::from_str::<serde_json::Value>(json_body)
-                                            && let Some(msg) = val["message"].as_str() {
-                                                // クライアント送信の session_id を優先して使用し、cancel_map との整合を保つ
-                                                let session_id = val["session_id"]
-                                                    .as_str()
-                                                    .map(|s| s.to_string())
-                                                    .unwrap_or_else(|| {
-                                                        let ts = chrono::Local::now().timestamp_nanos_opt().unwrap_or(0);
-                                                        let rnd: u32 = rand::thread_rng().r#gen::<u32>();
-                                                        format!("http-dashboard-{}-{}", ts, rnd)
-                                                    });
-                                                let mut rx = bus_clone.subscribe();
+                                            && let Some(msg) = val["message"].as_str()
+                                        {
+                                            // クライアント送信の session_id を優先して使用し、cancel_map との整合を保つ
+                                            let session_id = val["session_id"]
+                                                .as_str()
+                                                .map(|s| s.to_string())
+                                                .unwrap_or_else(|| {
+                                                    let ts = chrono::Local::now()
+                                                        .timestamp_nanos_opt()
+                                                        .unwrap_or(0);
+                                                    let rnd: u32 =
+                                                        rand::thread_rng().r#gen::<u32>();
+                                                    format!("http-dashboard-{}-{}", ts, rnd)
+                                                });
+                                            let mut rx = bus_clone.subscribe();
 
-                                                // キャンセル通知チャネルを作成し、cancel_map に登録
-                                                let (cancel_tx, cancel_rx) =
-                                                    tokio::sync::oneshot::channel::<()>();
-                                                {
-                                                    let mut map = cancel_map_clone.lock().await;
-                                                    map.insert(session_id.clone(), cancel_tx);
-                                                }
-
-                                                let event = crate::SystemEvent::IncomingMessage {
-                                                    session_id: session_id.clone(),
-                                                    user_id: "http-user".to_string(),
-                                                    channel_id: "http".to_string(),
-                                                    content: msg.to_string(),
-                                                    priority: crate::Priority::Normal,
-                                                };
-
-                                                if bus_clone.publish(event).is_ok() {
-                                                    tokio::select! {
-                                                        res = async {
-                                                            loop {
-                                                                if let Ok(crate::SystemEvent::AgentResponse { session_id: resp_session, content, .. }) = rx.recv().await
-                                                                    && resp_session == session_id {
-                                                                        return content;
-                                                                    }
-                                                            }
-                                                        } => { chat_resp = res; }
-                                                        _ = tokio::time::sleep(std::time::Duration::from_secs(CHAT_TIMEOUT_SECS)) => {
-                                                            chat_resp =
-                                                                "⚠️ タイムアウト: LLM の応答を受信できませんでした。再度お試しください。"
-                                                                    .to_string();
-                                                        }
-                                                        _ = cancel_rx => {
-                                                            chat_resp = "⚠️ 応答を中断しました。".to_string();
-                                                        }
-                                                    }
-                                                } else {
-                                                    chat_resp = "Error: Failed to publish chat event to bus".to_string();
-                                                }
-                                                // 応答済み or キャンセル済みの場合、cancel_map から除去
-                                                cancel_map_clone.lock().await.remove(&session_id);
+                                            // キャンセル通知チャネルを作成し、cancel_map に登録
+                                            let (cancel_tx, cancel_rx) =
+                                                tokio::sync::oneshot::channel::<()>();
+                                            {
+                                                let mut map = cancel_map_clone.lock().await;
+                                                map.insert(session_id.clone(), cancel_tx);
                                             }
+
+                                            let event = crate::SystemEvent::IncomingMessage {
+                                                session_id: session_id.clone(),
+                                                user_id: "http-user".to_string(),
+                                                channel_id: "http".to_string(),
+                                                content: msg.to_string(),
+                                                priority: crate::Priority::Normal,
+                                            };
+
+                                            if bus_clone.publish(event).is_ok() {
+                                                tokio::select! {
+                                                    res = async {
+                                                        loop {
+                                                            if let Ok(crate::SystemEvent::AgentResponse { session_id: resp_session, content, .. }) = rx.recv().await
+                                                                && resp_session == session_id {
+                                                                    return content;
+                                                                }
+                                                        }
+                                                    } => { chat_resp = res; }
+                                                    _ = tokio::time::sleep(std::time::Duration::from_secs(CHAT_TIMEOUT_SECS)) => {
+                                                        chat_resp =
+                                                            "⚠️ タイムアウト: LLM の応答を受信できませんでした。再度お試しください。"
+                                                                .to_string();
+                                                    }
+                                                    _ = cancel_rx => {
+                                                        chat_resp = "⚠️ 応答を中断しました。".to_string();
+                                                    }
+                                                }
+                                            } else {
+                                                chat_resp =
+                                                    "Error: Failed to publish chat event to bus"
+                                                        .to_string();
+                                            }
+                                            // 応答済み or キャンセル済みの場合、cancel_map から除去
+                                            cancel_map_clone.lock().await.remove(&session_id);
+                                        }
                                     }
                                     ("200 OK".to_string(), chat_resp, "text/plain; charset=utf-8")
                                 } else {
@@ -554,7 +564,11 @@ fn read_last_lines(path: &Path, limit: usize) -> String {
         Ok(file) => {
             let reader = std::io::BufReader::new(file);
             let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
-            let start = if lines.len() > limit { lines.len() - limit } else { 0 };
+            let start = if lines.len() > limit {
+                lines.len() - limit
+            } else {
+                0
+            };
             lines[start..].join("\n")
         }
         Err(e) => {
@@ -589,7 +603,6 @@ fn read_file_content(path: &Path, not_found_msg: &str) -> String {
     }
 }
 
-
 fn get_latest_app_log() -> Option<PathBuf> {
     let log_dir = get_app_dir().join("logs");
     if !log_dir.exists() {
@@ -602,11 +615,12 @@ fn get_latest_app_log() -> Option<PathBuf> {
             let path = entry.path();
             if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned())
                 && name.starts_with("rustyclaw.log")
-                    && let Ok(mt) = std::fs::metadata(&path).and_then(|m| m.modified())
-                        && mt > latest_time {
-                            latest_time = mt;
-                            latest_file = Some(path);
-                        }
+                && let Ok(mt) = std::fs::metadata(&path).and_then(|m| m.modified())
+                && mt > latest_time
+            {
+                latest_time = mt;
+                latest_file = Some(path);
+            }
         }
     }
     latest_file
@@ -622,14 +636,14 @@ fn extract_since_param(request: &str) -> Option<String> {
     for pair in query[..end].split('&') {
         if let Some(val) = pair.strip_prefix("since=")
             && val.len() >= 10
-                && val
-                    .chars()
-                    .next()
-                    .map(|c| c.is_ascii_digit())
-                    .unwrap_or(false)
-            {
-                return Some(val.to_string());
-            }
+            && val
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+        {
+            return Some(val.to_string());
+        }
     }
     None
 }
@@ -657,7 +671,8 @@ fn extract_query_param(request: &str, key: &str) -> Option<String> {
     let query = &request[query_start + 1..query_end];
     for pair in query.split('&') {
         if let Some((k, v)) = pair.split_once('=')
-            && k == key {
+            && k == key
+        {
             return Some(v.to_string());
         }
     }
