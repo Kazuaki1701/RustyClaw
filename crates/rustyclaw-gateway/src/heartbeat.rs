@@ -830,7 +830,7 @@ mod tests {
         let sessions_dir = ws_path.join("sessions");
         fs::create_dir_all(&sessions_dir)?;
 
-        let session_file_path = sessions_dir.join("telegram-U123-20260528.jsonl");
+        let session_file_path = sessions_dir.join("discord-C123-20260528.jsonl");
 
         let msg_user = Message {
             role: "user".to_string(),
@@ -873,7 +873,7 @@ mod tests {
             "First digest should contain response"
         );
         assert!(
-            digest_1.contains("[10:15] telegram-U123-20260528"),
+            digest_1.contains("[10:15] discord-C123-20260528"),
             "First digest should contain formatted local timestamp [10:15]"
         );
 
@@ -904,7 +904,7 @@ mod tests {
         let sessions_dir = ws_path.join("sessions");
         fs::create_dir_all(&sessions_dir)?;
 
-        let session_file_path = sessions_dir.join("telegram-U456-20260528.jsonl");
+        let session_file_path = sessions_dir.join("discord-C456-20260528.jsonl");
 
         let messages = vec![
             Message {

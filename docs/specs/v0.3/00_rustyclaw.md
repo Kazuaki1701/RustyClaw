@@ -66,7 +66,7 @@ rustyclaw/
 │   ├── rustyclaw-gateway/       # lib: 起動・オーケストレーション・スケジュール
 │   ├── rustyclaw-agent/         # lib: Pipeline・AgentLoop・AgentInstance
 │   ├── rustyclaw-providers/     # lib: LLM HTTP クライアント群
-│   ├── rustyclaw-channels/      # lib: Telegram・Discord 等のコネクタ
+│   ├── rustyclaw-channels/      # lib: Discord・LINE（将来拡張）コネクタ
 │   ├── rustyclaw-tools/         # lib: built-in tools・MCP クライアント
 │   ├── rustyclaw-config/        # lib: 設定ファイル型定義・migration
 │   └── rustyclaw-storage/       # lib: SQLite・JSONL セッション永続化
@@ -86,7 +86,7 @@ rustyclaw/
 | ログ | `tracing` + `tracing-appender` | `[実装済]` |
 | SQLite | `rusqlite` + `deadpool-sqlite` | `[実装済]` |
 | async trait | `async-trait` | `[実装済]` |
-| 全文検索 | `tantivy` (純 Rust BM25) | `[実装済]` |
+| 全文検索 | `tantivy` (純 Rust BM25) | `[削除済 — v0.4: context-mode に委譲]` |
 | MCP クライアント | `rmcp` | `[実装済]` |
 | atomic write | `tempfile` | `[実装済]` |
 | systemd watchdog | `sd-notify` | `[実装済]` |
@@ -95,8 +95,9 @@ rustyclaw/
 | 日時 | `chrono` | `[実装済]` |
 | Web UI | `axum` (0.7, http1 + json) | `[実装済]` |
 | 乱数 | `rand` | `[実装済]` |
-| LLM 抽象フレームワーク | `rig-core` | `[将来拡張]` |
-| ローカル Embedding | `rig-fastembed` + `fastembed` (onnxruntime) | `[将来拡張]` |
+| cron 次回時刻計算 | `croner` (3.0.1) | `[実装済 — v0.4 Phase 48-1]` |
+| LLM 抽象フレームワーク | `rig-core` (0.38, rmcp feature) | `[実装済 — v0.4]` |
+| ローカル Embedding | `rig-fastembed` + `fastembed` (onnxruntime) | `[削除済 — v0.4: context-mode FTS5 で代替]` |
 
 ### 2.3 Cargo.toml プロファイル設定
 
@@ -142,10 +143,18 @@ rustyclaw-gateway
     ├── AgentLoop → LaneRegistry
     ├── ChannelManager (trait Channel)
     ├── HeartbeatService (HEARTBEAT.md ベース、GeminiClaw 原版)
-    ├── CronService (内製スケジューラー)
+    ├── CronService (内製スケジューラー + HA 10 分ポーリング)
     ├── WatchdogService (systemd watchdog)
     ├── HealthServer (HTTP /health /ready /reload)
-    └── WebDashboard (HTTP /monitor /stats)
+    ├── WebDashboard (HTTP /monitor /stats)
+    └── ExternalMcpController  ◄── v0.4 NEW: context-mode 子プロセス管理
+         │  stdin/stdout MCP JSON-RPC 2.0
+         ▼
+    [ context-mode (Node.js ≥ 22.5) ]  ◄── 子プロセス（常駐）
+         ├── ctx_execute   # bwrap サンドボックス実行
+         ├── ctx_search    # BM25 / FTS5 エピソード記憶検索
+         ├── ctx_index     # エピソード記憶インデックス登録
+         └── ctx_patch     # SEARCH/REPLACE パッチ適用
         ↓
 rustyclaw-agent (Pipeline)
     ├── ContextBuilder
@@ -154,24 +163,25 @@ rustyclaw-agent (Pipeline)
     │   ├── SessionContinuation (日またぎ文脈)
     │   └── ProactivePosts 注入
     ├── CallLLM (FallbackChain + streaming SSE)
-    ├── ExecuteTools (ToolRegistry in-process)  [将来拡張: bwrap 隔離]
+    ├── ExecuteTools (ToolRegistry)
+    │     ├── ctx_execute / ctx_search / ctx_index / ctx_patch  ← context-mode MCP ツール
+    │     └── workspace_read / workspace_write / web_fetch / web_search / cron_schedule  ← Rust 内製
     └── PublishResponse
         ↓
-rustyclaw-providers (LlmProvider trait)
+rustyclaw-providers (LlmProvider trait / rig-core 0.38 ベース)
     ├── OpenAiCompatProvider (reqwest + SSE)
     ├── AnthropicProvider
     ├── GeminiProvider
     └── OllamaProvider (ローカル LLM)
-    [将来拡張] └── rig-core ベース実装へ移行
         ↓
 rustyclaw-storage
     ├── SessionStore (JSONL append-only, fail-closed)
     ├── MemoryStore (MEMORY.md + logs/ + summaries/)
-    ├── SearchIndex (tantivy BM25)  [将来拡張: rig-fastembed Embedding 追加]
     └── SqliteStore
         ├── usage テーブル（トークン使用量）
         ├── patrol_state テーブル（heartbeat-state.json 相当）
         └── seen_items テーブル（Interest Patrol 既読管理）
+    ※ SearchIndex (tantivy) / memory_embeddings → 削除済み（context-mode に委譲）
 ```
 
 ---
@@ -212,8 +222,8 @@ rustyclaw-storage
 11. **`memory/logs/` と `memory/summaries/` は別ディレクトリで管理**
 12. **heartbeat-state.json はエージェントが自己更新し、Rust は SQLite patrol_state で管理**
 13. **`self_improved/` Skill への書き込みは AuditorWorker（Lane B）経由のみ**（対話ターンからの直接書き込み禁止）
-14. **bwrap 隔離時は `std::fs::canonicalize` で symlink 実体パスを解決してからバインドする**
-15. **ONNX モデルインスタンスはプロセス内でキャッシュし、毎リクエスト初期化を禁止**
+14. **bwrap 隔離時は `std::fs::canonicalize` で symlink 実体パスを解決してからバインドする** *(v0.4 では context-mode に委譲済み。v0.5 SecureSandboxExecutor 実装時に再適用)*
+15. **ONNX モデルインスタンスはプロセス内でキャッシュし、毎リクエスト初期化を禁止** *(v0.4 では rig-fastembed を削除済み。v0.5 EmbeddedKnowledgeBase 実装時に再適用)*
 16. **Lane A・Lane B は各セマフォ limit=1 で厳格分離（RPi4 サーマルプロテクション）**
 
 
@@ -248,26 +258,20 @@ use std::process::Stdio;
 use std::path::Path;
 
 pub struct ExternalMcpController {
-    pub child_process: Child,
+    child: Child,
 }
 
 impl ExternalMcpController {
-    /// 稼働条件に基づき、環境変数とストレージパスを固定して子プロセスを起動する
-    pub fn spawn_server(workspace_root: &Path) -> std::io::Result<Self> {
-        // セッション・インデックスの保存先をプロジェクト領域内にカプセル化
+    pub fn spawn(workspace_root: &Path) -> std::io::Result<Self> {
         let storage_dir = workspace_root.join(".context-mode");
-        let storage_str = storage_dir.to_string_lossy().into_owned();
-
         let child = Command::new("context-mode")
-            .env("CONTEXT_MODE_DIR", &storage_str)
+            .env("CONTEXT_MODE_DIR", storage_dir.to_string_lossy().as_ref())
             .env("CONTEXT_MODE_PLATFORM", "custom-rustyclaw")
-            .stdin(Stdio::piped())   // JSON-RPC 送信用土管
-            .stdout(Stdio::piped())  // JSON-RPC 受信用土管
-            .stderr(Stdio::inherit()) // サーバー側エラーはラズパイの stderr へ結合
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
             .spawn()?;
-
-        println!("[v0.4 Infrastructure] External context-mode MCP server co-located successfully.");
-        Ok(Self { child_process: child })
+        Ok(Self { child })
     }
 }
 ```
