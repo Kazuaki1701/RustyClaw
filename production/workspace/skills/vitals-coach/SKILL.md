@@ -25,8 +25,8 @@ Retrieves consumer-grade Garmin vital statistics via Home Assistant, enforces st
 
 ## Prerequisites & Endpoints
 
-To retrieve vital statistics, all parameters are securely resolved from **RustyClaw's vault** (`~/.rustyclaw/vault.json`):
-*   **Authentication**: HA Bearer Token resolved under key `homeassistant-token`.
+To retrieve vital statistics, the Home Assistant Bearer Token is automatically injected into the execution environment as the `HOMEASSISTANT_TOKEN` environment variable by the system.
+*   **Authentication**: Managed automatically via the `HOMEASSISTANT_TOKEN` environment variable. The agent MUST NOT attempt to read `vault.json` or `vault.enc` directly.
 *   **Endpoint Address**: `http://192.168.1.30:8123/api/template` (Home Assistant local API).
 
 ---
@@ -50,12 +50,11 @@ Always parse the `"Garmin Connect Last synced"` timestamp from the raw JSON payl
 ## Workflow & Implementation
 
 ### Step 1: Execution (Level 3)
-Invoke the Garmin retrieval script located inside this skill's localized path, passing the decrypted Home Assistant token dynamically via the secure gateway tool:
-*   **Tool**: `run_workspace_script`
+Use `ctx_execute` with `language: bash`. `HOMEASSISTANT_TOKEN` は Phase 49-2 の vault キャッシュ機構で systemd 環境変数として解決予定。
+*   **Tool**: `ctx_execute`
 *   **Parameters**:
-    *   `script_name`: `skills/vitals-coach/scripts/500_get-vital-data-garmin.sh`
-    *   `env`:
-        *   `HOMEASSISTANT_TOKEN`: `$vault:homeassistant-token`
+    *   `language`: `bash`
+    *   `code`: `bash workspace/skills/vitals-coach/scripts/500_get-vital-data-garmin.sh`
 
 The script returns **only the 27 core fields** listed in the tables below. Do not attempt to parse other fields — they are not returned.
 
@@ -116,14 +115,14 @@ Formulate a supportive, professional, yet warm secretary-style response in Japan
 
 *   **Raw Data Dumping**: The script already filters to 27 core fields. Do not modify the script to output all sensors.
 *   **Assuming Real-time Status**: Ignoring the sync time and declaring hours-old vitals as "fine" during an acute illness. (Fix: Always calculate and declare JST sync latency).
-*   **Missing Vault Keys**: Running without verifying if `homeassistant-token` exists in `vault.json`. (Fix: Verify token presence first and fail gracefully).
-*   **Absolute Script Execution**: Running shell scripts directly. (Fix: Use `run_workspace_script` for secure localized execution).
+*   **Missing Vault Keys**: Attempting to read `vault.json` or `vault.enc` directly. (Fix: Rely on the system-injected `HOMEASSISTANT_TOKEN` environment variable and let the script handle authentication. If the environment variable is missing or the script fails, fail gracefully).
+*   **Absolute Script Execution**: Running shell scripts directly. (Fix: Use `ctx_execute` with `language: bash`).
 
 ---
 
 ## Red Flags - STOP and Check Context
 
-- You are executing `500_get-vital-data-garmin.sh` via a raw shell command or absolute path.
+- You are executing `500_get-vital-data-garmin.sh` without using `ctx_execute`.
 - You presented vital stats without calculating the sync latency in JST.
 - K-sama feels ill, but you omitted the emergency clinical care warning.
 - Unnecessary fitness parameters (e.g. trekking distance, VO2 max) are bloating the output.
