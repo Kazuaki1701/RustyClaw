@@ -61,7 +61,30 @@
 
 ---
 
-## 3. Hermes Agent (Nous Research)
+## 3. context-mode (mksglu)
+
+> GitHub: https://github.com/mksglu/context-mode
+
+### 3.1 採用したもの（v0.4 で外部 MCP として同居、v0.5 で内製化）
+
+| 要素 | RustyClaw での実装 |
+|---|---|
+| 外部プロセス stdio MCP サーバーとしての同居（Colocation） | v0.4: `tokio::process::Command` でフォーク、stdin/stdout JSON-RPC 2.0 通信 |
+| 安全なコード実行（bwrap サンドボックス） | v0.4: 外部委譲 → v0.5: `SecureSandboxExecutor`（純 Rust）で内製化 |
+| SEARCH/REPLACE パッチマージ | v0.4: 外部委譲 → v0.5: `InProcessPatchMerger`（純 Rust）で内製化 |
+| エピソード記憶 / BM25 全文検索 | v0.4: 外部委譲 → v0.5: `EmbeddedKnowledgeBase`（rusqlite FTS5）で内製化 |
+| 5KB 超出力の FTS5 退避 + intent スニペット返却 | v0.5: `SecureSandboxExecutor` に統合 |
+
+### 3.2 採用しなかったもの
+
+| context-mode 要素 | 理由 |
+|---|---|
+| Node.js ランタイムへの恒久依存 | v0.5 で排除（単一 Rust バイナリ化がプロジェクトのゴール） |
+| 独自のエージェントループ | PicoClaw ベースの Pipeline を維持 |
+
+---
+
+## 4. Hermes Agent (Nous Research)
 
 ### 3.1 採用したもの
 
