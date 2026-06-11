@@ -69,19 +69,6 @@
 - `[ ]` **5. 実行ステップのチェックポイント化と Lossless Resume の導入**（GeminiClaw ギャップB・昇格候補）
   - 途中でエラー（送信失敗など）が発生した際に、LLM API の再呼出を行わず失敗したフェーズから再試行できる中間状態の永続化と復旧機構。
 
-#### Phase 26: 外部 MCP クライアントの堅牢化とトランスポート拡張
-> **注記**: `rustyclaw-mcp` クレートは Phase 40-6 で削除済み。Phase 26 の実装対象は `crates/rustyclaw-gateway/src/lib.rs` 内の `McpClientHandler` / `ToolServerHandle` ブロック（`Gateway::run()` の MCP init 処理）に移行。
-
-- `[ ]` **1. 子プロセスクラッシュ時の自動再接続・復旧 (Auto-Reconnect) の実装**
-  - `crates/rustyclaw-gateway/src/lib.rs` `Gateway::run()` の MCP spawn ブロックに、`mcp_service_tasks` の終了監視と `McpClientHandler::connect()` 再試行ループを追加。
-
-- `[ ]` **2. 外部 MCP サーバーの「メモリ回収（Idle Eviction）」機構の実装**
-  - 一定時間 (例: 30分) 呼び出されていない MCP 子プロセスを一度安全にクローズしてメモリを回収、次回ツール呼び出し時にオンデマンドで自動再起動。
-
-- `[ ]` **3. SSE (Server-Sent Events) トランスポートおよび Resources / Prompts 連携の追加**
-  - rmcp の HTTP/SSE トランスポートを使った外部リモート MCP サーバー接続サポートの実装。
-  - Tools 機能だけでなく、Resources や Prompts にもクエリ可能にするための I/O 拡張。
-
 #### Phase 27: ハウスクリーニング、ディスク容量保護と Cron 拡張
 
 - `[ ]` **1. ディスク空き容量監視と SSD 保護の導入**
@@ -100,20 +87,6 @@
 - `[ ]` **2. Gateway 起動時の設定ロード遅延（約11秒）の短縮検討**
   - `Initializing daemon` から `loaded configuration` まで約11秒を要する（`--no-agent` でも発生）。遅延要素の遅延初期化（lazy）等で起動高速化を検討。
   - 対象: `crates/rustyclaw-gateway/src/lib.rs`（`Gateway::run` 初期化シーケンス）
-
-#### Phase 30: Upstream 先進機能：Hook・Steering・Spawn タスクの統合
-> ※ PicoClaw (Go Upstream) 参照。GeminiClaw ギャップではなく、RustyClaw の独自進化機能として位置付け。  
-> 対象: `crates/rustyclaw-agent/`, `crates/rustyclaw-gateway/`, `crates/rustyclaw-tools/`, `crates/rustyclaw-cli/`
-
-- `[ ]` **1. イベント駆動 Hook システム (Hook Manager) の実装**
-  - LLM 呼出前後、ツール実行前後、エラー発生時などに動作をアタッチできる `Hook`（オブザーバー、インターセプター、承認 Hook）機構の実装。
-  - `Confirmation Gate` (Phase 23) などを Hook 側に移行・リファクタリング。
-
-- `[ ]` **2. リアルタイム・ステアリング (Steering) 割り込み機構の実装**
-  - `broadcast` または `mpsc` を監視し、長いツール実行の最中にユーザーが割り込み（Interruption）およびガイダンス（行動方向修正）を注入する仕組みの実装。
-
-- `[ ]` **3. 長時間タスクの非同期 `spawn` ＆ サブエージェント機構の実装**
-  - チャット応答をフリーズさせない長時間非同期ジョブ実行と、完了時の `MessageBus` アペンド通知。
 
 ---
 
@@ -140,6 +113,11 @@
 - `[ ]` **ISSUE-22: `gmn_sem` capacity の config 化＋書き込み直列化の責務分離**（capacity 引き上げ検討時。**旧 Phase 25-1 を統合**。メモリ `project_user_sem_concurrency` 参照）
 - `[ ]` **ISSUE-25: `●ACTIVE` → daemon STOP 制御**（無認証 LAN への破壊操作の露出・START 非対称性のセキュリティ前提を解決後）
 - `[-]` **ISSUE-09: rp1 の LM Studio 依存（単一障害点）のフェイルオーバ設計**（config 設定見直し済・スキップ）
+- `[ ]` **Phase 26: 外部 MCP クライアントの堅牢化とトランスポート拡張**（外部 MCP サーバーが整備された時点で着手）
+  - Auto-Reconnect / Idle Eviction / SSE トランスポートの 3 項目。詳細は task.md 過去バージョンを参照。
+  - 実装対象: `crates/rustyclaw-gateway/src/lib.rs` 内の `McpClientHandler` / `ToolServerHandle` ブロック。
+- `[ ]` **Phase 30: Upstream 先進機能（Hook・Steering・Spawn）の統合**（将来の検討課題）
+  - PicoClaw (Go Upstream) 参照。Hook Manager / Steering 割り込み / 非同期 Spawn の 3 項目。
 - `[ ]` **Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル）**（LINE 導入予定確定後に着手）
   - LINE 導入の意思決定後に一般課題へ昇格する。
   - 調査資料: [`docs/review/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](review/2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/review/2026-06-03-geminiclaw-notifications-channel-analysis.md`](review/2026-06-03-geminiclaw-notifications-channel-analysis.md)
