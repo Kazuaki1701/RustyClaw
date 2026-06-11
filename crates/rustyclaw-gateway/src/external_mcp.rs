@@ -59,7 +59,7 @@ impl Drop for ExternalMcpController {
 }
 
 /// bun + bundle パスを自動検出する。
-/// 優先順位: bun ($HOME/.bun/bin/bun) + npm global bundle > context-mode (PATH)
+/// 優先順位: bun ($HOME/.bun/bin/bun) + bundle > context-mode (PATH)
 fn resolve_context_mode_command() -> (String, Vec<String>) {
     if let (Some(bun), Some(bundle)) = (find_bun(), find_context_mode_bundle()) {
         return (
@@ -73,16 +73,15 @@ fn resolve_context_mode_command() -> (String, Vec<String>) {
 /// $HOME/.bun/bin/bun を優先し、なければ PATH から bun を探す。
 fn find_bun() -> Option<PathBuf> {
     if let Ok(home) = std::env::var("HOME") {
-        let p = PathBuf::from(home).join(".bun/bin/bun");
+        let p = PathBuf::from(&home).join(".bun/bin/bun");
         if p.exists() {
             return Some(p);
         }
     }
-    // PATH fallback
-    let Ok(out) = std::process::Command::new("which").arg("bun").output() else {
-        return None;
-    };
-    if out.status.success() {
+    // PATH fallback (daemon 環境では失敗することがある)
+    if let Ok(out) = std::process::Command::new("which").arg("bun").output()
+        && out.status.success()
+    {
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if !s.is_empty() {
             return Some(PathBuf::from(s));
@@ -91,20 +90,52 @@ fn find_bun() -> Option<PathBuf> {
     None
 }
 
-/// npm global root から context-mode/cli.bundle.mjs を探す。
+/// context-mode/cli.bundle.mjs を既知のパスから直接探す。
+/// daemon 環境では npm/node が PATH に無いため、ファイルシステムを直接スキャンする。
 fn find_context_mode_bundle() -> Option<PathBuf> {
-    let Ok(out) = std::process::Command::new("npm")
+    let home = std::env::var("HOME").ok()?;
+
+    // 1. nvm でインストールされた全バージョンの node_modules を走査
+    let nvm_versions = PathBuf::from(&home).join(".nvm/versions/node");
+    if let Ok(versions) = std::fs::read_dir(&nvm_versions) {
+        // 最新バージョンを得るため逆順ソート
+        let mut entries: Vec<_> = versions.flatten().collect();
+        entries.sort_by_key(|e| std::cmp::Reverse(e.file_name()));
+        for entry in entries {
+            let bundle = entry
+                .path()
+                .join("lib/node_modules/context-mode/cli.bundle.mjs");
+            if bundle.exists() {
+                return Some(bundle);
+            }
+        }
+    }
+
+    // 2. bun global node_modules ($HOME/.bun/install/global/node_modules)
+    let bun_global =
+        PathBuf::from(&home).join(".bun/install/global/node_modules/context-mode/cli.bundle.mjs");
+    if bun_global.exists() {
+        return Some(bun_global);
+    }
+
+    // 3. システム npm グローバル (/usr/local/lib/node_modules)
+    let system = PathBuf::from("/usr/local/lib/node_modules/context-mode/cli.bundle.mjs");
+    if system.exists() {
+        return Some(system);
+    }
+
+    // 4. PATH に npm があれば `npm root -g` を試みる
+    if let Ok(out) = std::process::Command::new("npm")
         .args(["root", "-g"])
         .output()
-    else {
-        return None;
-    };
-    if out.status.success() {
+        && out.status.success()
+    {
         let root = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
         let bundle = root.join("context-mode/cli.bundle.mjs");
         if bundle.exists() {
             return Some(bundle);
         }
     }
+
     None
 }
