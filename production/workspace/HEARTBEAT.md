@@ -14,9 +14,18 @@ Read the `Recent activity digest` in the user message. Look for:
 - **New decisions or preferences** — things worth noting
 - **Anything unusual** — patterns that seem off
 
-## Step 2: Weather alert
+## Step 2: Weather & Home Environment alert
 
+### Weather
 If the user message contains a weather alert, include a concise notification. Do not fetch weather yourself.
+
+### Home Environment (HA)
+If the user message contains a `Home Environment:` line (e.g., `[HA_ENV|HH:MM] [Room: ...°C↑ / ...%] [CO2: ...ppm↑] ...`):
+- 室温が **↑** トレンドかつ 30°C 超 → 熱中症リスクとして触れる（夏季のみ）
+- CO2 が **↑** トレンドかつ 1000 ppm 超 → 換気を促すワンライナーを添える
+- `[HA SPIKE ALERT]` が user message に含まれる場合 → **必ず** Important 扱いで通知。HEARTBEAT_OK を返してはいけない。
+
+HA コンテキストが存在しない場合はこのステップを静かにスキップする。
 
 ## Step 3: Calendar & Email check
 
