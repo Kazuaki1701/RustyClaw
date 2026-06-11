@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (spec 99 との照合・重複項目削除)  
+> **最終更新日**: 2026-06-11 (残項目必要性精査・優先度見直し)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
 > **最新アーカイブ**: [2026-06-11-completed-bug-05.md](archive/tasks/2026-06-11-completed-bug-05.md) (BUG-05)
 
@@ -21,13 +21,22 @@
 #### 残項目の必要性精査
 > 調査結果: [`docs/review/2026-06-11-task-necessity-review.md`](review/2026-06-11-task-necessity-review.md)
 
-- `[ ]` **各項目の存続・削除・優先度変更を決定する**
+- `[x]` **各項目の存続・削除・優先度変更を決定する**
   - 要確認事項（詳細は上記レビューファイル参照）:
     1. Phase 44-6/44-7: 44-1〜44-5 後の体感遅延は改善されているか？（未改善なら継続、改善済みなら削除）
     2. Phase 39-1/39-2: LINE 導入は近日予定か？（予定なければ保留案件へ降格）
     3. Phase 30-4 ClawHub: 外部 Hub が存在しないため削除候補
     4. Phase 43-G-1/G-2: KaraKeep / Obsidian を RAG ソースとして使い続けるか？
     5. ISSUE-09: groq フォールバックで LM Studio 障害は許容できているか？
+
+---
+
+#### LLM リクエストのさらなる最適化（Phase 44-6 先行）
+> 現状 30 秒程度の応答遅延が残存。44-1〜44-5 施策後もリクエスト最適化の余地あり。Phase 44-6（ストリーミング）着手前に完了させる。
+
+- `[ ]` **リクエストペイロードの最適化調査と実施**
+  - LLM へ送信するコンテキスト長・メッセージ数・system prompt のさらなる削減余地を調査。
+  - 具体的な削減施策を設計・実施し、30 秒遅延を許容レベルまで改善する。
 
 ---
 
@@ -47,29 +56,6 @@
 ---
 
 ## 一般課題
-
-### GeminiClaw とのギャップ解消
-
-#### Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル）
-> GeminiClaw は Discord / Slack / Telegram のマルチチャンネルに対応しており、notifications チャンネル（home と独立したバックグラウンドジョブ通知先）を持つ。RustyClaw は Discord のみで、LINE 導入予定に伴いこのギャップを回収する。  
-> 調査資料: [`docs/review/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](review/2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/review/2026-06-03-geminiclaw-notifications-channel-analysis.md`](review/2026-06-03-geminiclaw-notifications-channel-analysis.md)
-
-- `[ ]` **1. LINE チャンネルコネクタの実装**
-  - `rustyclaw-channels` に `LineConnector` を追加（`Channel` トレイト実装）。
-  - LINE Messaging API（REST）による送信と、Webhook（HTTPS POST）受信エンドポイントの実装。
-  - `channel_secret` を使った HMAC-SHA256 署名検証を必須実装。
-  - session_id 命名規則: `line-U{userId}-{YYYYMMDD}` 形式。
-  - gateway への `LineConnector` 初期化・起動組み込みと `MessageBus` 配信分岐の追加。
-  - 対象: `crates/rustyclaw-channels/src/lib.rs`、`crates/rustyclaw-gateway/src/lib.rs`
-
-- `[ ]` **2. Notifications チャンネル設定の導入**
-  - GeminiClaw の `notifications: { channel, channelId }` 相当。home と独立したバックグラウンドジョブ通知先チャンネル（未設定時は home にフォールバック）。
-  - `DiscordConfig`（および将来の LINE/Telegram 設定）に `notifications_channel_id` を追加、または `Config` 直下にプラットフォーム横断的 `notifications` 設定を追加。
-  - `heartbeat.rs::process_heartbeat_response` の配信先を `notifications_channel_id` 優先に切り替え。
-  - 背景: LINE を home にした場合、HEARTBEAT_OK の稼働ログが LINE に届き続けるノイズを防ぐための分離。
-  - 対象: `crates/rustyclaw-config/src/lib.rs`、`crates/rustyclaw-gateway/src/heartbeat.rs`
-
----
 
 ### 機能追加
 
@@ -129,9 +115,6 @@
 - `[ ]` **3. 長時間タスクの非同期 `spawn` ＆ サブエージェント機構の実装**
   - チャット応答をフリーズさせない長時間非同期ジョブ実行と、完了時の `MessageBus` アペンド通知。
 
-- `[ ]` **4. ClawHub 互換の動的 Skill ダウンローダー・インストーラーの実装**
-  - `rustyclaw skills install <skill-name>` サブコマンドの実装および `workspace/skills/` へのリモート展開ロジック。
-
 ---
 
 ### RAG 機能の高度化
@@ -156,7 +139,10 @@
 
 - `[ ]` **ISSUE-22: `gmn_sem` capacity の config 化＋書き込み直列化の責務分離**（capacity 引き上げ検討時。**旧 Phase 25-1 を統合**。メモリ `project_user_sem_concurrency` 参照）
 - `[ ]` **ISSUE-25: `●ACTIVE` → daemon STOP 制御**（無認証 LAN への破壊操作の露出・START 非対称性のセキュリティ前提を解決後）
-- `[ ]` **ISSUE-09: rp1 の LM Studio 依存（単一障害点）のフェイルオーバ設計**
+- `[-]` **ISSUE-09: rp1 の LM Studio 依存（単一障害点）のフェイルオーバ設計**（config 設定見直し済・スキップ）
+- `[ ]` **Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル）**（LINE 導入予定確定後に着手）
+  - LINE 導入の意思決定後に一般課題へ昇格する。
+  - 調査資料: [`docs/review/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](review/2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/review/2026-06-03-geminiclaw-notifications-channel-analysis.md`](review/2026-06-03-geminiclaw-notifications-channel-analysis.md)
 - 観察のみ: ISSUE-10（ローカル Gemma 品質）/ 13（一時 WS の context file WARN）/ 14（gws calendar WARN・現状解消）
 
 ### アイデアバックログ
@@ -182,4 +168,8 @@
     「今日」「今週」などの時間的キーワードに含まれるクエリに対して、Embedding 検索対象範囲を更新日時などのメタデータでフィルタリング
   - 再順位付け:
      検索結果に対して時間的近接度をスコアで加算し、新しい情報を上位に引き上げる仕組み。
+
+- `[ ]` **ClawHub 互換の動的 Skill ダウンローダー（Phase 30-4）**（外部 Skill Hub 整備後）
+  - `rustyclaw skills install <skill-name>` サブコマンドの実装および `workspace/skills/` へのリモート展開ロジック。
+  - 前提となる外部 ClawHub が現時点で存在しないため保留。
 
