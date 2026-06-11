@@ -26,6 +26,5 @@
 ### v0.4 残課題（`docs/specs/v0.4/` 精査 — 2026-06-12）
 
 - [ ] **Phase 28b-2: Gateway 起動遅延短縮**: `Gateway::run` 初期化シーケンスの約 11 秒起動遅延を lazy init で改善。対象: `crates/rustyclaw-gateway/src/lib.rs`
-- [ ] **Phase 26-1: McpClientHandler Auto-Reconnect**: MCP サーバー（汎用 stdio）の接続断を検知し指数バックオフで再スポーン。着手条件: 実運用で接続断が発生した時点。対象: `crates/rustyclaw-tools/src/`（`McpClientHandler` / `ToolServerHandle`）。`10_mcp.md §2.1` 参照
 - [ ] **Phase 26-2: McpClientHandler Idle Eviction**: アイドル 30 分超の MCP 子プロセスを SIGTERM → 次回呼び出しで再スポーン。着手条件: 複数 MCP サーバー同居時。`10_mcp.md §2.2` 参照
 - [ ] **本番自動バックアップ**: `workspace/`（`memory.db`・`sessions/*.jsonl`・`patrol/findings.md`）を定時 rsync で NAS（QNAP 等）へ退避。`08_deployment.md §将来拡張` 参照
