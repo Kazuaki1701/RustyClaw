@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[実装済]`
 > **バージョン**: v0.3
-> **最終更新日**: 2026-06-11
+> **最終更新日**: 2026-06-12（Phase 50: HA 環境コンテキスト注入・ステップ構造更新）
 > **参照元**: [`00_rustyclaw.md`](00_rustyclaw.md)
 
 ---
@@ -20,23 +20,22 @@
 | SQLite `patrol_state` | heartbeat-state.json の Rust 側管理 | システム自動 |
 | SQLite `seen_items` | Interest Patrol 既読管理 | システム自動 |
 
-### 10.2 HEARTBEAT.md 7 Step 構造
+### 10.2 HEARTBEAT.md 6 Step 構造（v0.4 現行）
 
 | Step | 頻度 | 内容 |
 |---|---|---|
-| Step 1 | 毎回 | heartbeat-digest.md + summaries/ + logs/ で活動レビュー |
-| Step 2 | 数時間ごと | MEMORY.md 整理・USER.md Interests 更新 |
-| Step 3 | 毎回 | Calendar / Email チェック（ツールがなければ skip silently） |
-| Step 4 | 1 日 2〜3 回 | 天気チェック（4 時間インターバル、なければ skip silently） |
-| Step 5 | 毎回 | 8h 以上無通信 → 昼間のみ軽く声掛け（Quiet hours 23:00〜08:00 除外） |
-| Step 6 | ローテーション | 未完了タスク・失敗セッション対処・バックグラウンド作業 |
-| Step 7 | 毎回 | **必ず HEARTBEAT_OK で応答** → 無音 or 通知配信 |
+| Step 1 | 毎回 | `Recent activity digest` レビュー（未完了・エラー・異常検知） |
+| Step 2 | 毎回 | 天気アラート + **HA 環境コンテキスト確認**（★ Phase 50 追加）。コンテキストがなければ skip silently |
+| Step 3 | 毎回 | Calendar / Email チェック（`ctx_execute` 経由 bash スクリプト、スキル不在なら skip silently） |
+| Step 4 | 毎回 | 8h 以上無通信 → Quiet hours（0:00〜4:59）除外で声掛け |
+| Step 5 | ローテーション | 未完了タスク・失敗セッション対処・バックグラウンド作業（Topic Patrol は別スケジュール） |
+| Step 6 | 毎回 | **Important あり** → Discord 通知 / **Informational 以下** → `HEARTBEAT_OK` のみ |
 
 ### 10.3 AGENTS.md における Heartbeat 応答規約
 
 | 重要度 | 処理 | HEARTBEAT_OK? |
 |---|---|---|
-| **Critical**（緊急メール・直近 deadline・障害） | アラートテキストとして通知 | No |
+| **Important**（緊急メール・直近 deadline・障害・費用発生・**HA SPIKE ALERT**） | Discord 通知（2〜5 行、日本語） | No |
 | **Informational**（新着非緊急・定常カレンダー） | `logs/YYYY-MM-DD.md` にのみ記録 | Yes |
 | **Nothing**（所見なし） | — | Yes |
 
@@ -56,4 +55,16 @@ GeminiClaw `src/agent/session/heartbeat-digest.ts` の移植。
 2. **Heartbeat 実行は `last_user_interaction_at` を更新しない** → 声掛け判断が自分自身を「アクティブ」と誤判定するのを防ぐ
 3. **HEARTBEAT.md はエージェントが絶対に自己改変しない**
 4. **巡回済み管理は SQLite seen_items が担う**（ファイルに書かない）
-5. **Heartbeat 実行自体は Lane B**。ただし HEARTBEAT_OK ではない Critical 判定時（緊急アラート・自発投稿）は Lane A で配信する
+5. **Heartbeat 実行自体は Lane B**。ただし Important 判定時（緊急アラート・自発投稿）は Lane A で配信する
+
+### 10.6 v0.4 Phase 50 — HA 環境コンテキスト注入（Rust 側）
+
+`HeartbeatService` がプロンプト生成前に以下を fail-open で読み取り、system プロンプトに注入する。
+
+| 注入元ファイル | 読み取りメソッド | 注入内容 |
+|---|---|---|
+| `memory/ha-env-summary.txt` | `get_ha_env_context()` | `Home Environment: [HA_ENV|HH:MM] [Room: ...°C↑ ...]` |
+| `memory/ha-state.json` の `spike_detected: true` | `check_ha_spike()` | `⚠️ [HA SPIKE ALERT] CO2 レベルが危険域に達しています（NNN ppm）。...` |
+
+どちらもファイルが存在しない・読み取り失敗の場合は注入せず、Heartbeat を継続する（fail-open）。  
+CO2 スパイクは CronService が exit 2 を検知して `Priority::Normal` の `cron:heartbeat` を発火し、3 時間クールダウンで多重発火を防ぐ。

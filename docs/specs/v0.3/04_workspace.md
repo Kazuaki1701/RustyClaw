@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[実装済]`（`skills/self_improved/` のみ `[将来拡張]`）
 > **バージョン**: v0.3
-> **最終更新日**: 2026-06-11
+> **最終更新日**: 2026-06-12（Phase 50: HA memory ファイル追加）
 > **参照元**: [`00_rustyclaw.md`](00_rustyclaw.md)
 
 ---
@@ -22,6 +22,8 @@
 ├── memory/
 │   ├── heartbeat-state.json   # 各チェックの最終実行時刻
 │   ├── heartbeat-digest.md    # 前回 Heartbeat 以降のセッション差分ダイジェスト
+│   ├── ha-env-summary.txt     # HA 環境 1 行サマリー（220_ha_env_snapshot.sh が更新）★ Phase 50
+│   ├── ha-state.json          # HA センサー 6 サンプルリングバッファ + スパイクフラグ ★ Phase 50
 │   ├── logs/
 │   │   └── YYYY-MM-DD.md     # 日次活動ログ（Obsidian 互換 YAML frontmatter）
 │   └── summaries/
@@ -33,11 +35,15 @@
 │   ├── cron:daily-summary.jsonl
 │   └── session-titles.json
 └── skills/
-    ├── standard/              # 人間が記述する静的 Skill  [実装済]
-    │   ├── home_assistant.md  # HA デバイス操作プロンプト  [将来拡張]
-    │   └── secure_bash.md     # bwrap 実行基本プロンプト   [将来拡張]
-    └── self_improved/         # エージェントが自律生成する動的 Skill  [将来拡張]
-        └── *.md
+    ├── calendar/              # Google Calendar 連携
+    ├── gmail/                 # Gmail 連携
+    ├── home-assistant-rest-api/   # HA REST API スクリプト群 ★ Phase 50
+    │   ├── SKILL.md
+    │   └── scripts/
+    │       ├── 220_ha_env_snapshot.sh  # リングバッファ・トレンド・スパイク検知
+    │       └── ...
+    ├── weather/               # 天気取得
+    └── ...（他スキル）
 ```
 
 ```
@@ -62,6 +68,8 @@
 | `HEARTBEAT.md` | ✓ | — | — | **禁止** |
 | `heartbeat-state.json` | — | ✓（Heartbeat 後に更新） | — | — |
 | `heartbeat-digest.md` | — | — | ✓（pre-run 自動生成） | — |
+| `ha-env-summary.txt` | — | — | ✓（CronService 経由 220_ha_env_snapshot.sh） | — |
+| `ha-state.json` | — | — | ✓（CronService 経由 220_ha_env_snapshot.sh） | — |
 | `logs/YYYY-MM-DD.md` | — | ✓（任意） | ✓（flush） | — |
 | `summaries/*.md` | — | — | ✓（on-idle） | — |
 | `sessions/*.jsonl` | — | — | ✓（fail-closed） | — |
