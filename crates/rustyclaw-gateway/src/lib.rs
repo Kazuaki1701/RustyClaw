@@ -10,6 +10,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex as TokioMutex, Semaphore, broadcast, mpsc};
 
 pub mod cron;
+mod external_mcp;
 pub mod health;
 pub mod heartbeat;
 pub(crate) mod skills;
@@ -901,6 +902,54 @@ impl LaneRegistry {
 // 4. Gateway (オーケストレーターデーモン) の実装
 // ==============================================================================
 
+/// context-mode を起動し、クラッシュ時に指数バックオフで再接続するループを spawn する。
+/// 接続確立後は tool_server_handle に ctx_execute / ctx_search / ctx_index / ctx_patch が自動登録される。
+async fn start_context_mode(
+    workspace_root: PathBuf,
+    tool_server_handle: rig_core::tool::server::ToolServerHandle,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut delay = Duration::from_secs(1);
+        loop {
+            match external_mcp::ExternalMcpController::spawn(&workspace_root) {
+                Err(e) => {
+                    tracing::error!("context-mode 起動失敗: {e}");
+                }
+                Ok((mut ctrl, stdin, stdout)) => {
+                    let handler = rig_core::tool::rmcp::McpClientHandler::new(
+                        rmcp::model::ClientInfo::default(),
+                        tool_server_handle.clone(),
+                    );
+                    match handler.connect((stdout, stdin)).await {
+                        Ok(service) => {
+                            tracing::info!(
+                                "context-mode 接続完了 (ctx_execute/search/index/patch 登録)"
+                            );
+                            delay = Duration::from_secs(1);
+                            tokio::select! {
+                                _ = ctrl.wait() => {
+                                    tracing::warn!("context-mode プロセスが終了。再起動します...");
+                                }
+                                result = service.waiting() => {
+                                    tracing::warn!(
+                                        "context-mode MCP セッション終了 ({result:?})。再起動します..."
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("context-mode MCP 接続失敗: {e}");
+                        }
+                    }
+                }
+            }
+            tracing::info!("context-mode を {:?} 後に再起動...", delay);
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(Duration::from_secs(60));
+        }
+    })
+}
+
 pub struct Gateway {
     config_path: PathBuf,
     workspace_path: PathBuf,
@@ -961,6 +1010,10 @@ impl Gateway {
         // 2. ToolServer (rig エージェント用) と ToolRegistry (heartbeat 用) の初期化
         let tool_server_handle = rig_core::tool::server::ToolServer::new().run();
         let mut mcp_service_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+        // context-mode 子プロセスを起動（fail-open: エラーでも Gateway は続行）
+        let _ctx_mode_handle =
+            start_context_mode(self.workspace_path.clone(), tool_server_handle.clone()).await;
 
         // MCP サーバーへの接続 (rig-core rmcp 経由)
         for (name, conf) in &config.mcp {
