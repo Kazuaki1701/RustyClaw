@@ -445,6 +445,8 @@ impl CronService {
 
             tracing::info!("CronService: Starting HA snapshot polling (script: {:?})", script_path);
 
+            let mut last_spike_heartbeat: Option<tokio::time::Instant> = None;
+
             // 起動直後の即時発火を避けるため 60s 待機
             tokio::time::sleep(Duration::from_secs(60)).await;
 
@@ -469,15 +471,30 @@ impl CronService {
                         if output.status.code() == Some(2) {
                             // exit 2 = CO2 スパイク検知 → 即時 Heartbeat を発火
                             let spike_msg = String::from_utf8_lossy(&output.stderr);
-                            tracing::warn!("CronService: HA CO2 spike detected! Triggering immediate Heartbeat. Detail: {}", spike_msg.trim());
-                            let event = SystemEvent::IncomingMessage {
-                                session_id: "cron:heartbeat".to_string(),
-                                user_id: "cron".to_string(),
-                                channel_id: "cron".to_string(),
-                                content: "heartbeat".to_string(),
-                                priority: Priority::Normal,
-                            };
-                            let _ = bus_ha.publish(event);
+                            let now = tokio::time::Instant::now();
+                            let cooldown_elapsed = last_spike_heartbeat
+                                .map(|t| now.duration_since(t) >= Duration::from_secs(3 * 3600))
+                                .unwrap_or(true);
+
+                            if cooldown_elapsed {
+                                last_spike_heartbeat = Some(now);
+                                tracing::warn!(
+                                    "CronService: HA CO2 spike detected! Triggering immediate Heartbeat. Detail: {}",
+                                    spike_msg.trim()
+                                );
+                                let event = SystemEvent::IncomingMessage {
+                                    session_id: "cron:heartbeat".to_string(),
+                                    user_id: "cron".to_string(),
+                                    channel_id: "cron".to_string(),
+                                    content: "heartbeat".to_string(),
+                                    priority: Priority::Normal,
+                                };
+                                let _ = bus_ha.publish(event);
+                            } else {
+                                tracing::debug!(
+                                    "CronService: HA spike detected but within 3h cooldown. Skipping heartbeat."
+                                );
+                            }
                         }
                     }
                     Err(e) => {

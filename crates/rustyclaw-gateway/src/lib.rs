@@ -1106,6 +1106,17 @@ impl Gateway {
         // 2. Vault キーをプロセス環境変数に注入（ctx_execute 経由の bash スクリプトに継承させる）
         inject_vault_to_env();
 
+        // HA エンドポイントを環境変数に注入（bash スクリプトが $HOMEASSISTANT_ENDPOINT を参照）
+        if let Some(ref ha) = config.tools.home_assistant {
+            if !ha.endpoint.is_empty() {
+                // SAFETY: Gateway 起動時、他スレッドが env を読む前に一度だけ呼ぶ。
+                unsafe {
+                    std::env::set_var("HOMEASSISTANT_ENDPOINT", &ha.endpoint);
+                }
+                tracing::debug!("Gateway: HOMEASSISTANT_ENDPOINT set to {}", ha.endpoint);
+            }
+        }
+
         // 3. ToolServer (rig エージェント用) と ToolRegistry (heartbeat 用) の初期化
         let tool_server_handle = rig_core::tool::server::ToolServer::new().run();
         let mut mcp_service_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();

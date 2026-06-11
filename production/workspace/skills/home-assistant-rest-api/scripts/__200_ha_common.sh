@@ -32,4 +32,4 @@ export HA_EXCLUDE_BATTERY='(sensor.switchbot_(contact_[12]|motion_1)_battery|sen
 export HA_EXCLUDE_STALE='(sensor.braviatv_duration_(tvasahi|recorder)|sensor.hotuto_de_battery_plus|sensor.kai_bi_sensa_[0-9a-f]+_battery|sensor.ren_gan_sensa_ea_battery|sensor.garmin_connect_body_battery_.*)'
 
 # 共通変数のエクスポート
-export HA_ENDPOINT="http://192.168.1.30:8123/api"
+export HA_ENDPOINT="${HOMEASSISTANT_ENDPOINT:-http://192.168.1.30:8123/api}"
