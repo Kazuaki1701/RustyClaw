@@ -290,6 +290,17 @@ impl LaneRegistry {
                                 prompt_parts.push(alert);
                             }
 
+                            // HA 環境コンテキスト注入（ha-env-summary.txt が存在する場合）
+                            let ha_env = heartbeat_svc.get_ha_env_context();
+                            let ha_spike = heartbeat_svc.check_ha_spike();
+
+                            if let Some(ref ha_line) = ha_env {
+                                prompt_parts.push(format!("Home Environment: {}", ha_line));
+                            }
+                            if let Some(spike_alert) = ha_spike {
+                                prompt_parts.push(spike_alert);
+                            }
+
                             prompt_parts.push(format!("Recent activity digest:\n{}", digest));
 
                             let heartbeat_rag_query = build_heartbeat_rag_query(&digest);
