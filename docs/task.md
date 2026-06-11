@@ -2,9 +2,10 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (残項目必要性精査・優先度見直し)  
+> **最終更新日**: 2026-06-11  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
-> **最新アーカイブ**: [2026-06-11-completed-bug-05.md](archive/tasks/2026-06-11-completed-bug-05.md) (BUG-05)
+> **最新アーカイブ**: [2026-06-11-completed-bug-05.md](archive/tasks/2026-06-11-completed-bug-05.md) (BUG-05)  
+> **将来課題の管理**: 未着手の将来課題は [`docs/specs/v0.3/`](specs/v0.3/) 各仕様ファイルの「将来拡張」節で管理しています。
 
 ---
 
@@ -18,19 +19,6 @@
 
 > 実装状況により今後の計画に与える影響が大きい案件。
 
-#### 残項目の必要性精査
-> 調査結果: [`docs/review/2026-06-11-task-necessity-review.md`](review/2026-06-11-task-necessity-review.md)
-
-- `[x]` **各項目の存続・削除・優先度変更を決定する**
-  - 要確認事項（詳細は上記レビューファイル参照）:
-    1. Phase 44-6/44-7: 44-1〜44-5 後の体感遅延は改善されているか？（未改善なら継続、改善済みなら削除）
-    2. Phase 39-1/39-2: LINE 導入は近日予定か？（予定なければ保留案件へ降格）
-    3. Phase 30-4 ClawHub: 外部 Hub が存在しないため削除候補
-    4. Phase 43-G-1/G-2: KaraKeep / Obsidian を RAG ソースとして使い続けるか？
-    5. ISSUE-09: groq フォールバックで LM Studio 障害は許容できているか？
-
----
-
 #### LLM リクエストのさらなる最適化（Phase 44-6 先行）
 > 現状 30 秒程度の応答遅延が残存。44-1〜44-5 施策後もリクエスト最適化の余地あり。Phase 44-6（ストリーミング）着手前に完了させる。
 
@@ -40,114 +28,9 @@
 
 ---
 
-#### Phase 44: LLM I/O 最適化と Dashboard 遅延削減
-> **目的**: Dashboard の LLM リクエスト/レスポンス遅延を削減し、ユーザー体感速度を向上させる。  
-> **優先順位の根拠**: 改善効果が高く副作用・実装コストが低い順に番号を振っている。  
-> **完了済み (44-1〜44-5)**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md)
-
-- `[ ]` **Phase 44-6. ストリーミングとキャッシュ** 🚀 体感改善最大・大規模改修
-  - `complete_stream` を使用してリアルタイムにレスポンスを流す。
-  - 定型レポートはローカルキャッシュ (`memory/debug/llm/cache`) に保存し、同一リクエスト時は再利用。
-  - ※ 44-1〜44-5 で十分な遅延削減を達成してから着手する。キャッシュ無効化設計を慎重に行うこと。
-- `[ ]` **Phase 44-7. テストとベンチマーク** ✅ 最終検証（各ステップ完了後に実施）
-  - 改修前後で `dashboard_response_analysis.md` に記録されたタイムスタンプを比較し、目標 **50 % 以上の遅延削減** を検証。
-  - CI にベンチマークスクリプトを追加し、毎回のプルリクでパフォーマンス回帰を検知。
-
----
-
-## 一般課題
-
-### 機能追加
-
-#### Phase 25 残: 並行制御の最適化とフリーズ防止（Lane Queue 改善）
-> ※ 完了済み項目（1/3/4/6）はアーカイブ済み。残 2 件は独自安全改善。  
-> ※ **item 5（Lossless Resume）は将来の優先課題昇格を検討する。**
-
-- `[ ]` **2. 実行キュー取得の安全待機タイムアウトの実装**
-  - `crates/rustyclaw-gateway/src/lib.rs` におけるセマフォ取得処理への `tokio::time::timeout` 導入。
-
-- `[ ]` **5. 実行ステップのチェックポイント化と Lossless Resume の導入**（GeminiClaw ギャップB・昇格候補）
-  - 途中でエラー（送信失敗など）が発生した際に、LLM API の再呼出を行わず失敗したフェーズから再試行できる中間状態の永続化と復旧機構。
-
-#### Phase 27: ハウスクリーニング、ディスク容量保護と Cron 拡張
-
-- `[ ]` **1. ディスク空き容量監視と SSD 保護の導入**
-  - 定期実行時に USB SSD の空き容量をチェックし、残り容量が 5% 以下になった際に Discord 等へ警告アラートを投げる保護タスクの実装。
-
-- `[ ]` **2. Cron セッションおよびログの自動プルーニングの実装**
-  - 古い `cron:` 実行ログやセッションファイルを自動消去するクリーンアップ機構の実装。
-  - 対象: `crates/rustyclaw-gateway/src/cron.rs`
-
-- `[ ]` **3. 1回限り (at / deleteAfterRun) job の自動削除サポート**
-  - 実行完了後に `cron.json` から自身のジョブ定義を自動削除し、アトミックに更新保存。
-
-#### Phase 28b 残: ダッシュボード精度・起動最適化のフォローアップ
-> 出典: 2026-05-31 の Phase 28 実機検証（`gateway --no-agent` 起動ログ点検）で判明した改善候補。
-
-- `[ ]` **2. Gateway 起動時の設定ロード遅延（約11秒）の短縮検討**
-  - `Initializing daemon` から `loaded configuration` まで約11秒を要する（`--no-agent` でも発生）。遅延要素の遅延初期化（lazy）等で起動高速化を検討。
-  - 対象: `crates/rustyclaw-gateway/src/lib.rs`（`Gateway::run` 初期化シーケンス）
-
----
-
-### RAG 機能の高度化
-
-#### Phase 43-F: 自己進化型 RAG（RAG Flywheel）
-
-- `[ ]` **1. 実運用インシデント＆ソリューション・ナレッジベース（RAGフライホイール）の導入**
-  - 本番稼働時の外部コマンド実行エラーや外部 API（気象、Discord等）の呼び出しエラーが発生した際、その解決プロセス（自動リトライやフォールバック手順）を自動的に RAG へ登録。次回同様のエラーを検知した際、事前に解決策をロードしてシステムダウンを防止する。エラー発生・解決時のみ embedding を生成するため、定常負荷は増えない。
-
-#### Phase 43-G: ユーザー知的支援（セカンドブレイン RAG）
-
-- `[ ]` **1. KaraKeep ブックマークのインデックス化と API 同期**
-  - KaraKeep サーバーから定時バッチでブックマーク（タイトル・タグ・URL）を取得してインジェスト。対話中に「保存した記事」を自然言語で検索・提示可能にする。テキスト量が少ないため RPi4 への負荷も極めて低い。
-- `[ ]` **2. Obsidian 特定フォルダの増分インジェストとパーソナルナレッジ参照**
-  - Obsidian の指定ディレクトリ（または `#rag` タグ付きノート）をスキャン。RPi4 の CPU 負荷集中を避けるため、深夜のアイドル時間帯に差分のみを増分 embedding してセカンドブレイン化する。
-
----
-
 ## 保留案件
 
 ### 条件付き待機（前提条件の解決後に着手）
 
-- `[ ]` **ISSUE-22: `gmn_sem` capacity の config 化＋書き込み直列化の責務分離**（capacity 引き上げ検討時。**旧 Phase 25-1 を統合**。メモリ `project_user_sem_concurrency` 参照）
-- `[ ]` **ISSUE-25: `●ACTIVE` → daemon STOP 制御**（無認証 LAN への破壊操作の露出・START 非対称性のセキュリティ前提を解決後）
 - `[-]` **ISSUE-09: rp1 の LM Studio 依存（単一障害点）のフェイルオーバ設計**（config 設定見直し済・スキップ）
-- `[ ]` **Phase 26: 外部 MCP クライアントの堅牢化とトランスポート拡張**（外部 MCP サーバーが整備された時点で着手）
-  - Auto-Reconnect / Idle Eviction / SSE トランスポートの 3 項目。詳細は task.md 過去バージョンを参照。
-  - 実装対象: `crates/rustyclaw-gateway/src/lib.rs` 内の `McpClientHandler` / `ToolServerHandle` ブロック。
-- `[ ]` **Phase 30: Upstream 先進機能（Hook・Steering・Spawn）の統合**（将来の検討課題）
-  - PicoClaw (Go Upstream) 参照。Hook Manager / Steering 割り込み / 非同期 Spawn の 3 項目。
-- `[ ]` **Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル）**（LINE 導入予定確定後に着手）
-  - LINE 導入の意思決定後に一般課題へ昇格する。
-  - 調査資料: [`docs/review/2026-06-03-geminiclaw-nonok-delivery-analysis.md`](review/2026-06-03-geminiclaw-nonok-delivery-analysis.md) / [`docs/review/2026-06-03-geminiclaw-notifications-channel-analysis.md`](review/2026-06-03-geminiclaw-notifications-channel-analysis.md)
 - 観察のみ: ISSUE-10（ローカル Gemma 品質）/ 13（一時 WS の context file WARN）/ 14（gws calendar WARN・現状解消）
-
-### アイデアバックログ
-
-- `[ ]` **LLM Provider 追加候補**
-  - Cerebras `gpt-oss-120b`（14,400 RPD・60k TPM）
-  - Google AI Studio（Gemma 3 27B）
-  - OpenRouter 新モデル: `qwen3-coder:free`（1M ctx）・`qwen3-next-80b:free` ...等
-
-- `[ ]` **本番環境の自動バックアップ体制**
-  - `production/workspace/`（`memory.db`・`sessions/*.jsonl`・`patrol/findings.md` 等）を QNAP 等の NAS へ定時 rsync
-
-- `[ ]` **MEMORY.md および知識構造のスリム化自動トリガー**
-  - 稼働蓄積で肥大化するナレッジファイルの自動クリーンアップ検討
-
-- `[ ]` **stn/rqmd によるローカル知識ベース RAG 構築**（Phase 13 積み残し）
-
-- `[ ]` **Google Drive / Sheets / Docs ツール**
-  - gws CLI 経由で実装可能。ユースケースが明確になった時点で追加
-
-- `[ ]` **embedding 検索における時間情報の有効化**
-  - ハイブリッド検索 / メタデータフィルタ：
-    「今日」「今週」などの時間的キーワードに含まれるクエリに対して、Embedding 検索対象範囲を更新日時などのメタデータでフィルタリング
-  - 再順位付け:
-     検索結果に対して時間的近接度をスコアで加算し、新しい情報を上位に引き上げる仕組み。
-
-- `[ ]` **ClawHub 互換の動的 Skill ダウンローダー（Phase 30-4）**（外部 Skill Hub 整備後）
-  - `rustyclaw skills install <skill-name>` サブコマンドの実装および `workspace/skills/` へのリモート展開ロジック。
-  - 前提となる外部 ClawHub が現時点で存在しないため保留。
-
