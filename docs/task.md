@@ -11,14 +11,10 @@
 
 ## 優先課題
 
-- [ ] **Phase 49-1: SKILL.md run_workspace_script → ctx_execute 移行**
-  - v0.4 で `workspace_execute_script`（旧 `run_workspace_script`）を削除したため、スクリプト実行スキルが全断線
-  - 影響・残存ファイル：
-    - **コア指示ファイル**: `SOUL.md`, `USER.md` (vault.json 記述注意), `AGENTS.md`, `HEARTBEAT.md`, `MEMORY.md`
-    - **個別スキル指示書 (SKILL.md)**: `daily-briefing`, `deep-research`, `session-logs`, `todo-tracker`, `topic-patrol`, `workspace`
-    - **スクリプトコメント内**: `session-logs/scripts/session-search.sh`, `session-stats.sh`
-  - 手順: ① `ctx_execute` の実スキーマ確認（context-mode 側） ② 各ファイル内のツール名・パラメータを `ctx_execute` へ書き換え、`vault.json` の平文読み込み記述を排除
-  - 対象: `production/workspace/` 配下の該当 Markdown およびスクリプトファイル
+- [ ] **Phase 49-2: Vault キャッシュ機構**
+  - karakeep (`KARAKEEP_API_KEY`)、obsidian (`OBSIDIAN_TOKEN`)、vitals-coach (`HOMEASSISTANT_TOKEN`) が vault から環境変数を取得できない
+  - Rust サービス起動時に vault の復号値を systemd `EnvironmentFile` 等で bash スクリプトに渡す仕組みが必要
+  - 対象: `rustyclaw-context-mode` 側の起動フック実装
 
 ---
 
