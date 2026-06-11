@@ -930,6 +930,25 @@ impl LaneRegistry {
 // 4. Gateway (オーケストレーターデーモン) の実装
 // ==============================================================================
 
+/// vault.enc の全キーをプロセス環境変数に注入する。
+/// context-mode → ctx_execute → bash スクリプトへ継承させるために起動時一度だけ呼ぶ。
+/// vault が存在しない場合や復号失敗は warn ログのみで続行（fail-open）。
+fn inject_vault_to_env() {
+    match rustyclaw_config::vault::load_vault(None) {
+        Ok(secrets) => {
+            let count = secrets.len();
+            // SAFETY: Gateway 起動時、他スレッドが env を読む前に一度だけ呼ぶ。
+            unsafe {
+                for (key, value) in secrets {
+                    std::env::set_var(&key, &value);
+                }
+            }
+            tracing::info!("vault: {} キーを環境変数に注入済み", count);
+        }
+        Err(e) => tracing::warn!("vault 読み込みスキップ (ctx_execute スクリプトは vault キー未解決): {e}"),
+    }
+}
+
 /// context-mode を起動し、クラッシュ時に指数バックオフで再接続するループを spawn する。
 /// 接続確立後は tool_server_handle に ctx_execute / ctx_search / ctx_index / ctx_patch が自動登録される。
 async fn start_context_mode(
@@ -1073,7 +1092,10 @@ impl Gateway {
             );
         }
 
-        // 2. ToolServer (rig エージェント用) と ToolRegistry (heartbeat 用) の初期化
+        // 2. Vault キーをプロセス環境変数に注入（ctx_execute 経由の bash スクリプトに継承させる）
+        inject_vault_to_env();
+
+        // 3. ToolServer (rig エージェント用) と ToolRegistry (heartbeat 用) の初期化
         let tool_server_handle = rig_core::tool::server::ToolServer::new().run();
         let mut mcp_service_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
