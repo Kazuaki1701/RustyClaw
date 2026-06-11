@@ -188,12 +188,6 @@ vault → config.json: "token": "$vault:HOMEASSISTANT_TOKEN"
 
 ## 将来拡張 `[将来拡張]`
 
-### Phase 28b-2: Gateway 起動遅延の短縮
-
-`Initializing daemon` から `loaded configuration` まで約 11 秒の起動遅延が発生している（`--no-agent` モードでも発生）。遅延要素を特定し、遅延初期化（lazy init）化によって起動時間を短縮する。
-
-- 対象: `crates/rustyclaw-gateway/src/lib.rs`（`Gateway::run` 初期化シーケンス）
-
 ### 本番環境の自動バックアップ体制
 
 `production/workspace/`（`memory.db`・`sessions/*.jsonl`・`patrol/findings.md` 等）を NAS（QNAP 等）へ定時 rsync する自動バックアップ体制の整備。

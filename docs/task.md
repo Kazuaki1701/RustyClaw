@@ -25,5 +25,4 @@
 
 ### v0.4 残課題（`docs/specs/v0.4/` 精査 — 2026-06-12）
 
-- [ ] **Phase 28b-2: Gateway 起動遅延短縮**: `Gateway::run` 初期化シーケンスの約 11 秒起動遅延を lazy init で改善。対象: `crates/rustyclaw-gateway/src/lib.rs`
 - [ ] **本番自動バックアップ**: `workspace/`（`memory.db`・`sessions/*.jsonl`・`patrol/findings.md`）を定時 rsync で NAS（QNAP 等）へ退避。`08_deployment.md §将来拡張` 参照
