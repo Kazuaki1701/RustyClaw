@@ -9,6 +9,16 @@
 
 ---
 
+## 優先課題
+
+- [ ] **Phase 49-1: SKILL.md `run_workspace_script` → `ctx_execute` 移行**
+  - v0.4 で `workspace_execute_script`（旧 `run_workspace_script`）を削除したため、スクリプト実行スキルが全断線
+  - 影響: gmail / calendar / karakeep / obsidian / weather / vitals-coach / session-logs / topic-patrol
+  - 手順: ① `ctx_execute` の実スキーマ確認（context-mode 側） ② 各 SKILL.md のツール名・パラメータを書き換え
+  - 対象: `production/workspace/skills/*/SKILL.md`（全 12 スキル）
+
+---
+
 ## 将来課題（低優先度）
 
 - [ ] **Dashboard SETTING タブ**: `GET/POST /api/config` + 2ステップ確定 UI
