@@ -24,12 +24,6 @@
 
 ## 一般課題
 
-- [ ] **Phase 46-1: LINE チャンネル実装**
-  - `LineConnector`（`Channel` トレイト実装）を `crates/rustyclaw-channels/src/lib.rs` に追加
-  - Gateway に HTTPS POST Webhook ルートと REST 送信を追加
-  - session_id 規約: `line-U{userId}-{YYYYMMDD}`
-  - config スキーマ実装済み（`line` キー）
-
 - [ ] **Phase 47-1: 非同期ローリング要約 (async-summary-proto) マージ**
   - worktree: `.claude/worktrees/feature+async-summary-proto`（branch: `worktree-feature+async-summary-proto`）
   - 設計完了済み・実装プラン作成 → バリデーション → main マージの順で着手
@@ -45,3 +39,4 @@
 - [ ] **Dashboard SETTING タブ**: `GET/POST /api/config` + 2ステップ確定 UI
 - [ ] **Dashboard RELOAD ボタン**: 既存 `GET /reload` エンドポイントをダッシュボードから呼び出す
 - [ ] **v0.5: 純 Rust 単一バイナリ**: `rustyclaw-context-mode` crate に EmbeddedKnowledgeBase + InProcessPatchMerger + SecureSandboxExecutor を実装
+- [ ] **Phase 46-1: LINE チャンネル実装**: `LineConnector`（`Channel` トレイト）追加、config スキーマ実装済み
