@@ -377,6 +377,9 @@ impl LaneRegistry {
                                                     "Heartbeat LLM execution failed: {:#}",
                                                     e
                                                 );
+                                                let _ = bus.publish(SystemEvent::SystemError {
+                                                    message: format!("Heartbeat LLM execution failed: {:#}", e),
+                                                });
                                                 crate::queue_remove(&session_id);
                                                 break;
                                             }
@@ -1133,6 +1136,26 @@ impl Gateway {
                 }
             }
         });
+
+        // 6b. SystemError 監視ループ — "all models failed" を Discord home channel へ通知
+        if discord_enabled {
+            let home_channel_id = discord_cfg
+                .and_then(|d| d.home_channel_id.clone())
+                .unwrap_or_default();
+            let mut rx_errors = bus.subscribe();
+            let discord_alert = discord_client.clone();
+            tokio::spawn(async move {
+                while let Ok(SystemEvent::SystemError { message }) = rx_errors.recv().await {
+                    if message.contains("all models failed") {
+                        tracing::warn!("All models failed — sending Discord alert");
+                        let alert = format!("⚠️ **LLM 全モデル失敗**\n```\n{}\n```", message);
+                        if let Err(e) = discord_alert.send_message(&home_channel_id, &alert).await {
+                            tracing::error!("Failed to send all-models-failed alert: {:#}", e);
+                        }
+                    }
+                }
+            });
+        }
 
         // 7. 各種バックグラウンドサービスの初期化・起動
 

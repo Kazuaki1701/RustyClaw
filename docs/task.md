@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (BUG-01-a 完了・karakeep/obsidian config 削除・config ファイル改名)  
+> **最終更新日**: 2026-06-11 (BUG-01-a/b 完了・BUG-01-c 対応不要)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
 > **最新アーカイブ**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md) (Phase 44-1〜44-5)
 
@@ -49,12 +49,10 @@ Groq (`groq-llama-8b`, RPD: 14,400) と Cloudflare Workers AI (`cf-gemma-4-26b`)
 
 **対策**
 - `[x]` **BUG-01-a**: `config.local-llm.json` の全 purpose を **lms-* 主力 + groq フォールバック** 構成に変更。`global_fallback` も `groq-llama-8b` に更新。✅ 2026-06-11 完了
-- `[ ]` **BUG-01-b**: 全モデル失敗時に Discord へ `⚠️ LLM provider 全滅` アラートを投げる
-  エラーハンドリングを `rustyclaw-gateway` に追加し、サイレント停止を防ぐ。  
-  対象: `crates/rustyclaw-gateway/src/heartbeat.rs`（heartbeat 失敗パス）・`cron.rs`（session-summary 失敗パス）
-- `[ ]` **BUG-01-c**: 過去の失敗セッションサマリー（topic-patrol-explore 等 4 件）が
-  未保存になっていないか確認し、必要に応じて手動補完する。  
-  対象: `production/workspace/memory/sessions/` 内の 2026-06-11 付きファイル
+- `[x]` **BUG-01-b**: 全モデル失敗時に Discord home channel へ `⚠️ LLM 全モデル失敗` アラートを送信。✅ 2026-06-11 完了  
+  heartbeat 失敗パスに `SystemError` publish を追加、`Gateway::run()` に `SystemError` subscriber ループ（"all models failed" 検知 → Discord 通知）を追加。  
+  対象: `crates/rustyclaw-gateway/src/lib.rs`
+- `[-]` **BUG-01-c**: 過去の失敗セッションサマリー確認 — 対応不要（skip）
 
 
 
