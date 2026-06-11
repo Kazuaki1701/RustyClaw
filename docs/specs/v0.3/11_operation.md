@@ -120,6 +120,26 @@ grep -i "ha.*spike\|co2.*spike\|spike.*heartbeat" ~/.rustyclaw/rustyclaw.log | t
 
 ---
 
+### 2-6. context-mode プロセス監視（v0.4）
+
+```bash
+# context-mode 子プロセスが動作中か確認
+ps aux | grep "context-mode\|cli.bundle.mjs\|bun" | grep -v grep
+
+# context-mode の再起動ログ（クラッシュ検知・指数バックオフ）
+grep -i "context-mode\|ctx_execute\|ctx_search\|ctx_index\|ctx_patch\|MCP セッション\|再起動" ~/.rustyclaw/rustyclaw.log | tail -20
+
+# ctx_search / ctx_index の呼び出し成否
+grep -i "ctx_search\|ctx_index\|episodic memory\|try_ctx" ~/.rustyclaw/rustyclaw.log | tail -20
+```
+
+**判定基準**:
+- `ps` に `context-mode` または `cli.bundle.mjs` が見つからない → プロセスが停止中（Heartbeat はエラーなく続行するが episodic memory 注入が無効）
+- ログに "再起動します..." が繰り返し出現 → context-mode が起動直後にクラッシュ（Node.js バージョン確認: `node --version`、`bun --version`）
+- `ctx_search unavailable` が頻出 → context-mode 未接続。ログのバックオフ時間が長い場合は起動エラーを先に確認
+
+---
+
 ## 3. 詳細点検（所要 10〜15 分）
 
 ### 3-1. Heartbeat 応答の中身を解析
@@ -329,6 +349,8 @@ grep -i "ha.*poll\|snapshot\|spike\|ha_env" ~/.rustyclaw/rustyclaw.log | tail -2
 | SQLite flush カウント | `sqlite3 workspace/memory.db "SELECT patrol_name, last_run_at FROM patrol_state WHERE patrol_name LIKE 'flush%'"` | flush_ts が最近更新されている |
 | HA サマリー更新 | `cat workspace/memory/ha-env-summary.txt` | 空でない・15 分以内に更新（HA 有効時） |
 | HA スパイクフラグ | `cat workspace/memory/ha-state.json \| python3 -m json.tool \| grep spike` | spike_detected: false が通常 |
+| context-mode 稼働 | `ps aux \| grep "context-mode\|cli.bundle.mjs" \| grep -v grep` | プロセスが 1 件以上存在 |
+| ctx_search 呼び出し | `grep "ctx_search" ~/.rustyclaw/rustyclaw.log \| tail -5` | "unavailable" が連続しない |
 
 ---
 
