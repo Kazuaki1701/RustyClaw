@@ -11,7 +11,7 @@
 
 ## 優先課題
 
-- [ ] **Phase 45-1: v0.4 ctx_index/ctx_search エージェント統合** ← v0.4 の本丸
+- [x] **Phase 45-1: v0.4 ctx_index/ctx_search エージェント統合** ← v0.4 の本丸
   - Phase 01 で `ingest_session_summary` を削除したまま代替未実装。記憶蓄積の穴が残っている。
   - セッション終了後に `ctx_index` でサマリを登録、Heartbeat・Discord で `ctx_search` を使う実装
   - 対象: `crates/rustyclaw-agent/src/lib.rs`（"Phase 02 で ctx_search へ移行予定" コメント箇所）
