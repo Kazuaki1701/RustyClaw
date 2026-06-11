@@ -187,6 +187,8 @@ rustyclaw-storage
 | [`06_hermes_skills.md`](06_hermes_skills.md) | §12 | `[将来拡張]` | Hermes 自己改善 Skills システム |
 | [`07_extensions.md`](07_extensions.md) | §13, §14, §15 | `[将来拡張]` | bwrap・HomeAssistant 統合・rig-core 統合 |
 | [`08_deployment.md`](08_deployment.md) | §16 | 運用ドキュメント | 運用・デプロイ手順 |
+| [`09_dashboard.md`](09_dashboard.md) | — | `[実装済]` | Web Dashboard・管理 API |
+| [`10_mcp.md`](10_mcp.md) | — | `[実装済 + 将来拡張を含む]` | MCP クライアント（堅牢化・SSE は将来拡張） |
 
 ---
 
