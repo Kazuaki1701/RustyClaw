@@ -148,10 +148,10 @@ impl MessageBus {
 
 pub struct LaneRegistry {
     lanes: Arc<TokioMutex<HashMap<String, mpsc::Sender<SystemEvent>>>>,
-    /// 全 gmn プロセスを直列化する統合セマフォ (容量1)。
-    /// user 対話 / bg (heartbeat) / flush_memory() の全ての gmn 起動がこの枠を取得する。
+    /// 全レーンの並行実行を制御する統合セマフォ (容量4)。
+    /// user 対話 / bg (heartbeat) / flush_memory() の全ての起動がこの枠を取得する。
     /// MEMORY.md 等ワークスペースファイルへの並列書き込みによるデータ消失を防止する。
-    gmn_sem: Arc<Semaphore>,
+    lane_sem: Arc<Semaphore>,
     config: Arc<StdMutex<Config>>,
     workspace_path: PathBuf,
     bus: Arc<MessageBus>,
@@ -167,12 +167,12 @@ impl LaneRegistry {
         bus: Arc<MessageBus>,
         tool_registry: Arc<rustyclaw_tools::ToolRegistry>,
         tool_server_handle: rig_core::tool::server::ToolServerHandle,
-        gmn_sem: Arc<Semaphore>,
+        lane_sem: Arc<Semaphore>,
         discord_connector: Arc<DiscordConnector>,
     ) -> Self {
         Self {
             lanes: Arc::new(TokioMutex::new(HashMap::new())),
-            gmn_sem,
+            lane_sem,
             config: Arc::new(StdMutex::new(config)),
             workspace_path,
             bus,
@@ -212,7 +212,7 @@ impl LaneRegistry {
         let (tx, rx) = mpsc::channel::<SystemEvent>(10);
         lanes.insert(session_id.clone(), tx.clone());
 
-        let gmn_sem = self.gmn_sem.clone();
+        let lane_sem = self.lane_sem.clone();
         let config = self.config.clone();
         let workspace_path = self.workspace_path.clone();
         let bus = self.bus.clone();
@@ -314,13 +314,13 @@ impl LaneRegistry {
                             loop {
                                 crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &desc);
                                 tracing::debug!(
-                                    "Session {} attempting to acquire gmn_sem (Attempt {})...",
+                                    "Session {} attempting to acquire lane_sem (Attempt {})...",
                                     session_id,
                                     attempt + 1
                                 );
                                 let permit_res = tokio::time::timeout(
                                     Duration::from_secs(60),
-                                    gmn_sem.acquire(),
+                                    lane_sem.acquire(),
                                 )
                                 .await;
                                 match permit_res {
@@ -336,7 +336,7 @@ impl LaneRegistry {
                                             session_id
                                         );
                                         let pipeline =
-                                            Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                            Pipeline::new(active_config.clone(), lane_sem.clone());
                                         match pipeline
                                             .execute_heartbeat(
                                                 &workspace_path,
@@ -441,12 +441,12 @@ impl LaneRegistry {
                         loop {
                             crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &desc);
                             tracing::debug!(
-                                "Session {} attempting to acquire gmn_sem (Attempt {})...",
+                                "Session {} attempting to acquire lane_sem (Attempt {})...",
                                 session_id,
                                 attempt + 1
                             );
                             let permit_res =
-                                tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire())
+                                tokio::time::timeout(Duration::from_secs(60), lane_sem.acquire())
                                     .await;
                             match permit_res {
                                 Ok(Ok(permit)) => {
@@ -461,7 +461,7 @@ impl LaneRegistry {
                                         session_id
                                     );
                                     let pipeline =
-                                        Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                        Pipeline::new(active_config.clone(), lane_sem.clone());
                                     match pipeline
                                         .execute(&workspace_path, &session_id, &prompt)
                                         .await
@@ -609,12 +609,12 @@ impl LaneRegistry {
                         loop {
                             crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &desc);
                             tracing::debug!(
-                                "Session {} attempting to acquire gmn_sem (Attempt {})...",
+                                "Session {} attempting to acquire lane_sem (Attempt {})...",
                                 session_id,
                                 attempt + 1
                             );
                             let permit_res =
-                                tokio::time::timeout(Duration::from_secs(60), gmn_sem.acquire())
+                                tokio::time::timeout(Duration::from_secs(60), lane_sem.acquire())
                                     .await;
                             match permit_res {
                                 Ok(Ok(permit)) => {
@@ -629,7 +629,7 @@ impl LaneRegistry {
                                         session_id
                                     );
                                     let pipeline =
-                                        Pipeline::new(active_config.clone(), gmn_sem.clone());
+                                        Pipeline::new(active_config.clone(), lane_sem.clone());
                                     // ProgressReporter（進捗表示とタイピング）のセットアップ
                                     let is_user_channel = !session_id.starts_with("cron")
                                         && channel_id.parse::<u64>().is_ok();
@@ -1233,14 +1233,14 @@ impl Gateway {
         let discord_client = Arc::new(discord);
 
         // 4. LaneRegistry の初期化
-        let gmn_sem = Arc::new(Semaphore::new(4)); // 全 gmn プロセス統合枠 (user + bg + flush を一本化、容量 4)
+        let lane_sem = Arc::new(Semaphore::new(4)); // 全レーン統合枠 (user + bg + flush を一本化、容量 4)
         let registry = Arc::new(LaneRegistry::new(
             config.clone(),
             self.workspace_path.clone(),
             bus.clone(),
             tool_registry.clone(),
             tool_server_handle.clone(),
-            gmn_sem.clone(),
+            lane_sem.clone(),
             discord_client.clone(),
         ));
 
@@ -1357,8 +1357,8 @@ impl Gateway {
             reload_tx,
             bus.clone(),
             self.workspace_path.clone(),
-            gmn_sem.clone(),
-            4, // gmn_sem capacity = 4
+            lane_sem.clone(),
+            4, // lane_sem capacity = 4
         );
         health_server
             .start()
@@ -1479,7 +1479,7 @@ mod tests {
 
         let tool_registry = Arc::new(rustyclaw_tools::ToolRegistry::new());
         let tool_server_handle = rig_core::tool::server::ToolServer::new().run();
-        let test_gmn_sem = Arc::new(Semaphore::new(1));
+        let test_lane_sem = Arc::new(Semaphore::new(1));
         let mock_discord = Arc::new(DiscordConnector::new("mock"));
         let registry = LaneRegistry::new(
             config,
@@ -1487,7 +1487,7 @@ mod tests {
             bus.clone(),
             tool_registry,
             tool_server_handle,
-            test_gmn_sem,
+            test_lane_sem,
             mock_discord,
         );
 

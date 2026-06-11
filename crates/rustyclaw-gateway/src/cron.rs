@@ -165,7 +165,7 @@ impl CronService {
                         let _ = db.set_state_value("daily_summary_date", &today);
                     }
 
-                    // Offset triggering by 5 minutes to prevent locks/collisions with Heartbeat 10m ticks on gmn_sem
+                    // Offset triggering by 5 minutes to prevent locks/collisions with Heartbeat 10m ticks on lane_sem
                     tracing::info!(
                         "CronService: Daily Summary date changed. Waiting 5 minutes offset before triggering..."
                     );

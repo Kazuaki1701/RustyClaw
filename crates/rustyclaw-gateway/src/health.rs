@@ -21,8 +21,8 @@ pub struct HealthServer {
     reload_tx: tokio::sync::mpsc::Sender<()>,
     bus: Arc<crate::MessageBus>,
     workspace_path: PathBuf,
-    gmn_sem: Arc<tokio::sync::Semaphore>,
-    gmn_capacity: usize,
+    lane_sem: Arc<tokio::sync::Semaphore>,
+    lane_capacity: usize,
     cancel_map: CancelMap,
 }
 
@@ -32,8 +32,8 @@ impl HealthServer {
         reload_tx: tokio::sync::mpsc::Sender<()>,
         bus: Arc<crate::MessageBus>,
         workspace_path: PathBuf,
-        gmn_sem: Arc<tokio::sync::Semaphore>,
-        gmn_capacity: usize,
+        lane_sem: Arc<tokio::sync::Semaphore>,
+        lane_capacity: usize,
     ) -> Self {
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
         Self {
@@ -41,8 +41,8 @@ impl HealthServer {
             reload_tx,
             bus,
             workspace_path,
-            gmn_sem,
-            gmn_capacity,
+            lane_sem,
+            lane_capacity,
             cancel_map: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
@@ -56,8 +56,8 @@ impl HealthServer {
         let reload_tx = Arc::new(self.reload_tx);
         let bus = self.bus.clone();
         let workspace_path = Arc::new(self.workspace_path.clone());
-        let gmn_sem_arc = self.gmn_sem.clone();
-        let gmn_capacity = self.gmn_capacity;
+        let lane_sem_arc = self.lane_sem.clone();
+        let lane_capacity = self.lane_capacity;
         let cancel_map: CancelMap = self.cancel_map.clone();
 
         tokio::spawn(async move {
@@ -68,8 +68,8 @@ impl HealthServer {
                         let reload_tx_clone = reload_tx.clone();
                         let bus_clone = bus.clone();
                         let workspace_path_clone = workspace_path.clone();
-                        let _gmn_sem_clone = gmn_sem_arc.clone();
-                        let gmn_cap_clone = gmn_capacity;
+                        let _lane_sem_clone = lane_sem_arc.clone();
+                        let lane_cap_clone = lane_capacity;
                         let cancel_map_clone = cancel_map.clone();
 
                         tokio::spawn(async move {
@@ -344,7 +344,7 @@ impl HealthServer {
                                         m
                                     };
                                     let json = serde_json::json!({
-                                        "capacity": gmn_cap_clone,
+                                        "capacity": lane_cap_clone,
                                         "providers": providers_map,
                                     });
                                     (
@@ -1154,7 +1154,7 @@ async function updateQueue(){
         <div class="diag-box active">2. Session Serializer<br>(FIFO Queue / Lane)</div>
         <div class="diag-arrow">│</div>
         <div class="diag-arrow">▼</div>
-        <div class="diag-box active">3. Concurrency Lock<br>(gmn_sem: Max 4)</div>
+        <div class="diag-box active">3. Concurrency Lock<br>(lane_sem: Max 4)</div>
         <div class="diag-arrow">│</div>
         <div class="diag-arrow">▼</div>
         <div class="diag-box">4. Agent Exec (gmn)</div>

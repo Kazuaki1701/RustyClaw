@@ -21,7 +21,7 @@
 `LANE ARCHITECTURE` として、リクエストが処理される流れをテキストベースで分かりやすく図解化しました。
 1. **Incoming Request** (リクエスト受付)
 2. **Session Serializer** (セッションごとの直列FIFOキュー)
-3. **Concurrency Lock** (`gmn_sem`: 同時実行数制限 最大4)
+3. **Concurrency Lock** (`lane_sem`: 同時実行数制限 最大4)
 4. **Agent Exec (gmn)** (エージェント本体の実行)
 
 ### ③ 待機中タスク（FIFO）の順序可視化
