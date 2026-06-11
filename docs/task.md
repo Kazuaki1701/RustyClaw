@@ -11,13 +11,7 @@
 
 ## 優先課題
 
-- [ ] **リファクタリング: gmn_sem から lane_sem への名称変更**
-  - 旧 `gmn` (Gemini CLI) 依存が解消され汎用化したため、並行実行制限セマフォの名前を `gmn_sem` から実態に即した `lane_sem` へ変更する
-  - 対象: `crates/rustyclaw-gateway/src/` の `lib.rs`, `health.rs`, `cron.rs` および関連仕様書（`05_gateway_spec.md` 等）
-
-- [ ] **リファクタリング: gmn_sem から lane_sem への名称変更**
-  - 旧 `gmn` (Gemini CLI) 依存が解消され汎用化したため、並行実行制限セマフォの名前を `gmn_sem` から実態に即した `lane_sem` へ変更する
-  - 対象: `crates/rustyclaw-gateway/src/` の `lib.rs`, `health.rs`, `cron.rs` および関連仕様書（`05_gateway_spec.md` 等）
+（現在アクティブな優先課題なし）
 
 ---
 
