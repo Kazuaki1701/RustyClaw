@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (BUG-05 アーカイブ)  
+> **最終更新日**: 2026-06-11 (spec 99 との照合・重複項目削除)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
 > **最新アーカイブ**: [2026-06-11-completed-bug-05.md](archive/tasks/2026-06-11-completed-bug-05.md) (BUG-05)
 
@@ -43,13 +43,6 @@
 ## 一般課題
 
 ### GeminiClaw とのギャップ解消
-
-#### Phase 37: GeminiClaw 高度先進機能の移植と統合
-> 設定と実行環境のギャップ回収により、ラズパイ運用環境での安全性、表現力、利便性を極大化する。  
-> 完了済み: 37-1（Autonomy Level）・37-2（Web Preview Server）・37-3（Bubblewrap サンドボックス）
-
-- `[ ]` **4. プロンプト予算 (Prompt Budget) 設定によるコンテキスト配分管理**
-  - 詳細設計: [`docs/plans/2026-06-08-phase37-4-prompt-budget.md`](plans/2026-06-08-phase37-4-prompt-budget.md)
 
 #### Phase 39: マルチチャンネル対応（LINE 導入 + Notifications チャンネル）
 > GeminiClaw は Discord / Slack / Telegram のマルチチャンネルに対応しており、notifications チャンネル（home と独立したバックグラウンドジョブ通知先）を持つ。RustyClaw は Discord のみで、LINE 導入予定に伴いこのギャップを回収する。  
@@ -132,20 +125,6 @@
 
 - `[ ]` **4. ClawHub 互換の動的 Skill ダウンローダー・インストーラーの実装**
   - `rustyclaw skills install <skill-name>` サブコマンドの実装および `workspace/skills/` へのリモート展開ロジック。
-
----
-
-### Security 対応
-
-#### Phase 23: 安全ガードレールと構造化監査ログの構築
-> ※ GeminiClaw に直接対応機能なし。RustyClaw 独自の安全機構として重要。
-
-- `[x]` **1. 自律レベル制御 (Autonomy Level) と承認ゲート (Confirmation Gate) の実装** ✅ Phase 37-1 で実装済み
-  - `AutonomyLevel` (`Autonomous` / `Supervised` / `ReadOnly`) の導入。
-  - `supervised`（監視モード）時、書き込みや破壊的アクションに対して `ask-user` ファイル監視で実行を非同期ブロッキングする承認ゲートの実装。
-
-- `[ ]` **2. 構造化ツール監査ログ (Audit Logger) の実装**
-  - ツール実行結果をパラメータ切り詰めの上 `{workspace}/memory/audit.jsonl` に保存する仕組みの実装。
 
 ---
 
