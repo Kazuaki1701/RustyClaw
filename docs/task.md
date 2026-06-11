@@ -11,11 +11,14 @@
 
 ## 優先課題
 
-- [ ] **Phase 49-1: SKILL.md `run_workspace_script` → `ctx_execute` 移行**
+- [ ] **Phase 49-1: SKILL.md run_workspace_script → ctx_execute 移行**
   - v0.4 で `workspace_execute_script`（旧 `run_workspace_script`）を削除したため、スクリプト実行スキルが全断線
-  - 影響: gmail / calendar / karakeep / obsidian / weather / vitals-coach / session-logs / topic-patrol
-  - 手順: ① `ctx_execute` の実スキーマ確認（context-mode 側） ② 各 SKILL.md のツール名・パラメータを書き換え
-  - 対象: `production/workspace/skills/*/SKILL.md`（全 12 スキル）
+  - 影響・残存ファイル：
+    - **コア指示ファイル**: `SOUL.md`, `USER.md` (vault.json 記述注意), `AGENTS.md`, `HEARTBEAT.md`, `MEMORY.md`
+    - **個別スキル指示書 (SKILL.md)**: `daily-briefing`, `deep-research`, `session-logs`, `todo-tracker`, `topic-patrol`, `workspace`
+    - **スクリプトコメント内**: `session-logs/scripts/session-search.sh`, `session-stats.sh`
+  - 手順: ① `ctx_execute` の実スキーマ確認（context-mode 側） ② 各ファイル内のツール名・パラメータを `ctx_execute` へ書き換え、`vault.json` の平文読み込み記述を排除
+  - 対象: `production/workspace/` 配下の該当 Markdown およびスクリプトファイル
 
 ---
 
