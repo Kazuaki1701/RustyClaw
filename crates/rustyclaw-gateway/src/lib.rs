@@ -307,9 +307,12 @@ impl LaneRegistry {
                             let max_attempts = 3;
                             let base_delay = Duration::from_secs(5);
 
-                            let desc = "Heartbeat Patrol / Activity Scan";
+                            let desc = format!(
+                                "Heartbeat Patrol / Activity Scan ({})",
+                                chrono::Local::now().format("%H:%M")
+                            );
                             loop {
-                                crate::queue_update_or_insert(&session_id, "Waiting", 0.0, desc);
+                                crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &desc);
                                 tracing::debug!(
                                     "Session {} attempting to acquire gmn_sem (Attempt {})...",
                                     session_id,
@@ -326,7 +329,7 @@ impl LaneRegistry {
                                             &session_id,
                                             "Executing",
                                             0.0,
-                                            desc,
+                                            &desc,
                                         );
                                         tracing::info!(
                                             "Session {} acquired permit slot. Executing agent...",
@@ -370,7 +373,7 @@ impl LaneRegistry {
                                                             let backoff = parsed_reset
                                                                 .map(|d| d + Duration::from_secs(2)) // 2秒の安全マージンを追加
                                                                 .unwrap_or_else(|| base_delay * 2u32.pow(attempt));
-                                                            crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64(), desc);
+                                                            crate::queue_update_or_insert(&session_id, "Cooldown", backoff.as_secs_f64(), &desc);
                                                             if let Some(reset_duration) = parsed_reset {
                                                                 tracing::warn!("Rate limit exceeded. Detected quota reset time: {:.1}s. Dynamic backoff applied: {:.1}s (including 2s safety buffer). Error: {}", reset_duration.as_secs_f64(), backoff.as_secs_f64(), limit_msg);
                                                             } else {
@@ -431,9 +434,12 @@ impl LaneRegistry {
                         let max_attempts = 3;
                         let base_delay = Duration::from_secs(5);
 
-                        let desc = "Daily Activity Summary";
+                        let desc = format!(
+                            "Daily Activity Summary ({})",
+                            chrono::Local::now().format("%H:%M")
+                        );
                         loop {
-                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0, desc);
+                            crate::queue_update_or_insert(&session_id, "Waiting", 0.0, &desc);
                             tracing::debug!(
                                 "Session {} attempting to acquire gmn_sem (Attempt {})...",
                                 session_id,
@@ -448,7 +454,7 @@ impl LaneRegistry {
                                         &session_id,
                                         "Executing",
                                         0.0,
-                                        desc,
+                                        &desc,
                                     );
                                     tracing::info!(
                                         "Session {} acquired permit slot. Executing agent...",
@@ -526,7 +532,7 @@ impl LaneRegistry {
                                                     &session_id,
                                                     "Cooldown",
                                                     backoff.as_secs_f64(),
-                                                    desc,
+                                                    &desc,
                                                 );
                                                 if let Some(reset_duration) = parsed_reset {
                                                     tracing::warn!(
