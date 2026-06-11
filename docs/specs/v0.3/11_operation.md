@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[実装済]`
 > **バージョン**: v0.3
-> **最終更新日**: 2026-06-11
+> **最終更新日**: 2026-06-12（Phase 50: HA ポーリング監視項目追加）
 > **目的**: RustyClaw デーモンの稼働状況を定期的または障害時に点検するための手順書
 > **参照元**: [`00_rustyclaw.md`](00_rustyclaw.md)
 
@@ -21,6 +21,8 @@ workspace/
 ├── memory/
 │   ├── heartbeat-state.json         # 最後の各チェック実行時刻 + lastUserContact
 │   ├── heartbeat-digest.md          # 最新の Heartbeat ダイジェスト（0 byte なら異常）
+│   ├── ha-env-summary.txt           # HA 環境 1 行サマリー（10 分ごと更新）★ Phase 50
+│   ├── ha-state.json                # HA センサー 6 サンプルリングバッファ ★ Phase 50
 │   └── logs/YYYY-MM-DD.md          # 日次活動ログ（Heartbeat の詳細記録）
 ├── MEMORY.md                        # エージェントの長期記憶（5KB 以下が目標）
 └── memory.db                        # SQLite（flush カウント・seen_items 等）
@@ -95,6 +97,26 @@ ls -lh workspace/sessions/
 **見るべき点**:
 - `cron-heartbeat.jsonl` が異常に大きくないか（1MB 超は要注意）
 - Discord セッションファイルの更新時刻がメッセージ受信時刻と整合しているか
+
+---
+
+### 2-5. HA ポーリング状態確認（Phase 50）
+
+```bash
+# 最新サマリー確認（10 分以内に更新されているか）
+cat workspace/memory/ha-env-summary.txt
+
+# リングバッファ + スパイクフラグ確認
+cat workspace/memory/ha-state.json | python3 -m json.tool
+
+# スパイク検知ログ（CO2 >1500ppm 発報時のみ出現）
+grep -i "ha.*spike\|co2.*spike\|spike.*heartbeat" ~/.rustyclaw/rustyclaw.log | tail -10
+```
+
+**判定基準**:
+- `ha-env-summary.txt` が空 or 更新時刻が 15 分超 → `220_ha_env_snapshot.sh` または HA 接続に異常
+- `ha-state.json` の `spike_detected: true` が持続 → CO2 が 1500ppm 超継続中（換気後に自然解除）
+- スパイクログに `last_spike_heartbeat cooldown` があれば 3 時間クールダウン中（正常動作）
 
 ---
 
@@ -246,6 +268,9 @@ grep "memory flush" ~/.rustyclaw/rustyclaw.log | tail -20
 
 # Lane セマフォの待機・タイムアウト
 grep "sem\|timed out\|permit" ~/.rustyclaw/rustyclaw.log | tail -20
+
+# HA ポーリング・スパイク検知（Phase 50）
+grep -i "ha.*poll\|snapshot\|spike\|ha_env" ~/.rustyclaw/rustyclaw.log | tail -20
 ```
 
 ---
@@ -276,6 +301,16 @@ grep "sem\|timed out\|permit" ~/.rustyclaw/rustyclaw.log | tail -20
 症状: assistant 応答がすべて空
   └─ 原因: モデルがテキストなしでツール呼び出しのみ生成
      └─ 確認: RUST_LOG=debug でプロバイダの API レスポンスを確認
+
+症状: ha-env-summary.txt が空 / 更新されない（Phase 50）
+  ├─ 原因: HA サーバーが停止中または HOMEASSISTANT_TOKEN が無効
+  │    └─ 確認: `wget -qO- --header "Authorization: Bearer $TOKEN" http://HA:8123/api/`
+  └─ 原因: config.json の `tools.home-assistant.enabled` が false または設定未記述
+       └─ 確認: `rustyclaw config show` で home-assistant セクションを確認
+
+症状: CO2 スパイクアラートが繰り返し発報される（3 時間以内）
+  └─ 原因: クールダウンロジックが動作していない（バグ）または CO2 が継続的に高い
+     └─ 確認: ログで "last_spike_heartbeat cooldown" の有無を確認
 ```
 
 ---
@@ -292,6 +327,8 @@ grep "sem\|timed out\|permit" ~/.rustyclaw/rustyclaw.log | tail -20
 | Heartbeat ギャップ | 3-3 のスクリプト | 35分以上のギャップなし |
 | 空応答率 | 3-2 のスクリプト | cron-heartbeat 以外は 20% 以下 |
 | SQLite flush カウント | `sqlite3 workspace/memory.db "SELECT patrol_name, last_run_at FROM patrol_state WHERE patrol_name LIKE 'flush%'"` | flush_ts が最近更新されている |
+| HA サマリー更新 | `cat workspace/memory/ha-env-summary.txt` | 空でない・15 分以内に更新（HA 有効時） |
+| HA スパイクフラグ | `cat workspace/memory/ha-state.json \| python3 -m json.tool \| grep spike` | spike_detected: false が通常 |
 
 ---
 

@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: 運用ドキュメント
 > **バージョン**: v0.3
-> **最終更新日**: 2026-06-11
+> **最終更新日**: 2026-06-12（Phase 50: HA セットアップ手順追加）
 > **参照元**: [`00_rustyclaw.md`](00_rustyclaw.md)
 
 ---
@@ -126,6 +126,62 @@ CONTEXT_MODE_DIR=/tmp/ctx-test/.context-mode \
   CONTEXT_MODE_PLATFORM=custom-rustyclaw \
   context-mode
 # JSON-RPC 入力待ちになれば OK（Ctrl+C で終了）
+```
+
+---
+
+## 16.8 HomeAssistant 連携セットアップ（Phase 50）
+
+HA トークンを vault に登録し、config.json でエンドポイントを指定する。
+
+### トークン登録（vault）
+
+```bash
+# vault に HOMEASSISTANT_TOKEN を追加（config.json には "$vault:HOMEASSISTANT_TOKEN" と記述）
+rustyclaw vault set HOMEASSISTANT_TOKEN <HA_LONG_LIVED_ACCESS_TOKEN>
+```
+
+HA の Long-Lived Access Token は `http://<HA_HOST>:8123/profile` → Security タブで発行。
+
+### config.json 設定例
+
+```json
+{
+  "tools": {
+    "home-assistant": {
+      "enabled": true,
+      "endpoint": "http://192.168.1.30:8123",
+      "token": "$vault:HOMEASSISTANT_TOKEN"
+    }
+  }
+}
+```
+
+`endpoint` のデフォルト値は `http://192.168.1.30:8123`。HA ホストが異なる場合のみ指定する。
+
+### 動作確認
+
+```bash
+# 1. HA エンドポイント疎通確認
+ssh rp1 'wget -qO- --header "Authorization: Bearer <TOKEN>" http://192.168.1.30:8123/api/'
+
+# 2. スナップショットスクリプト手動実行
+ssh rp1 'bash ~/.rustyclaw/workspace/skills/home-assistant-rest-api/scripts/220_ha_env_snapshot.sh'
+cat ~/.rustyclaw/workspace/memory/ha-env-summary.txt
+cat ~/.rustyclaw/workspace/memory/ha-state.json | python3 -m json.tool
+
+# 3. スパイク検知テスト（exit code 確認）
+ssh rp1 'bash ~/.rustyclaw/workspace/skills/home-assistant-rest-api/scripts/220_ha_env_snapshot.sh --check-spike; echo "exit: $?"'
+```
+
+### HA 連携の環境変数継承チェーン
+
+```
+vault → config.json: "token": "$vault:HOMEASSISTANT_TOKEN"
+  → Rust (inject_vault_to_env): HOMEASSISTANT_TOKEN 環境変数にセット
+  → Rust (lib.rs): HOMEASSISTANT_ENDPOINT 環境変数にセット（config.endpoint から）
+  → context-mode Node.js: 親プロセスから ENV 継承
+  → bash スクリプト: $HOMEASSISTANT_TOKEN / ${HOMEASSISTANT_ENDPOINT:-http://...} 参照
 ```
 
 ---

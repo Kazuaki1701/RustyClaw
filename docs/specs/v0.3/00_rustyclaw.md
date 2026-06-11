@@ -3,13 +3,13 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (最新の真実 - コードと同期中)
 > **バージョン**: v0.4（v0.3 開発スキップ・v0.4 へ直接移行）
-> **最終更新日**: 2026-06-11
+> **最終更新日**: 2026-06-12（Phase 50: §14 HA 統合完了）
 > **対象コード**: `crates/` 全クレート最新実装
-> **備考**: インデックス + 概要。詳細は §4 以降の各仕様ファイルを参照。§13 が v0.4 実装対象。
+> **備考**: インデックス + 概要。詳細は §4 以降の各仕様ファイルを参照。§13・§14 が v0.4 実装完了。
 > **Upstream 比較**: [`91_upstream_comparison.md`](91_upstream_comparison.md)
 
 **プロジェクト名**: RustyClaw
-**更新日**: 2026-06-11
+**更新日**: 2026-06-12
 
 ---
 
@@ -187,12 +187,12 @@ rustyclaw-storage
 | [`12_storage.md`](12_storage.md) | §11 | `[実装済]` | データ永続化・RAG インデックス |
 | [`05_heartbeat.md`](05_heartbeat.md) | §10 | `[実装済]` | Heartbeat システム |
 | [`06_hermes_skills.md`](06_hermes_skills.md) | §12 | `[将来拡張]` | Hermes 自己改善 Skills システム |
-| [`07_extensions.md`](07_extensions.md) | §13, §14, §15 | `[将来拡張]` | bwrap・HomeAssistant 統合・rig-core 統合 |
+| [`07_extensions.md`](07_extensions.md) | §13〜17 | `[将来拡張]` | §13（context-mode 委譲）・§14（HA 統合）は v0.4 完了済み。§15（rig-core）完了済み。§16・§17 は将来拡張 |
 | [`08_deployment.md`](08_deployment.md) | §16 | 運用ドキュメント | 運用・デプロイ手順 |
 | [`09_dashboard.md`](09_dashboard.md) | — | `[実装済]` | Web Dashboard・管理 API |
 | [`10_mcp.md`](10_mcp.md) | — | `[実装済 + 将来拡張を含む]` | MCP クライアント（堅牢化・SSE は将来拡張） |
 | [`11_operation.md`](11_operation.md) | — | `[実装済]` | 稼働点検ガイド（クイック/詳細点検・週次チェックリスト） |
-| （本ファイル §13） | §13 | `[将来拡張 v0.4]` | 外部 MCP サーバー統合（context-mode 同居）＆ 内製コード極小化 |
+| （本ファイル §13） | §13 | `[実装済 — v0.4]` | 外部 MCP サーバー統合（context-mode 同居）＆ 内製コード極小化 |
 | （本ファイル §14） | §14 | `[将来拡張 v0.5]` | 純 Rust 完全内製化 ✕ インプロセス融合 |
 
 ---
