@@ -16,6 +16,10 @@
   - Rust サービス起動時に vault の復号値を systemd `EnvironmentFile` 等で bash スクリプトに渡す仕組みが必要
   - 対象: `rustyclaw-context-mode` 側の起動フック実装
 
+- [ ] **リファクタリング: gmn_sem から lane_sem への名称変更**
+  - 旧 `gmn` (Gemini CLI) 依存が解消され汎用化したため、並行実行制限セマフォの名前を `gmn_sem` から実態に即した `lane_sem` へ変更する
+  - 対象: `crates/rustyclaw-gateway/src/` の `lib.rs`, `health.rs`, `cron.rs` および関連仕様書（`05_gateway_spec.md` 等）
+
 ---
 
 ## 将来課題（低優先度）
