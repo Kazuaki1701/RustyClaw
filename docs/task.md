@@ -2,9 +2,9 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (BUG-04 アーカイブ)  
+> **最終更新日**: 2026-06-11 (BUG-05 アーカイブ)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
-> **最新アーカイブ**: [2026-06-11-completed-bug-04.md](archive/tasks/2026-06-11-completed-bug-04.md) (BUG-04)
+> **最新アーカイブ**: [2026-06-11-completed-bug-05.md](archive/tasks/2026-06-11-completed-bug-05.md) (BUG-05)
 
 ---
 
@@ -18,21 +18,6 @@
 
 ---
 
-### BUG-05: Obsidian トークン未設定（Obsidian ツール全機能不能）
-
-> **発見日**: 2026-06-11 workspace/MEMORY.md 点検  
-> **重要度**: 🟡 中（Obsidian ノート参照・書き込みが全て不能）
-
-**現象**  
-Obsidian ツール呼び出し時に認証エラーが発生し、ノートの読み取り・書き込みが不能。
-
-**原因分析**  
-`config.json` の `tools.obsidian.api_key` は `$vault:obsidian-api-key` を参照しているが、
-vault にこのキーが登録されていない。
-
-**対策（要実施）**
-- `[ ]` **BUG-05-a**: Obsidian Local REST API プラグインの API キーを取得し、`vault.enc` に `obsidian-api-key` として登録する。  
-  対象: `production/config/vault.enc`（`rustyclaw vault set obsidian-api-key <KEY>`）
 
 ---
 
