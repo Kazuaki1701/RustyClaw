@@ -5,7 +5,7 @@
 > **バージョン**: v0.3
 > **最終更新日**: 2026-06-11
 > **対象コード**: `rustyclaw-gateway` 内の HealthServer およびダッシュボード実装
-> **参照元**: [`00_rustyclaw_hermes_featured.md`](00_rustyclaw_hermes_featured.md)
+> **参照元**: [`00_rustyclaw.md`](00_rustyclaw.md)
 
 ---
 

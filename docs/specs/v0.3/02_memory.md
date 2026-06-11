@@ -4,7 +4,7 @@
 > **ステータス**: `[実装済 + 将来拡張を含む]`（§5.1 Layer2・§5.3 は `[将来拡張]`/`[検討中]`）
 > **バージョン**: v0.3
 > **最終更新日**: 2026-06-11
-> **参照元**: [`00_rustyclaw_hermes_featured.md`](00_rustyclaw_hermes_featured.md)
+> **参照元**: [`00_rustyclaw.md`](00_rustyclaw.md)
 
 ---
 

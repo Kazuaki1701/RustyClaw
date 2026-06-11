@@ -4,7 +4,7 @@
 > **ステータス**: `[実装済]`
 > **バージョン**: v0.3
 > **最終更新日**: 2026-06-11
-> **参照元**: [`00_rustyclaw_hermes_featured.md`](00_rustyclaw_hermes_featured.md)
+> **参照元**: [`00_rustyclaw.md`](00_rustyclaw.md)
 
 ---
 

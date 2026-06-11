@@ -5,7 +5,7 @@
 > **バージョン**: v0.3
 > **最終更新日**: 2026-06-11
 > **目的**: RustyClaw デーモンの稼働状況を定期的または障害時に点検するための手順書
-> **参照元**: [`00_rustyclaw_hermes_featured.md`](00_rustyclaw_hermes_featured.md)
+> **参照元**: [`00_rustyclaw.md`](00_rustyclaw.md)
 
 ---
 
