@@ -182,7 +182,8 @@ rustyclaw-storage
 | [`01_pipeline.md`](01_pipeline.md) | §4, §7 | `[実装済]` | 4ステージパイプライン・Lane Control |
 | [`02_memory.md`](02_memory.md) | §5, §9 | `[実装済 + 将来拡張を含む]` | メモリ管理・会話継続感 6 技法 |
 | [`03_llm_provider.md`](03_llm_provider.md) | §8 | `[実装済]` | LlmProvider 設計（rig-core 移行は将来拡張） |
-| [`04_workspace_storage.md`](04_workspace_storage.md) | §6, §11 | `[実装済]` | ワークスペース体系・Storage 設計 |
+| [`04_workspace.md`](04_workspace.md) | §6 | `[実装済]` | ワークスペース体系 |
+| [`12_storage.md`](12_storage.md) | §11 | `[実装済]` | データ永続化・RAG インデックス |
 | [`05_heartbeat.md`](05_heartbeat.md) | §10 | `[実装済]` | Heartbeat システム |
 | [`06_hermes_skills.md`](06_hermes_skills.md) | §12 | `[将来拡張]` | Hermes 自己改善 Skills システム |
 | [`07_extensions.md`](07_extensions.md) | §13, §14, §15 | `[将来拡張]` | bwrap・HomeAssistant 統合・rig-core 統合 |
