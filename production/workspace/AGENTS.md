@@ -30,8 +30,15 @@ When you learn a lesson or make a mistake, document it so future-you doesn't rep
 
 ### Searching Memory
 
-- `memory_search` — Search the agent's long-term memory (session summaries) by keyword (BM25 search). Returns file paths of matching summaries.
+- `ctx_search` — Search long-term episodic memory by keyword (BM25/FTS5). Use this when recalling past sessions, executed results, or previously indexed information.
 - `workspace_read` — Read full content of a summary file (e.g. `memory/summaries/YYYY-MM-DD-slug.md`) or log file (e.g. `memory/logs/YYYY-MM-DD.md`).
+
+### context-mode Tools (via MCP)
+
+- `ctx_execute` — Run a script safely inside a bwrap sandbox. Use this for file writes, shell commands, or external process calls that must be isolated.
+- `ctx_search` — Search episodic memory (BM25/FTS5) for relevant information from past conversations and execution results.
+- `ctx_index` — Register important information into episodic memory after a session completes. Indexed content becomes retrievable via future `ctx_search` calls.
+- `ctx_patch` — Apply a SEARCH/REPLACE patch to a file. Prefer this over `workspace_write` for targeted edits to large files.
 
 ## Time
 

@@ -102,6 +102,34 @@ tokio::spawn(async {
 
 ---
 
+## 16.7 Node.js ≥ 22.5 インストール（context-mode 前提）
+
+context-mode は `node:sqlite` 内蔵の Node.js ≥ 22.5 が必要。
+
+```bash
+# nvm 経由（推奨）
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+nvm install 22
+node --version  # v22.x.x
+
+# context-mode インストール
+npm install -g context-mode
+context-mode --version
+```
+
+動作確認（手動起動テスト）:
+
+```bash
+mkdir -p /tmp/ctx-test/.context-mode
+CONTEXT_MODE_DIR=/tmp/ctx-test/.context-mode \
+  CONTEXT_MODE_PLATFORM=custom-rustyclaw \
+  context-mode
+# JSON-RPC 入力待ちになれば OK（Ctrl+C で終了）
+```
+
+---
+
 ## 将来拡張 `[将来拡張]`
 
 ### Phase 28b-2: Gateway 起動遅延の短縮
