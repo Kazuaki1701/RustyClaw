@@ -280,12 +280,53 @@ pub struct GoogleWorkspaceConfig {
     pub gmail_deletable_label: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomeAssistantConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ha_endpoint")]
+    pub endpoint: String,
+    /// API トークン（$vault:HOMEASSISTANT_TOKEN で参照可）
+    #[serde(default)]
+    pub token: String,
+    /// センサーポーリング間隔（秒、デフォルト 600 = 10 分）
+    #[serde(default = "default_ha_poll_secs")]
+    pub poll_interval_secs: u64,
+    /// CO2 スパイク閾値（ppm、デフォルト 1500）
+    #[serde(default = "default_co2_spike_ppm")]
+    pub spike_co2_ppm: f64,
+}
+
+fn default_ha_endpoint() -> String {
+    "http://192.168.1.30:8123".to_string()
+}
+fn default_ha_poll_secs() -> u64 {
+    600
+}
+fn default_co2_spike_ppm() -> f64 {
+    1500.0
+}
+
+impl Default for HomeAssistantConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: default_ha_endpoint(),
+            token: String::new(),
+            poll_interval_secs: default_ha_poll_secs(),
+            spike_co2_ppm: default_co2_spike_ppm(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolsConfig {
     #[serde(default, rename = "google-workspace")]
     pub google_workspace: Option<GoogleWorkspaceConfig>,
     #[serde(default, rename = "brave-search")]
     pub brave_search: Option<BraveSearchConfig>,
+    #[serde(default, rename = "home-assistant")]
+    pub home_assistant: Option<HomeAssistantConfig>,
 }
 
 // ─────────────────────────────────────────────
@@ -546,6 +587,9 @@ impl Config {
         }
         if let Some(ref mut b) = self.tools.brave_search {
             b.api_key = resolve_value(&b.api_key);
+        }
+        if let Some(ref mut ha) = self.tools.home_assistant {
+            ha.token = resolve_value(&ha.token);
         }
         for server in self.mcp.values_mut() {
             for val in server.env.values_mut() {
@@ -1065,5 +1109,39 @@ mod tests {
         let cfg: EmbeddingConfig =
             serde_json::from_str(r#"{"time_decay_half_life_days": 30.0}"#).unwrap();
         assert!((cfg.time_decay_half_life_days.unwrap() - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_home_assistant_config_defaults() {
+        let cfg: HomeAssistantConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.endpoint, "http://192.168.1.30:8123");
+        assert_eq!(cfg.poll_interval_secs, 600);
+        assert!((cfg.spike_co2_ppm - 1500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_home_assistant_config_in_tools() {
+        let json = r#"{
+            "model_list": [],
+            "agents": {"default": "none"},
+            "tools": {
+                "home-assistant": {
+                    "enabled": true,
+                    "endpoint": "http://192.168.1.50:8123",
+                    "token": "test-token",
+                    "poll_interval_secs": 300,
+                    "spike_co2_ppm": 1200.0
+                }
+            }
+        }"#;
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+        let config = load_config(f.path()).unwrap();
+        let ha = config.tools.home_assistant.unwrap();
+        assert!(ha.enabled);
+        assert_eq!(ha.endpoint, "http://192.168.1.50:8123");
+        assert_eq!(ha.poll_interval_secs, 300);
+        assert!((ha.spike_co2_ppm - 1200.0).abs() < 1e-9);
     }
 }
