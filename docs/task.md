@@ -2,9 +2,9 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (BUG-01 アーカイブ)  
+> **最終更新日**: 2026-06-11 (BUG-04 アーカイブ)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
-> **最新アーカイブ**: [2026-06-11-completed-bug-01.md](archive/tasks/2026-06-11-completed-bug-01.md) (BUG-01)
+> **最新アーカイブ**: [2026-06-11-completed-bug-04.md](archive/tasks/2026-06-11-completed-bug-04.md) (BUG-04)
 
 ---
 
@@ -15,28 +15,6 @@
 ---
 
 ---
-
-### BUG-04: bwrap サンドボックスによる gws 認証失敗（Gmail / Calendar アクセス不能）
-
-> **発見日**: 2026-06-09 heartbeat ログ点検  
-> **重要度**: 🔴 高（Gmail・Google Calendar ツールが全コール失敗）
-
-**現象**  
-heartbeat・通常セッション問わず、gws ツール呼び出し時に以下のエラーで認証失敗する。
-
-```
-error[auth]: Failed to get token: Failed to set permissions on token directory
-  '/home/kazuaki/.config/gws': Read-only file system (os error 30)
-```
-
-**原因分析**  
-bwrap サンドボックスにより `~/.config/gws/` への書き込みが禁止されている。
-gws は認証トークンをこのディレクトリにキャッシュしようとするが、
-サンドボックス内では Read-only fs のため書き込みできない。
-
-**対策（要実施）**
-- `[ ]` **BUG-04-a**: gws のトークンキャッシュディレクトリを書き込み可能なパス（例: `~/.rustyclaw/config/gws-cache/`）に変更する方法を調査し、gws 設定または起動オプションで上書き設定する。  
-  対象: `production/workspace/` 内の gws 起動スクリプト・設定
 
 ---
 
