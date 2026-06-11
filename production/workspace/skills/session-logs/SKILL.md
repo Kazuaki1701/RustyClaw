@@ -2,7 +2,8 @@
 name: session-logs
 description: 過去の会話セッション履歴（sessions/*.jsonl）の分析やキーワード検索を高速に行うためのスキル。
 allowed-tools:
-  - run_workspace_script
+  - ctx_execute
+  - ctx_search
 ---
 # Session Logs
 
@@ -35,10 +36,10 @@ Agent-written activity notes, appended throughout the day.
 
 ### Keyword search in summaries (recommended)
 
-Use `memory_search` for fast full-text BM25 search across all session summaries:
+Use `ctx_search` for fast full-text BM25 search across all session summaries:
 
 ```
-memory_search: { "query": "your keyword" }
+ctx_search: { "query": "your keyword" }
 ```
 
 ### List recent session files
@@ -75,31 +76,31 @@ workspace_read: { "path": "memory/logs/YYYY-MM-DD.md" }
 For token usage, tool frequency, and other structured analysis, use the secure pre-packaged scripts within the skill directory:
 
 ### Count messages & analyze tokens
-Use `run_workspace_script` to get session message counts and SQLite-based token usage statistics:
-- **Tool**: `run_workspace_script`
+Use `ctx_execute` to get session message counts and SQLite-based token usage statistics:
+- **Tool**: `ctx_execute`
 - **Parameters**:
-  - `script_name`: `skills/session-logs/scripts/session-stats.sh`
-  - `args`: `[]` (optional: `["--days", "7"]` or `["--date", "YYYYMMDD"]`)
+  - `language`: `bash`
+  - `code`: `bash workspace/skills/session-logs/scripts/session-stats.sh` (optional: append `--days 7` or `--date YYYYMMDD`)
 
 ### Search full session history
-Use `run_workspace_script` to search raw `.jsonl` files for deep keyword matching:
-- **Tool**: `run_workspace_script`
+Use `ctx_execute` to search raw `.jsonl` files for deep keyword matching:
+- **Tool**: `ctx_execute`
 - **Parameters**:
-  - `script_name`: `skills/session-logs/scripts/session-search.sh`
-  - `args`: `["your keyword"]` (optional: `["your keyword", "--date", "20260531"]`)
+  - `language`: `bash`
+  - `code`: `bash workspace/skills/session-logs/scripts/session-search.sh "your keyword"` (optional: append `--date 20260531`)
 
 ## Searching Summaries by Topic
 
-Use `memory_search` for keyword-based summary retrieval:
+Use `ctx_search` for keyword-based summary retrieval:
 ```json
-memory_search: { "query": "Garmin vitals coach" }
-memory_search: { "query": "cron job failure" }
-memory_search: { "query": "MEMORY.md update" }
+ctx_search: { "query": "Garmin vitals coach" }
+ctx_search: { "query": "cron job failure" }
+ctx_search: { "query": "MEMORY.md update" }
 ```
 
 ## Tips
 
-- Use `memory_search` first — it searches all summaries instantly via BM25.
+- Use `ctx_search` first — it searches all summaries instantly via BM25.
 - Fall back to `workspace_read` on specific files when you need the full conversation text.
 - Session filenames encode the channel and date — use them to narrow down time ranges.
 - For token cost analysis, use `skills/session-logs/scripts/session-stats.sh` (see Advanced Analysis).

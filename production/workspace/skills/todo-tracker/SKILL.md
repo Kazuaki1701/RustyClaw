@@ -2,7 +2,8 @@
 name: todo-tracker
 description: 未完了タスクの追跡・更新および進捗ステータスの整理を一元管理するタスク管理スキル。
 allowed-tools:
-  - run_workspace_script
+  - workspace_read
+  - workspace_write
 ---
 # Todo Tracker
 

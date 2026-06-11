@@ -2,7 +2,9 @@
 name: deep-research
 description: 特定トピックやWeb上の情報について、多角的な検索・収集と構造的要約を行う深層調査スキル。
 allowed-tools:
-  - run_workspace_script
+  - web_search
+  - web_fetch
+  - workspace_write
 ---
 # Deep Research
 

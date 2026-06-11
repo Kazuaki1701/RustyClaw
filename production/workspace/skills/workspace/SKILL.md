@@ -2,7 +2,8 @@
 name: workspace
 description: ワークスペース内のファイル構造、README、およびスクリプトの使用目的を整理・ナビゲーションするスキル。
 allowed-tools:
-  - run_workspace_script
+  - workspace_read
+  - workspace_write
 ---
 # Workspace — Session Working Directory
 

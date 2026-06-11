@@ -22,13 +22,13 @@ If the user message contains a weather alert, include a concise notification. Do
 
 ### Calendar
 - Activate `[use-skill: calendar]`.
-- Run `skills/calendar/scripts/calendar-ops.sh` via `run_workspace_script` with `["list_family"]`.
+- Run via `ctx_execute`: `language: bash`, `code: bash workspace/skills/calendar/scripts/calendar-ops.sh list_family`.
 - If an event starts within 30 minutes and not yet notified, include a reminder.
 - For tomorrow's events: mention once in the evening only.
 
 ### Email
 - Activate `[use-skill: gmail]`.
-- Run `skills/gmail/scripts/506_get-gmail.sh` via `run_workspace_script` (no arguments).
+- Run via `ctx_execute`: `language: bash`, `code: bash workspace/skills/gmail/scripts/506_get-gmail.sh`.
 - If urgent or important unread emails exist, summarize and include.
 - **費用発生の可能性がある案件は必ず Important として通知する（金額・サービス名・期日を添えること）。**
 - Skip routine/automated emails.

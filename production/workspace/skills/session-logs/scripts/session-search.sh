@@ -10,8 +10,8 @@
 #   --context N        マッチ前後 N 行も表示（デフォルト: 0）
 #
 # LLM からの呼び出し例:
-#   run_workspace_script: { "script_name": "session-search.sh", "args": ["Garmin"] }
-#   run_workspace_script: { "script_name": "session-search.sh", "args": ["memory flush", "--date", "20260531"] }
+#   ctx_execute: { "language": "bash", "code": "bash workspace/skills/session-logs/scripts/session-search.sh \"Garmin\"" }
+#   ctx_execute: { "language": "bash", "code": "bash workspace/skills/session-logs/scripts/session-search.sh \"memory flush\" --date 20260531" }
 
 set -euo pipefail
 

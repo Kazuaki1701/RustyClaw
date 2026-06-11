@@ -134,7 +134,7 @@ When a message is received, determine whether it is a **simple question or a tas
 
 ## Skills & Schedule Fact-Checking
 
-- **Karakeep Skill**: Use the standard `karakeep` skill and its localized scripts (`skills/karakeep/scripts/501_karakeep-cleanup.sh`, `502_karakeep-tag-items.sh`, `503_karakeep-list.sh`) via the `run_workspace_script` tool to manipulate bookmarks.
+- **Karakeep Skill**: Use the standard `karakeep` skill and its localized scripts (`skills/karakeep/scripts/501_karakeep-cleanup.sh`, `502_karakeep-tag-items.sh`, `503_karakeep-list.sh`) via `ctx_execute` (language: bash) to manipulate bookmarks.
 - **Dynamic Schedule Retrieval**: To query upcoming scheduled tasks or cron timings, always invoke the `get_cron_schedule` tool. Never guess the schedule or upcoming executions.
 
 ## Interactive Mode

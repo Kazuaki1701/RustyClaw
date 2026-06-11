@@ -43,11 +43,9 @@ The system provides the following in the user message:
    - {topic}: {summary} — delivered (from deferred {YYYY-MM-DD})
      Source: {URL}
    ```
-7. For each delivered URL, call:
-   ```
-   run_workspace_script skills/topic-patrol/scripts/511_karakeep-add-bookmark.sh
-   args: ["{URL}"]
-   ```
+7. For each delivered URL, call `ctx_execute`:
+   - `language`: `bash`
+   - `code`: `bash workspace/skills/topic-patrol/scripts/511_karakeep-add-bookmark.sh "{URL}"`
 8. Go to **Step 5-3** (update state.json). Skip Steps 1–5.
 
 ---
@@ -116,10 +114,10 @@ Use the page title obtained from `web_fetch`. Never omit this line.
 
 ### Step 5: Record
 
-**5-0. Prune `patrol/findings.md`** by calling:
-```
-run_workspace_script skills/topic-patrol/scripts/510_prune-findings.sh
-```
+**5-0. Prune `patrol/findings.md`** by calling `ctx_execute`:
+- `language`: `bash`
+- `code`: `bash workspace/skills/topic-patrol/scripts/510_prune-findings.sh`
+
 This removes old sections automatically. Do not skip this step.
 
 **5-1. Append to `patrol/findings.md`** using `workspace_write` with `mode: append`.
@@ -136,11 +134,9 @@ Do not rewrite or delete existing content. Only append.
 
 **5-2. Register the URL in KaraKeep** (探索モード `配信: スキップ` 時のみ。配信モードは Deliver Mode Step 7 で登録済みのため不要):
 
-For each URL shared in Step 4, call:
-```
-run_workspace_script skills/topic-patrol/scripts/511_karakeep-add-bookmark.sh
-args: ["{shared URL}"]
-```
+For each URL shared in Step 4, call `ctx_execute`:
+- `language`: `bash`
+- `code`: `bash workspace/skills/topic-patrol/scripts/511_karakeep-add-bookmark.sh "{shared URL}"`
 
 This registers the URL with the `_ai-patrol` tag. Skip if the URL is "unverified".
 

@@ -10,9 +10,9 @@
 #   --days N           トークン集計の対象期間（デフォルト: 14日）
 #
 # LLM からの呼び出し例:
-#   run_workspace_script: { "script_name": "session-stats.sh" }
-#   run_workspace_script: { "script_name": "session-stats.sh", "args": ["--date", "20260531"] }
-#   run_workspace_script: { "script_name": "session-stats.sh", "args": ["--days", "7"] }
+#   ctx_execute: { "language": "bash", "code": "bash workspace/skills/session-logs/scripts/session-stats.sh" }
+#   ctx_execute: { "language": "bash", "code": "bash workspace/skills/session-logs/scripts/session-stats.sh --date 20260531" }
+#   ctx_execute: { "language": "bash", "code": "bash workspace/skills/session-logs/scripts/session-stats.sh --days 7" }
 
 set -euo pipefail
 

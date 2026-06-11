@@ -27,11 +27,10 @@ Lists Gmail messages filtered by a search query and extracts key fields (id, sen
 
 ### Read: list messages
 
-- **Tool**: `run_workspace_script`
+- **Tool**: `ctx_execute`
 - **Parameters**:
-  - `script_name`: `skills/gmail/scripts/506_get-gmail.sh`
-  - `args`: `["<gmail_query>", "<max_results>"]`
-  - *(no `env` required)*
+  - `language`: `bash`
+  - `code`: `bash workspace/skills/gmail/scripts/506_get-gmail.sh "<gmail_query>" <max_results>`
 
 Default query: `is:unread`. Default max: `10`.
 
@@ -39,11 +38,10 @@ Returns a JSON array. Each element: `{id, sender, subject, date, snippet}`.
 
 ### Delete: trash a message
 
-- **Tool**: `run_workspace_script`
+- **Tool**: `ctx_execute`
 - **Parameters**:
-  - `script_name`: `skills/gmail/scripts/509_delete-gmail.sh`
-  - `args`: `["<message_id>"]`
-  - *(no `env` required)*
+  - `language`: `bash`
+  - `code`: `bash workspace/skills/gmail/scripts/509_delete-gmail.sh "<message_id>"`
 
 **Guard**: Only messages with the `_ai-agent` label (case-insensitive) can be trashed. Any other message exits with `DELETE BLOCKED` and code 1.
 
@@ -53,6 +51,6 @@ Use the `id` field from `506_get-gmail.sh` output as the `<message_id>`.
 
 ## Common Mistakes & Antipatterns
 
-- **スクリプトを直接シェルで実行しない。** `run_workspace_script` を使うこと。
+- **スクリプトを直接シェルで実行しない。** `ctx_execute` を使うこと。
 - **`_ai-agent` ラベルのないメッセージは削除不可。** ガードが強制的にブロックする。
 - **message_id は `506_get-gmail.sh` の `id` フィールドから取得すること。**
