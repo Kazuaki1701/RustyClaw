@@ -2,9 +2,9 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-11 (BUG-01-a/b 完了・BUG-01-c 対応不要)  
+> **最終更新日**: 2026-06-11 (BUG-01 アーカイブ)  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
-> **最新アーカイブ**: [2026-06-11-completed-phase44-1-to-5.md](archive/tasks/2026-06-11-completed-phase44-1-to-5.md) (Phase 44-1〜44-5)
+> **最新アーカイブ**: [2026-06-11-completed-bug-01.md](archive/tasks/2026-06-11-completed-bug-01.md) (BUG-01)
 
 ---
 
@@ -13,48 +13,6 @@
 > 実運用ログから発見されたバグ・要改善項目。優先度とは独立して管理し、次スプリントの実施案件を選択する。発見次第追記する。
 
 ---
-
-### BUG-01: LLM 全モデル失敗（`all models failed`）による深夜 Agent 停止
-
-> **発見日**: 2026-06-11 ログ点検  
-> **重要度**: 🔴 高（heartbeat 停止・4セッションサマリー未保存）
-
-**現象**  
-深夜 02:21〜05:51（JST）にかけて heartbeat・summary パーパス向けの全 LLM モデルが連続失敗し、
-以下 5 セッションが実行不能になった。
-
-- `02:21` cron:heartbeat
-- `02:23` cron:session-summary:cron:topic-patrol-explore
-- `04:03` cron:session-summary:cron:karakeep-cleanup
-- `04:49` cron:session-summary:cron:karakeep-recommendation
-- `05:51` cron:session-summary:cron:topic-patrol-deliver
-
-```
-ERROR rustyclaw_gateway: Heartbeat LLM execution failed:
-  CompletionError: ProviderError: all models failed for purpose 'heartbeat'
-```
-
-**原因分析**  
-当時の `config.release.json`（クラウド主力構成）の purpose チェーン:
-- `heartbeat`: `[groq-llama-8b, cf-gemma-4-26b]`
-- `summary`: `[cf-gemma-4-26b, groq-llama-8b]`
-
-Groq (`groq-llama-8b`, RPD: 14,400) と Cloudflare Workers AI (`cf-gemma-4-26b`) の両方が
-02:21 以降 4 時間以上応答不能になっている。ログにレート制限・クールダウン痕跡は見当たらず、
-外部プロバイダー側の障害（Groq / Cloudflare Workers AI）が最有力原因。
-フォールバック先が 2 モデルしかなく、両方が同一時間帯に障害を受けた場合の救済手段が存在しない。
-
-> **現状メモ（2026-06-11）**: `config.local-llm.json`（旧 `config.debug.json`）を lms-* 主力構成で運用中。  
-> 外部プロバイダー障害による停止リスクは低下しているが、lms（LM Studio）が単一障害点になるため ISSUE-09 参照。
-
-**対策**
-- `[x]` **BUG-01-a**: `config.local-llm.json` の全 purpose を **lms-* 主力 + groq フォールバック** 構成に変更。`global_fallback` も `groq-llama-8b` に更新。✅ 2026-06-11 完了
-- `[x]` **BUG-01-b**: 全モデル失敗時に Discord home channel へ `⚠️ LLM 全モデル失敗` アラートを送信。✅ 2026-06-11 完了  
-  heartbeat 失敗パスに `SystemError` publish を追加、`Gateway::run()` に `SystemError` subscriber ループ（"all models failed" 検知 → Discord 通知）を追加。  
-  対象: `crates/rustyclaw-gateway/src/lib.rs`
-- `[-]` **BUG-01-c**: 過去の失敗セッションサマリー確認 — 対応不要（skip）
-
-
 
 ---
 
