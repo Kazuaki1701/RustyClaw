@@ -292,8 +292,16 @@ impl LaneRegistry {
 
                             prompt_parts.push(format!("Recent activity digest:\n{}", digest));
 
-                            let heartbeat_prompt = prompt_parts.join("\n\n");
                             let heartbeat_rag_query = build_heartbeat_rag_query(&digest);
+                            if let Some(ctx) =
+                                try_ctx_search(&tool_server_handle, &heartbeat_rag_query).await
+                            {
+                                prompt_parts.push(format!(
+                                    "Past context (from episodic memory):\n{}",
+                                    ctx
+                                ));
+                            }
+                            let heartbeat_prompt = prompt_parts.join("\n\n");
 
                             let mut attempt = 0;
                             let max_attempts = 3;
@@ -331,7 +339,6 @@ impl LaneRegistry {
                                                 &workspace_path,
                                                 &session_id,
                                                 &heartbeat_prompt,
-                                                Some(&heartbeat_rag_query),
                                                 &tool_registry,
                                                 &db_path,
                                             )
@@ -665,22 +672,37 @@ impl LaneRegistry {
                                     let exec_res = if let Some(target_session_id) =
                                         session_id.strip_prefix("cron:session-summary:")
                                     {
-                                        pipeline
+                                        match pipeline
                                             .generate_session_summary(
                                                 &workspace_path,
                                                 target_session_id,
                                             )
                                             .await
-                                            .map(|summary| rustyclaw_providers::LlmResponse {
-                                                role: "assistant".to_string(),
-                                                content: summary,
-                                                tool_calls: None,
-                                                prompt_tokens: None,
-                                                completion_tokens: None,
-                                                total_tokens: None,
-                                                model_used: None,
-                                                provider_id: None,
-                                            })
+                                        {
+                                            Ok(summary) => {
+                                                // ctx_index でエピソード記憶に登録
+                                                try_ctx_index(
+                                                    &tool_server_handle,
+                                                    &summary,
+                                                    &format!(
+                                                        "session-summary:{}",
+                                                        target_session_id
+                                                    ),
+                                                )
+                                                .await;
+                                                Ok(rustyclaw_providers::LlmResponse {
+                                                    role: "assistant".to_string(),
+                                                    content: summary,
+                                                    tool_calls: None,
+                                                    prompt_tokens: None,
+                                                    completion_tokens: None,
+                                                    total_tokens: None,
+                                                    model_used: None,
+                                                    provider_id: None,
+                                                })
+                                            }
+                                            Err(e) => Err(e),
+                                        }
                                     } else {
                                         let run_purpose = if session_id == "cron:topic-patrol" {
                                             "patrol"
@@ -948,6 +970,44 @@ async fn start_context_mode(
             delay = (delay * 2).min(Duration::from_secs(60));
         }
     })
+}
+
+/// ctx_search を呼び出す。context-mode が未接続の場合は None を返す（fail-open）。
+async fn try_ctx_search(
+    handle: &rig_core::tool::server::ToolServerHandle,
+    query: &str,
+) -> Option<String> {
+    let args = serde_json::json!({
+        "queries": [query],
+        "sort": "timeline",
+        "limit": 3
+    })
+    .to_string();
+    match handle.call_tool("ctx_search", &args).await {
+        Ok(result) if !result.trim().is_empty() => Some(result),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::debug!("ctx_search unavailable (context-mode 未接続?): {}", e);
+            None
+        }
+    }
+}
+
+/// ctx_index を呼び出す。失敗は warn ログのみで続行（fail-open）。
+async fn try_ctx_index(
+    handle: &rig_core::tool::server::ToolServerHandle,
+    content: &str,
+    source: &str,
+) {
+    let args = serde_json::json!({
+        "content": content,
+        "source": source
+    })
+    .to_string();
+    match handle.call_tool("ctx_index", &args).await {
+        Ok(_) => tracing::info!("ctx_index 完了: source={}", source),
+        Err(e) => tracing::warn!("ctx_index 失敗 (source={}): {}", source, e),
+    }
 }
 
 pub struct Gateway {

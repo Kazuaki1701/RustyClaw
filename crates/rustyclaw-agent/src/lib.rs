@@ -869,7 +869,6 @@ Rules:
         workspace_dir: &Path,
         session_id: &str,
         user_message: &str,
-        _rag_query: Option<&str>, // Phase 02 で ctx_search へ移行予定
         tool_registry: &ToolRegistry,
         db_path: &Path,
     ) -> Result<LlmResponse> {
