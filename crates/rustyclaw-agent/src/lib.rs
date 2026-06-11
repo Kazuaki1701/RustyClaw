@@ -565,15 +565,15 @@ impl Pipeline {
         }
 
         let mut context = String::new();
-        context.push_str("\n# === SESSION CONTINUATION CONTEXT (Yesterday's Context) ===\n");
+        context.push_str("\n# Yesterday's Context\n");
         if !summary_content.is_empty() {
             context.push_str(&format!(
-                "## Yesterday's Session Summary ({})\n{}\n\n",
+                "## Summary ({})\n{}\n\n",
                 yyyy_mm_dd, summary_content
             ));
         }
         if !prev_history.is_empty() {
-            context.push_str("## Last 5 turns of Yesterday's Conversation:\n");
+            context.push_str("## Last 5 Turns:\n");
             for msg in prev_history {
                 context.push_str(&format!("{}: {}\n", msg.role, msg.content));
             }
