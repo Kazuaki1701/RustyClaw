@@ -1346,7 +1346,7 @@ impl Gateway {
 
         // ② CronService (Heartbeat, DailySummary) の起動
         let db_path = self.workspace_path.join("memory.db");
-        let cron_svc = cron::CronService::new(bus.clone(), db_path);
+        let cron_svc = cron::CronService::new(bus.clone(), db_path, self.workspace_path.clone());
         cron_svc.start();
 
         // ④ 静的ドキュメント RAG インジェスト（バックグラウンド、起動時）

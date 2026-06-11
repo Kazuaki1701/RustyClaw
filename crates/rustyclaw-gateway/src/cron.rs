@@ -87,11 +87,16 @@ struct Job {
 pub struct CronService {
     bus: Arc<MessageBus>,
     db_path: std::path::PathBuf,
+    workspace_path: std::path::PathBuf,
 }
 
 impl CronService {
-    pub fn new(bus: Arc<MessageBus>, db_path: std::path::PathBuf) -> Self {
-        Self { bus, db_path }
+    pub fn new(
+        bus: Arc<MessageBus>,
+        db_path: std::path::PathBuf,
+        workspace_path: std::path::PathBuf,
+    ) -> Self {
+        Self { bus, db_path, workspace_path }
     }
 
     pub fn start(self) {
@@ -415,6 +420,67 @@ impl CronService {
                                 job.id
                             );
                         }
+                    }
+                }
+            }
+        });
+
+        // 5. HA snapshot loop (every 10 minutes)
+        let bus_ha = self.bus.clone();
+        let workspace_ha = self.workspace_path.clone();
+        tokio::spawn(async move {
+            let script_path = workspace_ha
+                .join("skills")
+                .join("home-assistant-rest-api")
+                .join("scripts")
+                .join("220_ha_env_snapshot.sh");
+
+            if !script_path.exists() {
+                tracing::info!(
+                    "CronService: HA snapshot script not found at {:?}. HA polling disabled.",
+                    script_path
+                );
+                return;
+            }
+
+            tracing::info!("CronService: Starting HA snapshot polling (script: {:?})", script_path);
+
+            // 起動直後の即時発火を避けるため 60s 待機
+            tokio::time::sleep(Duration::from_secs(60)).await;
+
+            let mut interval = time::interval(Duration::from_secs(600));
+
+            loop {
+                interval.tick().await;
+                tracing::debug!("CronService: Running HA snapshot...");
+                match tokio::process::Command::new("bash")
+                    .arg(&script_path)
+                    .arg("--check-spike")
+                    .current_dir(&workspace_ha)
+                    .output()
+                    .await
+                {
+                    Ok(output) => {
+                        let summary = String::from_utf8_lossy(&output.stdout);
+                        let summary_trimmed = summary.trim();
+                        if !summary_trimmed.is_empty() {
+                            tracing::info!("CronService: HA snapshot: {}", summary_trimmed);
+                        }
+                        if output.status.code() == Some(2) {
+                            // exit 2 = CO2 スパイク検知 → 即時 Heartbeat を発火
+                            tracing::warn!("CronService: HA CO2 spike detected! Triggering immediate Heartbeat...");
+                            let event = SystemEvent::IncomingMessage {
+                                session_id: "cron:heartbeat".to_string(),
+                                user_id: "cron".to_string(),
+                                channel_id: "cron".to_string(),
+                                content: "heartbeat".to_string(),
+                                priority: Priority::Background,
+                            };
+                            let _ = bus_ha.publish(event);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("CronService: HA snapshot script error: {}", e);
                     }
                 }
             }
