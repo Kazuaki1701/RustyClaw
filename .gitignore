@@ -87,3 +87,9 @@ tempfile*
 
 # Patrol runtime log（サービスが常時追記するため追跡しない）
 /production/workspace/patrol/findings.md
+
+# v0.3 アーカイブ（バイナリ含む、追跡不要）
+/archive_v0.3/
+
+# context-mode ランタイムデータ（SQLite DB・セッション）
+**/.context-mode/

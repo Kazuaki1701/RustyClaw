@@ -301,7 +301,8 @@ impl CronService {
                         "cron" => {
                             if let Some(expr) = &job.trigger.expression {
                                 let now_time = chrono::Local::now().format("%H:%M").to_string();
-                                if now_time == *expr {
+                                // >= で catch-up: サービス停止中に予定時刻を過ぎた場合も当日分を実行
+                                if now_time.as_str() >= expr.as_str() {
                                     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                                     let state_key = format!("cron_run_date:{}", job.id);
 
@@ -422,7 +423,7 @@ impl CronService {
 }
 
 /// トリガ種別から次回実行の unix 秒を算出する（純粋関数）。
-/// - cron: `expression`="HH:MM"。`now` より未来なら当日、過去なら翌日。
+/// - cron: `expression`="HH:MM"。croner で次回発火時刻を計算（当日 or 翌日）。
 /// - interval: `last_run` + `minutes`。`last_run` が無ければ `now`（即時）。
 pub fn next_run_epoch(
     trigger_type: &str,
@@ -431,27 +432,16 @@ pub fn next_run_epoch(
     now: chrono::DateTime<chrono::Local>,
     last_run: Option<i64>,
 ) -> Option<i64> {
-    use chrono::TimeZone;
     match trigger_type {
         "cron" => {
+            use std::str::FromStr;
             let expr = expression?;
             let (h, m) = expr.split_once(':')?;
-            let h: u32 = h.parse().ok()?;
-            let m: u32 = m.parse().ok()?;
-            let naive_today = now.date_naive().and_hms_opt(h, m, 0)?;
-            let today = chrono::Local.from_local_datetime(&naive_today).earliest()?;
-            let target = if today > now {
-                today
-            } else {
-                let naive_tomorrow = now
-                    .date_naive()
-                    .checked_add_days(chrono::Days::new(1))?
-                    .and_hms_opt(h, m, 0)?;
-                chrono::Local
-                    .from_local_datetime(&naive_tomorrow)
-                    .earliest()?
-            };
-            Some(target.timestamp())
+            // "HH:MM" → croner 5-field 形式 "MM HH * * *"
+            let cron_expr = format!("{} {} * * *", m, h);
+            let cron = croner::Cron::from_str(&cron_expr).ok()?;
+            let next = cron.find_next_occurrence(&now, false).ok()?;
+            Some(next.timestamp())
         }
         "interval" => {
             let mins = minutes? as i64;
