@@ -308,16 +308,6 @@
     }
   },
   "tools": {
-    "karakeep": {
-      "enabled": true,
-      "server_addr": "http://192.168.1.2:33000",
-      "api_key": "$vault:karakeep-api-key"
-    },
-    "obsidian": {
-      "enabled": true,
-      "host": "192.168.1.2",
-      "api_key": "$vault:obsidian-api-key"
-    },
     "brave-search": {
       "enabled": true,
       "api_key": "$vault:brave-search-api-key"

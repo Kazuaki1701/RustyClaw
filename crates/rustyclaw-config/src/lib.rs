@@ -258,26 +258,6 @@ pub struct ChannelsConfig {
 // ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct KarakeepConfig {
-    #[serde(default = "bool_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub server_addr: String,
-    #[serde(default)]
-    pub api_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ObsidianConfig {
-    #[serde(default = "bool_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub host: String,
-    #[serde(default)]
-    pub api_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BraveSearchConfig {
     #[serde(default = "bool_true")]
     pub enabled: bool,
@@ -302,10 +282,6 @@ pub struct GoogleWorkspaceConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolsConfig {
-    #[serde(default)]
-    pub karakeep: Option<KarakeepConfig>,
-    #[serde(default)]
-    pub obsidian: Option<ObsidianConfig>,
     #[serde(default, rename = "google-workspace")]
     pub google_workspace: Option<GoogleWorkspaceConfig>,
     #[serde(default, rename = "brave-search")]
@@ -566,14 +542,6 @@ impl Config {
         if let Some(ref mut l) = self.channels.line {
             l.channel_access_token = resolve_value(&l.channel_access_token);
             l.channel_secret = resolve_value(&l.channel_secret);
-        }
-        if let Some(ref mut k) = self.tools.karakeep {
-            k.server_addr = resolve_value(&k.server_addr);
-            k.api_key = resolve_value(&k.api_key);
-        }
-        if let Some(ref mut o) = self.tools.obsidian {
-            o.host = resolve_value(&o.host);
-            o.api_key = resolve_value(&o.api_key);
         }
         if let Some(ref mut b) = self.tools.brave_search {
             b.api_key = resolve_value(&b.api_key);

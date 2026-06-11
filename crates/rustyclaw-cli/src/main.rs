@@ -380,24 +380,6 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
             );
         }
     }
-    if let Some(ref k) = config.tools.karakeep
-        && let Some(key) = k.api_key.strip_prefix("$vault:") {
-            add_vault_ref(
-                &mut vault_map,
-                key,
-                "tools.karakeep.api_key".to_string(),
-                k.enabled,
-            );
-        }
-    if let Some(ref o) = config.tools.obsidian
-        && let Some(key) = o.api_key.strip_prefix("$vault:") {
-            add_vault_ref(
-                &mut vault_map,
-                key,
-                "tools.obsidian.api_key".to_string(),
-                o.enabled,
-            );
-        }
     for (sname, srv) in &config.mcp {
         for (ekey, eval) in &srv.env {
             if let Some(k) = eval.strip_prefix("$vault:") {
@@ -503,66 +485,6 @@ async fn run_check_config(config_path: &PathBuf) -> Result<()> {
     // ── 8. tools 疎通確認 ────────────────────────────────────────────
     println!();
     println!("tools 疎通確認:");
-
-    // karakeep
-    match config.tools.karakeep.as_ref() {
-        Some(k) if k.enabled => {
-            let url = resolve(&k.server_addr);
-            match http.get(&url).send().await {
-                Ok(resp) if resp.status().as_u16() < 500 => {
-                    println!("[OK]   karakeep: {} → {}", url, resp.status().as_u16())
-                }
-                Ok(resp) => {
-                    println!(
-                        "[WARN] karakeep: {} → {} (server error)",
-                        url,
-                        resp.status().as_u16()
-                    );
-                    warnings += 1;
-                }
-                Err(e) if e.is_timeout() => {
-                    println!("[ERR]  karakeep: {} — timeout", url);
-                    errors += 1;
-                }
-                Err(e) => {
-                    println!("[ERR]  karakeep: {} — {}", url, e);
-                    errors += 1;
-                }
-            }
-        }
-        Some(_) => println!("[SKIP] karakeep: disabled"),
-        None => println!("[SKIP] karakeep: not configured"),
-    }
-
-    // obsidian
-    match config.tools.obsidian.as_ref() {
-        Some(o) if o.enabled => {
-            let url = format!("http://{}:27123", resolve(&o.host));
-            match http.get(&url).send().await {
-                Ok(resp) if resp.status().as_u16() < 500 => {
-                    println!("[OK]   obsidian: {} → {}", url, resp.status().as_u16())
-                }
-                Ok(resp) => {
-                    println!(
-                        "[WARN] obsidian: {} → {} (server error)",
-                        url,
-                        resp.status().as_u16()
-                    );
-                    warnings += 1;
-                }
-                Err(e) if e.is_timeout() => {
-                    println!("[ERR]  obsidian: {} — timeout", url);
-                    errors += 1;
-                }
-                Err(e) => {
-                    println!("[ERR]  obsidian: {} — {}", url, e);
-                    errors += 1;
-                }
-            }
-        }
-        Some(_) => println!("[SKIP] obsidian: disabled"),
-        None => println!("[SKIP] obsidian: not configured"),
-    }
 
     // google-workspace: gws コマンドの存在確認
     match config.tools.google_workspace.as_ref() {
