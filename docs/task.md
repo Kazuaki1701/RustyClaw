@@ -28,6 +28,15 @@
 
 ---
 
+## Context Window 最適化
+
+- [ ] **Memory Flush のコンテキスト最適化**:  
+  `memory flush` 実行時における LLM リクエストおよびレスポンスのトークン数節約、およびコンテキスト窓（32k）の効率的な管理。
+  - **内容**: XMLデリミタへの移行、システムプロンプトの圧縮、会話履歴のクレンジング、長期的なメモリセマンティック分割（RAG化）。
+  - **詳細設計・改善提案**: [2026-06-13-memory-flush-context-improvement-proposal.md](file:///home/kazuaki/Projects/RustyClaw/docs/review/2026-06-13-memory-flush-context-improvement-proposal.md)
+
+---
+
 ## 将来課題（低優先度）
 
 - [ ] **v0.5: 純 Rust 単一バイナリ**: `rustyclaw-context-mode` crate に EmbeddedKnowledgeBase + InProcessPatchMerger + SecureSandboxExecutor を実装
