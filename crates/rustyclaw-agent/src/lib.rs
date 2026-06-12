@@ -16,6 +16,9 @@ use tokio::sync::Semaphore;
 
 const HEARTBEAT_RAG_TAIL_LINES: usize = 10;
 
+/// LANE QUEUE 可視化用コールバック型 (flush_session_id を引数に取る)
+type FlushCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 struct RateLimitWindow {
     start: Instant,
     requests: u64,
@@ -376,6 +379,9 @@ pub struct Pipeline {
     /// flush_memory() の同時実行を 1 本に制限するセマフォ
     flush_sem: Arc<Semaphore>,
     rate_limiter: Arc<RateLimiter>,
+    on_flush_queued: Option<FlushCallback>,
+    on_flush_executing: Option<FlushCallback>,
+    on_flush_done: Option<FlushCallback>,
 }
 
 impl Pipeline {
@@ -386,7 +392,23 @@ impl Pipeline {
             provider,
             flush_sem,
             rate_limiter: Arc::new(RateLimiter::new()),
+            on_flush_queued: None,
+            on_flush_executing: None,
+            on_flush_done: None,
         }
+    }
+
+    /// LANE QUEUE 可視化のためのコールバックを注入する (gateway からのみ使用)
+    pub fn with_flush_callbacks(
+        mut self,
+        on_queued: FlushCallback,
+        on_executing: FlushCallback,
+        on_done: FlushCallback,
+    ) -> Self {
+        self.on_flush_queued = Some(on_queued);
+        self.on_flush_executing = Some(on_executing);
+        self.on_flush_done = Some(on_done);
+        self
     }
 
     /// 履歴予算 = context_window_tokens × 65%、メッセージ平均 350 tokens で割り返す。
@@ -3307,5 +3329,61 @@ mod truncate_context_tests {
         let content = "x".repeat(3_000);
         let result = Pipeline::truncate_context_content(&content, 3_000);
         assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_flush_callback_queued_called_synchronously() {
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use rustyclaw_config::{AgentsConfig, Config, ModelEntry, ModelNames};
+
+        fn make_flush_config() -> Config {
+            Config {
+                model_list: vec![ModelEntry {
+                    model_name: "test-model".to_string(),
+                    provider: "openai".to_string(),
+                    model: "test-model-api".to_string(),
+                    api_base: "http://localhost".to_string(),
+                    api_key: "key".to_string(),
+                    max_tokens: Some(2048),
+                    temperature: Some(0.7),
+                    enabled: true,
+                    rpm: None,
+                    rpd: None,
+                    tpm: None,
+                    tpd: None,
+                    context_window: Some("32k".to_string()),
+                    cf_aig_gateway_id: None,
+                }],
+                agents: AgentsConfig {
+                    default: ModelNames::Single("test-model".to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+        let received = Arc::new(std::sync::Mutex::new(String::new()));
+        let received_clone = received.clone();
+
+        let flush_sem = Arc::new(tokio::sync::Semaphore::new(1));
+        let pipeline = Pipeline::new(make_flush_config(), flush_sem).with_flush_callbacks(
+            Arc::new(move |id: &str| {
+                called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                *received_clone.lock().unwrap() = id.to_string();
+            }),
+            Arc::new(|_: &str| {}),
+            Arc::new(|_: &str| {}),
+        );
+
+        pipeline.trigger_memory_flush_async(std::path::Path::new("/tmp"), "test-session");
+
+        assert!(called.load(Ordering::SeqCst), "on_flush_queued は spawn 前に同期呼び出しされる");
+        assert_eq!(
+            *received.lock().unwrap(),
+            "flush:test-session",
+            "flush_session_id は flush:<session_id> 形式"
+        );
     }
 }
