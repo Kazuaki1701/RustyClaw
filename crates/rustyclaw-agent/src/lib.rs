@@ -389,13 +389,12 @@ impl Pipeline {
         }
     }
 
-    /// context_window トークン予算ベースのメッセージ件数上限。
     /// 履歴予算 = context_window_tokens × 65%、メッセージ平均 350 tokens で割り返す。
+    /// 小コンテキストモデル（≤ 8_192 tokens）は下限を 2 に緩和し、計算値が下限に潰されないようにする。
     fn get_history_message_limit(&self, purpose: &str) -> usize {
         let cw = self.config.get_model(purpose).context_window_tokens;
-        // 65% of context window for history; average ~350 tokens per message
         let raw = (cw * 65 / 100) / 350;
-        let min = if cw <= 8_192 { 2 } else { 20 };
+        let min = if cw <= 8_192 { 2 } else { 20 }; // small local models (e.g. lms-gemma-4-12b = 4096)
         raw.clamp(min, 150)
     }
 
