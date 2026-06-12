@@ -394,7 +394,9 @@ impl Pipeline {
     fn get_history_message_limit(&self, purpose: &str) -> usize {
         let cw = self.config.get_model(purpose).context_window_tokens;
         // 65% of context window for history; average ~350 tokens per message
-        ((cw * 65 / 100) / 350).clamp(20, 150)
+        let raw = (cw * 65 / 100) / 350;
+        let min = if cw <= 8_192 { 2 } else { 20 };
+        raw.clamp(min, 150)
     }
 
     /// 各種人格定義ファイルを読み込んでシステムプロンプト（Context）を構築する
@@ -2782,7 +2784,7 @@ Keep it short.\n\
         let p131k = Pipeline::new(make_config("131k"), flush_sem.clone());
         let p256k = Pipeline::new(make_config("256k"), flush_sem.clone());
 
-        // 計算式: (cw * 65 / 100 / 350).clamp(20, 150)
+        // 計算式: (cw * 65 / 100 / 350).clamp(min, 150)  min = cw<=8192 ? 2 : 20
         assert_eq!(p16k.get_history_message_limit("default"), 30, "16k → 30件");
         assert_eq!(p32k.get_history_message_limit("default"), 60, "32k → 60件");
         assert_eq!(p64k.get_history_message_limit("default"), 121, "64k → 121件");
@@ -2796,6 +2798,11 @@ Keep it short.\n\
             150,
             "256k → 150件（上限）"
         );
+
+        let p4k = Pipeline::new(make_config("4096"), flush_sem.clone());
+        let p8k = Pipeline::new(make_config("8192"), flush_sem.clone());
+        assert_eq!(p4k.get_history_message_limit("default"), 7, "4096 → 7件（下限クランプ = 2 のため生の計算値が使われる）");
+        assert_eq!(p8k.get_history_message_limit("default"), 15, "8192 → 15件（下限クランプ = 2）");
     }
 
     #[test]
