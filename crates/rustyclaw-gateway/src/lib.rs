@@ -639,8 +639,22 @@ impl LaneRegistry {
                                         "Session {} acquired permit slot. Executing agent...",
                                         session_id
                                     );
-                                    let pipeline =
-                                        Pipeline::new(active_config.clone(), lane_sem.clone());
+                                    let flush_desc = format!("Memory Flush ({})", session_id);
+                                    let pipeline = Pipeline::new(active_config.clone(), lane_sem.clone())
+                                        .with_flush_callbacks(
+                                            Arc::new({
+                                                let flush_desc = flush_desc.clone();
+                                                move |flush_sid: &str| {
+                                                    crate::queue_update_or_insert(flush_sid, "Waiting", 0.0, &flush_desc);
+                                                }
+                                            }),
+                                            Arc::new(|flush_sid: &str| {
+                                                crate::queue_update_or_insert(flush_sid, "Executing", 0.0, "");
+                                            }),
+                                            Arc::new(|flush_sid: &str| {
+                                                crate::queue_remove(flush_sid);
+                                            }),
+                                        );
                                     // ProgressReporter（進捗表示とタイピング）のセットアップ
                                     let is_user_channel = !session_id.starts_with("cron")
                                         && channel_id.parse::<u64>().is_ok();
