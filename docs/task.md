@@ -35,6 +35,11 @@
   - **内容**: XMLデリミタへの移行、システムプロンプトの圧縮、会話履歴のクレンジング、長期的なメモリセマンティック分割（RAG化）。
   - **詳細設計・改善提案**: [2026-06-13-memory-flush-context-improvement-proposal.md](file:///home/kazuaki/Projects/RustyClaw/docs/review/2026-06-13-memory-flush-context-improvement-proposal.md)
 
+- [ ] **リクエストプロンプト（指示文・スキル定義）の動的最適化**:  
+  通常のチャットリクエストにおける入力トークンの肥大化（約10k）を防ぐための、プロンプト情報の動的読み込みとフィルタリング。
+  - **内容**: ユーザー文脈に応じたスキルの動的選択（Dynamic Skill Selection）、USER.md の興味関心（Interests）等の動的注入、Home Assistant等のスクリプトインターフェース集約。
+  - **詳細設計・改善提案**: [2026-06-13-request-prompt-optimization-report.md](file:///home/kazuaki/Projects/RustyClaw/docs/review/2026-06-13-request-prompt-optimization-report.md)
+
 ---
 
 ## 将来課題（低優先度）
