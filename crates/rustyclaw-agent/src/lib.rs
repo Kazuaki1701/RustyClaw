@@ -1786,10 +1786,30 @@ fn truncate_70_20(content: &str, max_bytes: usize) -> String {
     if content.len() <= max_bytes {
         return content.to_string();
     }
-    let head_end = (max_bytes as f64 * 0.7) as usize;
-    let tail_len = (max_bytes as f64 * 0.2) as usize;
-    let tail_start = content.len().saturating_sub(tail_len);
-    let omitted = content.len() - head_end - tail_len;
+    let head_target = (max_bytes as f64 * 0.7) as usize;
+    let tail_target = (max_bytes as f64 * 0.2) as usize;
+
+    // head_end を最も近い文字境界（かつ head_target 以下）にする
+    let mut head_end = 0;
+    for (idx, _) in content.char_indices() {
+        if idx <= head_target {
+            head_end = idx;
+        } else {
+            break;
+        }
+    }
+
+    // tail_start を最も近い文字境界（かつ末尾から tail_target バイト付近）にする
+    let tail_target_start = content.len().saturating_sub(tail_target);
+    let mut tail_start = content.len();
+    for (idx, _) in content.char_indices() {
+        if idx >= tail_target_start {
+            tail_start = idx;
+            break;
+        }
+    }
+
+    let omitted = content.len() - head_end - (content.len() - tail_start);
     format!(
         "{}\n\n[...{} bytes omitted...]\n\n{}",
         &content[..head_end],
