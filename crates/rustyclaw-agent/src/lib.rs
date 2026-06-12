@@ -668,11 +668,22 @@ impl Pipeline {
     ///
     /// flush_sem (容量1) を取得してから flush_memory() を実行することで、
     /// flush が同時に複数走って gmn プロセスが意図した上限を超えるのを防ぐ。
+    /// LANE QUEUE 可視化: on_flush_queued は spawn 前に同期呼び出し、
+    /// on_flush_executing はセマフォ取得後、on_flush_done は完了時に呼ぶ。
     pub fn trigger_memory_flush_async(&self, workspace_dir: &Path, session_id: &str) {
         let workspace_dir = workspace_dir.to_path_buf();
         let session_id = session_id.to_string();
+        let flush_session_id = format!("flush:{}", session_id);
         let config = self.config.clone();
         let flush_sem = self.flush_sem.clone();
+        let on_flush_queued = self.on_flush_queued.clone();
+        let on_flush_executing = self.on_flush_executing.clone();
+        let on_flush_done = self.on_flush_done.clone();
+
+        // キュー表示: spawn 直前に "Waiting" として登録（同期・fail-open）
+        if let Some(ref cb) = on_flush_queued {
+            cb(&flush_session_id);
+        }
 
         tokio::spawn(async move {
             // セマフォ取得（最大 60 秒待機）。取得できなければ今回の flush はスキップ
@@ -685,17 +696,23 @@ impl Pipeline {
                 Ok(Ok(permit)) => permit,
                 Ok(Err(_)) => {
                     tracing::warn!(session = %session_id, "flush_memory: semaphore closed, skipping");
+                    if let Some(ref cb) = on_flush_done { cb(&flush_session_id); }
                     return;
                 }
                 Err(_) => {
                     tracing::warn!(session = %session_id, "flush_memory: semaphore timeout (60s), skipping");
+                    if let Some(ref cb) = on_flush_done { cb(&flush_session_id); }
                     return;
                 }
             };
 
+            if let Some(ref cb) = on_flush_executing { cb(&flush_session_id); }
+
             if let Err(e) = Self::flush_memory(&workspace_dir, &session_id, config).await {
                 tracing::warn!("Failed to flush memory for session {}: {:#}", session_id, e);
             }
+
+            if let Some(ref cb) = on_flush_done { cb(&flush_session_id); }
             // _permit がここでドロップされ、セマフォが返却される
         });
     }
@@ -3332,7 +3349,6 @@ mod truncate_context_tests {
     }
 
     #[tokio::test]
-    #[ignore = "Task 2 (on_flush_queued 呼び出し実装) 完了後に有効化"]
     async fn test_flush_callback_queued_called_synchronously() {
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
         use rustyclaw_config::{AgentsConfig, Config, ModelEntry, ModelNames};
