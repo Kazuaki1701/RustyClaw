@@ -1077,15 +1077,17 @@ function fmtK(n){if(n>=1e6)return(n/1e6).toFixed(2)+'M';if(n>=1e3)return(n/1e3).
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function now(){return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 const SERVICE_BADGES = [
-  { prefix: 'cron:heartbeat',      label: 'HEARTBEAT', color: '#bf00ff' },
-  { prefix: 'cron:topic-patrol',   label: 'PATROL',    color: '#ff8c00' },
-  { prefix: 'cron:daily-briefing', label: 'BRIEFING',  color: '#4488ff' },
-  { prefix: 'cron:vitals',         label: 'VITALS',    color: '#00ff9f' },
-  { prefix: 'cron:karakeep',       label: 'KARAKEEP',  color: '#ffe066' },
-  { prefix: 'cron:daily-summary',  label: 'SUMMARY',   color: '#00e5ff' },
-  { prefix: 'discord-',            label: 'DISCORD',   color: '#7b68ee' },
-  { prefix: 'http-dashboard',      label: 'DASHBOARD', color: '#00d4ff' },
-  { prefix: 'cli-',                label: 'CLI',       color: '#cccccc' },
+  { prefix: 'cron:heartbeat',        label: 'HEARTBEAT', color: '#bf00ff' },
+  { prefix: 'cron:topic-patrol',     label: 'PATROL',    color: '#ff8c00' },
+  { prefix: 'cron:daily-briefing',   label: 'BRIEFING',  color: '#4488ff' },
+  { prefix: 'cron:vitals',           label: 'VITALS',    color: '#00ff9f' },
+  { prefix: 'cron:karakeep',         label: 'KARAKEEP',  color: '#ffe066' },
+  { prefix: 'cron:daily-summary',    label: 'SUMMARY',   color: '#00e5ff' },
+  { prefix: 'cron:session-summary',  label: 'SES-SUM',   color: '#00bfff' },
+  { prefix: 'flush:',                label: 'MEM-FLUSH', color: '#ff6b6b' },
+  { prefix: 'discord-',              label: 'DISCORD',   color: '#7b68ee' },
+  { prefix: 'http-dashboard',        label: 'DASHBOARD', color: '#00d4ff' },
+  { prefix: 'cli-',                  label: 'CLI',       color: '#cccccc' },
 ];
 function serviceBadge(sessionId) {
   const s = SERVICE_BADGES.find(b => sessionId.startsWith(b.prefix));
