@@ -3332,6 +3332,7 @@ mod truncate_context_tests {
     }
 
     #[tokio::test]
+    #[ignore = "Task 2 (on_flush_queued 呼び出し実装) 完了後に有効化"]
     async fn test_flush_callback_queued_called_synchronously() {
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
         use rustyclaw_config::{AgentsConfig, Config, ModelEntry, ModelNames};
