@@ -420,14 +420,19 @@ impl Pipeline {
             .join("\n")
     }
 
-    pub fn build_system_context(&self, workspace_dir: &Path) -> Result<String> {
+    pub fn build_system_context(&self, workspace_dir: &Path, context_window_tokens: usize) -> Result<String> {
         // 静的ブロック（SOUL/USER）のみを返す。
         // 動的な [now:] は呼び出し元で追加する（build_heartbeat_context と同パターン）。
         const MAX_CONTEXT_CHARS_PER_FILE: usize = 3_000;
-        let files = ["SOUL.md", "USER.md"];
+        // small local models (≤ 8_192) get SOUL.md only to save token budget
+        let files: &[&str] = if context_window_tokens <= 8_192 {
+            &["SOUL.md"]
+        } else {
+            &["SOUL.md", "USER.md"]
+        };
         let mut context = String::new();
 
-        for filename in &files {
+        for filename in files {
             let path = workspace_dir.join(filename);
             let content = match fs::read_to_string(&path) {
                 Ok(content) => content,
@@ -446,15 +451,17 @@ impl Pipeline {
             context.push_str(&format!("# {}\n\n{}\n\n", filename, truncated));
         }
 
-        // proactive-posts.md を注入（最終1件のみ）
-        let posts_path = workspace_dir.join("memory").join("proactive-posts.md");
-        if let Ok(posts) = fs::read_to_string(&posts_path)
-            && let Some(last_entry) = posts.lines().rfind(|l| !l.trim().is_empty())
-        {
-            context.push_str(&format!(
-                "# Recent AI Proactive Posts\n\n{}\n\n",
-                last_entry
-            ));
+        // proactive-posts.md を注入（最終1件のみ・大コンテキストモデルのみ）
+        if context_window_tokens > 8_192 {
+            let posts_path = workspace_dir.join("memory").join("proactive-posts.md");
+            if let Ok(posts) = fs::read_to_string(&posts_path)
+                && let Some(last_entry) = posts.lines().rfind(|l| !l.trim().is_empty())
+            {
+                context.push_str(&format!(
+                    "# Recent AI Proactive Posts\n\n{}\n\n",
+                    last_entry
+                ));
+            }
         }
 
         Ok(context)
@@ -1005,7 +1012,8 @@ Rules:
         session_id: &str,
         user_message: &str,
     ) -> Result<LlmResponse> {
-        let mut system_context = self.build_system_context(workspace_dir)?;
+        let cw = self.config.get_model("default").context_window_tokens;
+        let mut system_context = self.build_system_context(workspace_dir, cw)?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -1297,7 +1305,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let logger = SessionLogger::new(workspace_dir);
 
         // システムプロンプトと RAG コンテキストの構築
-        let mut system_context = self.build_system_context(workspace_dir)?;
+        let cw = self.config.get_model(purpose).context_window_tokens;
+        let mut system_context = self.build_system_context(workspace_dir, cw)?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -1480,7 +1489,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         session_id: &str,
         user_message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
-        let mut system_context = self.build_system_context(workspace_dir)?;
+        let cw = self.config.get_model("default").context_window_tokens;
+        let mut system_context = self.build_system_context(workspace_dir, cw)?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -2189,13 +2199,35 @@ mod tests {
         let config = make_test_config_with_url("http://localhost");
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        let context = pipeline.build_system_context(ws_dir.path()).unwrap();
+        let context = pipeline.build_system_context(ws_dir.path(), 4_096).unwrap();
 
         assert!(context.contains("# SOUL.md"));
         assert!(
             !context.contains("[now: "),
             "build_system_context must not include [now:] — dynamic content belongs in callers"
         );
+    }
+
+    #[test]
+    fn test_build_system_context_small_model_omits_user_md() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        std::fs::write(ws.join("SOUL.md"), "soul content").unwrap();
+        std::fs::write(ws.join("USER.md"), "user content").unwrap();
+
+        let config = make_test_config_with_url("http://localhost");
+        let sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+
+        // 4096 tokens モデル → SOUL.md のみ
+        let ctx = pipeline.build_system_context(ws, 4_096).unwrap();
+        assert!(ctx.contains("# SOUL.md"), "SOUL.md は常に注入される");
+        assert!(!ctx.contains("# USER.md"), "4096 では USER.md を省略");
+
+        // 32768 tokens モデル → 両方注入
+        let ctx32k = pipeline.build_system_context(ws, 32_768).unwrap();
+        assert!(ctx32k.contains("# SOUL.md"), "32k: SOUL.md 注入");
+        assert!(ctx32k.contains("# USER.md"), "32k: USER.md 注入");
     }
 
     #[test]
@@ -2520,7 +2552,7 @@ mod tests {
         let config = rustyclaw_config::Config::default();
         let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
         let pipeline = Pipeline::new(config, sem);
-        let ctx = pipeline.build_system_context(ws).unwrap();
+        let ctx = pipeline.build_system_context(ws, 32_768).unwrap();
         assert!(
             ctx.contains("傘を持ってください"),
             "proactive-posts が注入されるべき"
@@ -3173,7 +3205,7 @@ Keep it short.\n\
         let config = make_test_config_with_url("http://localhost");
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        let result = pipeline.build_system_context(workspace).unwrap();
+        let result = pipeline.build_system_context(workspace, 32_768).unwrap();
 
         let soul_section_start = result.find("# SOUL.md").unwrap();
         let user_section_start = result.find("# USER.md").unwrap();
