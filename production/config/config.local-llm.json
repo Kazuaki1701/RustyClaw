@@ -1,6 +1,6 @@
 {
   "agents": {
-    "global_fallback_model_name": "groq-llama-8b",
+    "global_fallback_model_name": "lms-gemma-4-12b",
     "default": [
       "lms-gemma-4-12b",
       "groq-llama-8b"
@@ -32,8 +32,7 @@
     "memory": [
       "lms-gemma-4-12b",
       "groq-llama-8b"
-    ],
-    "embedding": "lms-bge-m3"
+    ]
   },
   "model_list": [
     {
@@ -259,17 +258,6 @@
       "cf_aig_gateway_id": "rustyclaw-gateway"
     },
     {
-      "model_name": "lms-bge-m3",
-      "provider": "openai",
-      "model": "text-embedding-bge-m3",
-      "api_base": "http://192.168.1.110:1234/v1",
-      "api_key": "lm-studio",
-      "max_tokens": 0,
-      "temperature": 0.0,
-      "enabled": true,
-      "context_window": "512"
-    },
-    {
       "model_name": "lms-gemma-4-12b",
       "provider": "openai",
       "model": "google/gemma-4-12b-qat",
@@ -293,13 +281,6 @@
     }
   ],
   "debug_dump": true,
-  "embedding": {
-    "enabled": true,
-    "top_k": 5,
-    "heartbeat_top_k": 2,
-    "similarity_threshold": 0.60,
-    "session_summary_ttl_days": 7
-  },
   "channels": {
     "discord": {
       "enabled": true,

@@ -3331,8 +3331,8 @@ mod truncate_context_tests {
         assert_eq!(result, content);
     }
 
-    #[test]
-    fn test_flush_callback_queued_called_synchronously() {
+    #[tokio::test]
+    async fn test_flush_callback_queued_called_synchronously() {
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
         use rustyclaw_config::{AgentsConfig, Config, ModelEntry, ModelNames};
 
