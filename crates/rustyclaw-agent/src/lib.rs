@@ -2740,8 +2740,8 @@ Keep it short.\n\
     #[test]
     fn test_parse_context_window_none_or_empty() {
         use rustyclaw_config::parse_context_window;
-        assert_eq!(parse_context_window(None), 32_768);
-        assert_eq!(parse_context_window(Some("")), 32_768);
+        assert_eq!(parse_context_window(None), 4_096);
+        assert_eq!(parse_context_window(Some("")), 4_096);
     }
 
     #[test]

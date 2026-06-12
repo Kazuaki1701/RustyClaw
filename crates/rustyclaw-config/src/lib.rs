@@ -87,14 +87,14 @@ fn bool_true() -> bool {
 pub fn parse_context_window(context_window: Option<&str>) -> usize {
     let s = match context_window {
         Some(s) if !s.is_empty() => s.trim().to_lowercase(),
-        _ => return 32_768,
+        _ => return 4_096,
     };
     if let Some(num) = s.strip_suffix('m') {
         num.trim().parse::<usize>().unwrap_or(1) * 1_048_576
     } else if let Some(num) = s.strip_suffix('k') {
-        num.trim().parse::<usize>().unwrap_or(32) * 1_024
+        num.trim().parse::<usize>().unwrap_or(4) * 1_024
     } else {
-        s.parse::<usize>().unwrap_or(32_768)
+        s.parse::<usize>().unwrap_or(4_096)
     }
 }
 
@@ -240,7 +240,7 @@ impl Default for LlmModelConfig {
             max_tokens: None,
             temperature: None,
             cf_aig_gateway_id: None,
-            context_window_tokens: 32_768,
+            context_window_tokens: 4_096,
             rpm: None,
             rpd: None,
             tpm: None,
