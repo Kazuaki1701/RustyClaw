@@ -1107,14 +1107,14 @@ impl Gateway {
         inject_vault_to_env();
 
         // HA エンドポイントを環境変数に注入（bash スクリプトが $HOMEASSISTANT_ENDPOINT を参照）
-        if let Some(ref ha) = config.tools.home_assistant {
-            if !ha.endpoint.is_empty() {
-                // SAFETY: Gateway 起動時、他スレッドが env を読む前に一度だけ呼ぶ。
-                unsafe {
-                    std::env::set_var("HOMEASSISTANT_ENDPOINT", &ha.endpoint);
-                }
-                tracing::debug!("Gateway: HOMEASSISTANT_ENDPOINT set to {}", ha.endpoint);
+        if let Some(ref ha) = config.tools.home_assistant
+            && !ha.endpoint.is_empty()
+        {
+            // SAFETY: Gateway 起動時、他スレッドが env を読む前に一度だけ呼ぶ。
+            unsafe {
+                std::env::set_var("HOMEASSISTANT_ENDPOINT", &ha.endpoint);
             }
+            tracing::debug!("Gateway: HOMEASSISTANT_ENDPOINT set to {}", ha.endpoint);
         }
 
         // 3. ToolServer (rig エージェント用) と ToolRegistry (heartbeat 用) の初期化

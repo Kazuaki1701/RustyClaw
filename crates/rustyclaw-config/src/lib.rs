@@ -82,6 +82,22 @@ fn bool_true() -> bool {
     true
 }
 
+/// config.json の context_window 文字列（"8k", "131k", "256k", "1M" 等）をトークン数に変換する。
+/// 未設定または認識不能な場合は保守的なデフォルト 32,768 を返す。
+pub fn parse_context_window(context_window: Option<&str>) -> usize {
+    let s = match context_window {
+        Some(s) if !s.is_empty() => s.trim().to_lowercase(),
+        _ => return 32_768,
+    };
+    if let Some(num) = s.strip_suffix('m') {
+        num.trim().parse::<usize>().unwrap_or(1) * 1_048_576
+    } else if let Some(num) = s.strip_suffix('k') {
+        num.trim().parse::<usize>().unwrap_or(32) * 1_024
+    } else {
+        s.parse::<usize>().unwrap_or(32_768)
+    }
+}
+
 fn default_top_k() -> usize {
     5
 }
@@ -188,7 +204,7 @@ pub struct AgentsConfig {
 }
 
 /// get_model() が返す解決済みモデル設定（$vault: 参照解決済み）
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmModelConfig {
     pub model_purpose: String,
     pub model_provider: String,
@@ -200,6 +216,37 @@ pub struct LlmModelConfig {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub cf_aig_gateway_id: Option<String>,
+    /// コンテキストウィンドウサイズ（tokens。parse_context_window で解決済み）
+    pub context_window_tokens: usize,
+    /// 1分間のリクエスト数上限
+    pub rpm: Option<u64>,
+    /// 1日のリクエスト数上限
+    pub rpd: Option<u64>,
+    /// 1分間のトークン数上限
+    pub tpm: Option<u64>,
+    /// 1日のトークン数上限
+    pub tpd: Option<u64>,
+}
+
+impl Default for LlmModelConfig {
+    fn default() -> Self {
+        Self {
+            model_purpose: String::new(),
+            model_provider: String::new(),
+            model_name: String::new(),
+            config_name: String::new(),
+            api_key: String::new(),
+            api_base_url: String::new(),
+            max_tokens: None,
+            temperature: None,
+            cf_aig_gateway_id: None,
+            context_window_tokens: 32_768,
+            rpm: None,
+            rpd: None,
+            tpm: None,
+            tpd: None,
+        }
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -442,6 +489,11 @@ impl Config {
                 max_tokens: e.max_tokens,
                 temperature: e.temperature,
                 cf_aig_gateway_id: e.cf_aig_gateway_id.clone(),
+                context_window_tokens: parse_context_window(e.context_window.as_deref()),
+                rpm: e.rpm,
+                rpd: e.rpd,
+                tpm: e.tpm,
+                tpd: e.tpd,
             })
     }
 
@@ -505,6 +557,11 @@ impl Config {
                 max_tokens: e.max_tokens,
                 temperature: e.temperature,
                 cf_aig_gateway_id: e.cf_aig_gateway_id.clone(),
+                context_window_tokens: parse_context_window(e.context_window.as_deref()),
+                rpm: e.rpm,
+                rpd: e.rpd,
+                tpm: e.tpm,
+                tpd: e.tpd,
             })
             .unwrap_or_else(|| LlmModelConfig {
                 model_purpose: purpose.to_string(),

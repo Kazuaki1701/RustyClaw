@@ -1,19 +1,81 @@
 use anyhow::{Context, Result};
 use futures_util::{Stream, StreamExt};
-use rustyclaw_config::{AutonomyLevel, Config};
+use rustyclaw_config::{AutonomyLevel, Config, LlmModelConfig};
 use rustyclaw_providers::{
     CompletionOptions, LlmProvider, LlmResponse, Message, StreamChunk, create_provider,
 };
 use rustyclaw_storage::{ConversationHistory, SessionLogger};
 use rustyclaw_tools::ToolRegistry;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
 const HEARTBEAT_RAG_TAIL_LINES: usize = 10;
+
+struct RateLimitWindow {
+    start: Instant,
+    requests: u64,
+    tokens: u64,
+}
+
+/// モデルごとの rpm/tpm ソフトリミット追跡（超過時は warn + スリープ）
+struct RateLimiter {
+    windows: Mutex<HashMap<String, RateLimitWindow>>,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            windows: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// rpm をチェックしリクエストカウントを増加させる。
+    /// 超過していた場合は残り時間を返す（呼び出し元でスリープする）。
+    fn check_rpm(&self, model: &LlmModelConfig) -> Option<Duration> {
+        let rpm = model.rpm?;
+        let mut map = self.windows.lock().unwrap();
+        let entry = map
+            .entry(model.config_name.clone())
+            .or_insert_with(|| RateLimitWindow {
+                start: Instant::now(),
+                requests: 0,
+                tokens: 0,
+            });
+        let elapsed = entry.start.elapsed();
+        if elapsed >= Duration::from_secs(60) {
+            entry.start = Instant::now();
+            entry.requests = 0;
+            entry.tokens = 0;
+        }
+        if entry.requests >= rpm {
+            return Some(Duration::from_secs(60).saturating_sub(elapsed));
+        }
+        entry.requests += 1;
+        None
+    }
+
+    /// tpm を確認し、超過していた場合は warn ログを出力する。
+    fn record_tokens(&self, model: &LlmModelConfig, tokens: u64) {
+        let Some(tpm) = model.tpm else { return };
+        let mut map = self.windows.lock().unwrap();
+        if let Some(entry) = map.get_mut(&model.config_name) {
+            entry.tokens += tokens;
+            if entry.tokens >= tpm {
+                tracing::warn!(
+                    model = %model.config_name,
+                    tokens_this_minute = entry.tokens,
+                    tpm_limit = tpm,
+                    "TPM soft limit reached this minute"
+                );
+            }
+        }
+    }
+}
 
 pub fn build_heartbeat_rag_query(digest: &str) -> String {
     let lines: Vec<&str> = digest.lines().collect();
@@ -313,6 +375,7 @@ pub struct Pipeline {
     provider: Box<dyn LlmProvider>,
     /// flush_memory() の同時実行を 1 本に制限するセマフォ
     flush_sem: Arc<Semaphore>,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl Pipeline {
@@ -322,28 +385,16 @@ impl Pipeline {
             config,
             provider,
             flush_sem,
+            rate_limiter: Arc::new(RateLimiter::new()),
         }
     }
 
-    /// context_window ベースのメッセージ件数ハードキャップ。
-    /// モデルの context_window 文字列を parse_context_window() で解釈し、
-    /// 大きいモデルほど多くの履歴を保持できるようにする。
+    /// context_window トークン予算ベースのメッセージ件数上限。
+    /// 履歴予算 = context_window_tokens × 65%、メッセージ平均 350 tokens で割り返す。
     fn get_history_message_limit(&self, purpose: &str) -> usize {
-        let model_cfg = self.config.get_model(purpose);
-        let cw = self
-            .config
-            .model_list
-            .iter()
-            .find(|m| m.model == model_cfg.model_name && m.enabled)
-            .and_then(|m| m.context_window.as_deref());
-        let ctx = parse_context_window(cw);
-        match ctx {
-            0..=16_384 => 30,
-            16_385..=32_768 => 50,
-            32_769..=65_536 => 80,
-            65_537..=262_143 => 100,
-            _ => 120,
-        }
+        let cw = self.config.get_model(purpose).context_window_tokens;
+        // 65% of context window for history; average ~350 tokens per message
+        ((cw * 65 / 100) / 350).clamp(20, 150)
     }
 
     /// 各種人格定義ファイルを読み込んでシステムプロンプト（Context）を構築する
@@ -716,12 +767,7 @@ impl Pipeline {
         // コンテキストサイズ安全チェック: flush プロンプトの推定トークン数がモデルの
         // context_window の 80% を超える場合はスキップして 400 エラーを防ぐ。
         let flush_text_tokens = (conversation_text.chars().count() * 3 / 2) + 2_000;
-        let flush_model_cw = config
-            .model_list
-            .iter()
-            .find(|m| m.model == memory_model.model_name && m.enabled)
-            .and_then(|m| m.context_window.as_deref());
-        let flush_ctx_limit = (parse_context_window(flush_model_cw) * 4) / 5;
+        let flush_ctx_limit = (memory_model.context_window_tokens * 4) / 5;
         if flush_text_tokens > flush_ctx_limit {
             tracing::warn!(
                 session = %session_id,
@@ -1296,6 +1342,18 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             .default_max_turns(20)
             .build();
 
+        // RPM ソフトリミットチェック
+        let model_cfg = self.config.get_model(purpose);
+        if let Some(sleep_dur) = self.rate_limiter.check_rpm(&model_cfg) {
+            tracing::warn!(
+                model = %model_cfg.config_name,
+                sleep_ms = sleep_dur.as_millis(),
+                rpm = model_cfg.rpm,
+                "RPM soft limit reached, sleeping"
+            );
+            tokio::time::sleep(sleep_dur).await;
+        }
+
         // プロバイダーメッセージを rig メッセージ形式に変換
         let mut rig_history = rustyclaw_providers::provider_messages_to_rig(&history.messages);
 
@@ -1381,6 +1439,13 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         // 最終プロバイダー呼び出しの usage 情報を取得
         let last_usage = usage_sink.lock().unwrap().take();
 
+        // TPM ソフトリミット記録
+        if let Some(ref u) = last_usage
+            && let Some(total) = u.total_tokens
+        {
+            self.rate_limiter.record_tokens(&model_cfg, total as u64);
+        }
+
         // 最終アシスタントメッセージを保存
         let assistant_msg = Message {
             role: "assistant".to_string(),
@@ -1452,11 +1517,23 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
         messages.push(user_msg.clone());
 
+        // RPM ソフトリミットチェック
+        let stream_model_cfg = self.config.get_model("default");
+        if let Some(sleep_dur) = self.rate_limiter.check_rpm(&stream_model_cfg) {
+            tracing::warn!(
+                model = %stream_model_cfg.config_name,
+                sleep_ms = sleep_dur.as_millis(),
+                rpm = stream_model_cfg.rpm,
+                "RPM soft limit reached, sleeping"
+            );
+            tokio::time::sleep(sleep_dur).await;
+        }
+
         let cat = resolve_category(session_id);
         let opts = CompletionOptions {
-            model: self.config.get_model("default").model_name,
-            max_tokens: self.config.get_model("default").max_tokens,
-            temperature: self.config.get_model("default").temperature,
+            model: stream_model_cfg.model_name.clone(),
+            max_tokens: stream_model_cfg.max_tokens,
+            temperature: stream_model_cfg.temperature,
             timeout: Duration::from_secs(900),
             category: Some(cat),
         };
@@ -1647,22 +1724,6 @@ fn extract_delimited_block(text: &str, start_tag: &str, end_tag: &str) -> Option
         None
     } else {
         Some(content)
-    }
-}
-
-/// config.json の context_window 文字列（"8k", "131k", "256k", "1M" 等）をトークン数に変換する。
-/// 未設定または認識不能な場合は保守的なデフォルト 32,768 を返す。
-fn parse_context_window(context_window: Option<&str>) -> usize {
-    let s = match context_window {
-        Some(s) if !s.is_empty() => s.trim().to_lowercase(),
-        _ => return 32_768,
-    };
-    if let Some(num) = s.strip_suffix('m') {
-        num.trim().parse::<usize>().unwrap_or(1) * 1_048_576
-    } else if let Some(num) = s.strip_suffix('k') {
-        num.trim().parse::<usize>().unwrap_or(32) * 1_024
-    } else {
-        s.parse::<usize>().unwrap_or(32_768)
     }
 }
 
@@ -2662,6 +2723,7 @@ Keep it short.\n\
 
     #[test]
     fn test_parse_context_window_k_suffix() {
+        use rustyclaw_config::parse_context_window;
         assert_eq!(parse_context_window(Some("8k")), 8_192);
         assert_eq!(parse_context_window(Some("16k")), 16_384);
         assert_eq!(parse_context_window(Some("32k")), 32_768);
@@ -2671,11 +2733,13 @@ Keep it short.\n\
 
     #[test]
     fn test_parse_context_window_m_suffix() {
+        use rustyclaw_config::parse_context_window;
         assert_eq!(parse_context_window(Some("1M")), 1_048_576);
     }
 
     #[test]
     fn test_parse_context_window_none_or_empty() {
+        use rustyclaw_config::parse_context_window;
         assert_eq!(parse_context_window(None), 32_768);
         assert_eq!(parse_context_window(Some("")), 32_768);
     }
@@ -2718,18 +2782,19 @@ Keep it short.\n\
         let p131k = Pipeline::new(make_config("131k"), flush_sem.clone());
         let p256k = Pipeline::new(make_config("256k"), flush_sem.clone());
 
+        // 計算式: (cw * 65 / 100 / 350).clamp(20, 150)
         assert_eq!(p16k.get_history_message_limit("default"), 30, "16k → 30件");
-        assert_eq!(p32k.get_history_message_limit("default"), 50, "32k → 50件");
-        assert_eq!(p64k.get_history_message_limit("default"), 80, "64k → 80件");
+        assert_eq!(p32k.get_history_message_limit("default"), 60, "32k → 60件");
+        assert_eq!(p64k.get_history_message_limit("default"), 121, "64k → 121件");
         assert_eq!(
             p131k.get_history_message_limit("default"),
-            100,
-            "131k → 100件"
+            150,
+            "131k → 150件（上限）"
         );
         assert_eq!(
             p256k.get_history_message_limit("default"),
-            120,
-            "256k → 120件"
+            150,
+            "256k → 150件（上限）"
         );
     }
 
