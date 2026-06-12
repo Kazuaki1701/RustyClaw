@@ -1115,9 +1115,13 @@ Rules:
         target_session_id: &str,
     ) -> Result<String> {
         let logger = SessionLogger::new(workspace_dir);
-        let history = logger
+        let history_messages = logger
             .load_history(target_session_id)
             .context("Failed to load history for session summary")?;
+
+        let mut history_wrapper = ConversationHistory::new(history_messages);
+        history_wrapper.trim_to_last(self.get_history_message_limit("summary"));
+        let history = history_wrapper.messages;
 
         if history.is_empty() {
             return Err(anyhow::anyhow!(
