@@ -1216,6 +1216,13 @@ impl Gateway {
         }
         tracing::info!("Registered native CronScheduleTool.");
 
+        // MCP ツール群 (ctx_execute 等) を heartbeat 用の tool_registry にプロキシとして登録
+        for tool_name in &["ctx_execute", "ctx_search", "ctx_index", "ctx_patch"] {
+            let proxy = McpProxyTool::new(tool_name, tool_server_handle.clone());
+            tool_registry.register(Arc::new(proxy) as Arc<dyn rig_core::tool::ToolDyn>);
+        }
+        tracing::info!("Registered McpProxyTools for heartbeat.");
+
         let tool_registry = Arc::new(tool_registry);
         tracing::info!(
             "Tool registry initialized with {} tools.",
@@ -1459,6 +1466,66 @@ impl Gateway {
 
 // ==============================================================================
 // Tests
+// ==============================================================================
+
+#[derive(Clone)]
+struct McpProxyTool {
+    name: String,
+    tool_server_handle: rig_core::tool::server::ToolServerHandle,
+}
+
+impl McpProxyTool {
+    fn new(name: &str, handle: rig_core::tool::server::ToolServerHandle) -> Self {
+        Self {
+            name: name.to_string(),
+            tool_server_handle: handle,
+        }
+    }
+}
+
+impl rig_core::tool::ToolDyn for McpProxyTool {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn definition<'a>(
+        &'a self,
+        _prompt: String,
+    ) -> rig_core::wasm_compat::WasmBoxedFuture<'a, rig_core::completion::ToolDefinition> {
+        let handle = self.tool_server_handle.clone();
+        let name = self.name.clone();
+        Box::pin(async move {
+            if let Ok(defs) = handle.get_tool_defs(None).await
+                && let Some(def) = defs.into_iter().find(|d| d.name == name)
+            {
+                return def;
+            }
+            rig_core::completion::ToolDefinition {
+                name: name.clone(),
+                description: format!("MCP proxy tool for {}", name),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            }
+        })
+    }
+
+    fn call<'a>(
+        &'a self,
+        args: String,
+    ) -> rig_core::wasm_compat::WasmBoxedFuture<'a, Result<String, rig_core::tool::ToolError>> {
+        let handle = self.tool_server_handle.clone();
+        let name = self.name.clone();
+        Box::pin(async move {
+            handle
+                .call_tool(&name, &args)
+                .await
+                .map_err(|e| rig_core::tool::ToolError::ToolCallError(Box::new(e)))
+        })
+    }
+}
+
 // ==============================================================================
 
 #[cfg(test)]
