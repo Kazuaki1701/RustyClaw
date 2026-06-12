@@ -7,6 +7,7 @@
 > **対象コード**: `crates/` 全クレート + `context-mode` 外部 MCP サーバー
 > **前バージョン比較**: v0.3 からの変更点は §4 参照
 > **Upstream 比較**: [`../v0.3/91_upstream_comparison.md`](../v0.3/91_upstream_comparison.md) / [`91_context_upstream_comparison.md`](91_context_upstream_comparison.md)（context 管理特化）
+> **LLM Config 制限**: [`92_llm_config_constraints.md`](92_llm_config_constraints.md)（Phase 51-1 実装・小コンテキスト制約・purpose 分析）
 
 **プロジェクト名**: RustyClaw v0.4  
 **設計方針**: **外部 MCP context-mode に委譲できるものはすべて委譲し、Rust 側は HA 連携・LLM 制御・レーン管理に集中する。**
