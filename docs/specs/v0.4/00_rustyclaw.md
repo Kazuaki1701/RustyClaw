@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]`
 > **バージョン**: v0.4
-> **最終更新日**: 2026-06-12（Phase 01〜03, 28b-3, 45-1, 47-1, 48-1, 50 実装完了。Context 最適化を v0.4 残課題として追加）
+> **最終更新日**: 2026-06-12（Phase 01〜03, 28b-3, 45-1, 47-1, 48-1, 50, 51-1 実装完了。Context 最適化を v0.4 残課題として追加）
 > **対象コード**: `crates/` 全クレート + `context-mode` 外部 MCP サーバー
 > **前バージョン比較**: v0.3 からの変更点は §4 参照
 > **Upstream 比較**: [`../v0.3/91_upstream_comparison.md`](../v0.3/91_upstream_comparison.md) / [`91_context_upstream_comparison.md`](91_context_upstream_comparison.md)（context 管理特化）
@@ -182,9 +182,13 @@ rustyclaw-storage (削減版)
 | `HeartbeatService::get_ha_env_context()` / `check_ha_spike()` | `rustyclaw-gateway/src/heartbeat.rs` | `memory/ha-env-summary.txt` 読み取り・`memory/ha-state.json` の CO2 スパイク検知（fail-open）`[実装済]`（Phase 50） |
 | CronService HA ポーリングループ | `rustyclaw-gateway/src/cron.rs` | 10 分毎に `220_ha_env_snapshot.sh --check-spike` を実行。exit 2 で `Priority::Normal` `cron:heartbeat` 発火（3 時間クールダウン付き）`[実装済]`（Phase 50） |
 | `220_ha_env_snapshot.sh` | `workspace/skills/home-assistant-rest-api/scripts/` | HA REST API からセンサー取得・6 サンプルリングバッファ（`memory/ha-state.json`）・トレンド矢印算出・CO2 スパイク検知（exit 2）・1 行サマリー出力（`memory/ha-env-summary.txt`）`[実装済]`（Phase 50） |
+| `context_window_tokens` / `rpm` / `rpd` / `tpm` / `tpd` を `LlmModelConfig` に追加 | `rustyclaw-config/src/lib.rs` | `resolve_model()` で `ModelEntry` から確定・伝播。`parse_context_window()` を `pub fn` に昇格 `[実装済]`（Phase 51-1） |
+| `RateLimiter`（rpm / tpm ソフトリミット）| `rustyclaw-agent/src/lib.rs` | per-model 60 秒窓。rpm 超過→スリープ、tpm 超過→warn ログ `[実装済]`（Phase 51-1） |
+| `get_history_message_limit()` トークン予算式 | `rustyclaw-agent/src/lib.rs` | `(cw × 65% / 350).clamp(min, 150)`。小コンテキスト（≤ 8192）は min=2 `[実装済]`（Phase 51-1） |
+| `build_system_context()` 小コンテキスト対応 | `rustyclaw-agent/src/lib.rs` | `context_window_tokens ≤ 8192` → SOUL.md のみ注入（USER.md・proactive-posts 省略）`[実装済]`（Phase 51-1） |
 | **Heartbeat Digest 生成** | `rustyclaw-gateway/src/heartbeat.rs` | Heartbeat 実行前に増分セッションダイジェストを生成し Heartbeat プロンプトに注入（GeminiClaw 参照実装あり）`[v0.4 残課題]` |
 | **Session-level Summary** | `rustyclaw-gateway` / `rustyclaw-agent` | アイドル 5 分後にセッションサマリーを生成し `try_ctx_index` でエピソード記憶に登録（GeminiClaw 参照実装あり）`[v0.4 残課題]` |
-| **ContextBuilder context window 対応** | `rustyclaw-agent/src/context.rs` | モデルの context window サイズに応じてセッション履歴・注入コンテキスト量を動的調整。70/20/10 予算分割（v0.3 §5.3 参照）`[v0.4 残課題]` |
+| **ContextBuilder context window 対応** | `rustyclaw-agent/src/lib.rs` | 70/20/10 予算分割による本格的な token budget アセンブリ（v0.3 §5.3 参照）`[v0.4 残課題]`（Phase 51-1 で `get_history_message_limit` トークン予算式・小コンテキスト時プロンプト圧縮を先行実装済み） |
 
 #### try_ctx_search / try_ctx_index 概要
 
@@ -280,5 +284,5 @@ v0.3 不変ルール（[`../v0.3/00_rustyclaw.md` §重要設計決定事項](..
 22. **Node.js バージョンは ≥ 22.5 を必須とする**（`node:sqlite` 内蔵で C++ ネイティブビルド不要）
 23. **Gateway は Heartbeat 直前に `try_ctx_search` を呼び、セッション終了後に `try_ctx_index` を呼ぶ**（Phase 45-1）。Agent Pipeline を経由せず `tool_server_handle.call_tool()` を直接使用し、両操作とも fail-open とする
 24. **Cron の `"cron"` タイプは `croner` crate の `Cron::find_next_occurrence()` で次回時刻を計算する**（Phase 48-1）。サービス停止後の catch-up は `>=` 比較で一度だけ実行し、多重起動しない
-26. **context window 最適化は「Heartbeat Digest → Session-level Summary → ContextBuilder window 予算」の順で段階実装する**（v0.4 残課題）。各モデルの context window サイズ（`max_tokens` 相当）を `LlmConfig` から取得し、セッション履歴・注入コンテキストを 70%/20%/10% 予算内に収める。失敗時は従来動作にフォールバック（fail-open）。
+26. **context window 最適化は「Heartbeat Digest → Session-level Summary → ContextBuilder window 予算」の順で段階実装する**（v0.4 残課題）。各モデルの context window サイズを `LlmModelConfig.context_window_tokens`（Phase 51-1 で実装済み）から取得し、セッション履歴・注入コンテキストを 70%/20%/10% 予算内に収める。Phase 51-1 で履歴件数のトークン予算式・小コンテキスト時のシステムプロンプト圧縮を先行実装済み。失敗時は従来動作にフォールバック（fail-open）。
 25. **HA 統合は `220_ha_env_snapshot.sh` を CronService から子プロセス実行するモデルを採用する**（Phase 50）。センサーデータは `memory/ha-env-summary.txt`（1 行サマリー）と `memory/ha-state.json`（6 サンプルリングバッファ）に書き出し、HeartbeatService が fail-open で読み取り Heartbeat プロンプトに注入する。`HOMEASSISTANT_TOKEN` は vault 経由・`HOMEASSISTANT_ENDPOINT` は config → 環境変数で bash スクリプトに継承させる
