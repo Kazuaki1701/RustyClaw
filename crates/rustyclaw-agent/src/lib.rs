@@ -442,7 +442,11 @@ impl Pipeline {
             .join("\n")
     }
 
-    pub fn build_system_context(&self, workspace_dir: &Path, context_window_tokens: usize) -> Result<String> {
+    pub fn build_system_context(
+        &self,
+        workspace_dir: &Path,
+        context_window_tokens: usize,
+    ) -> Result<String> {
         // 静的ブロック（SOUL/USER）のみを返す。
         // 動的な [now:] は呼び出し元で追加する（build_heartbeat_context と同パターン）。
         const MAX_CONTEXT_CHARS_PER_FILE: usize = 3_000;
@@ -696,23 +700,31 @@ impl Pipeline {
                 Ok(Ok(permit)) => permit,
                 Ok(Err(_)) => {
                     tracing::warn!(session = %session_id, "flush_memory: semaphore closed, skipping");
-                    if let Some(ref cb) = on_flush_done { cb(&flush_session_id); }
+                    if let Some(ref cb) = on_flush_done {
+                        cb(&flush_session_id);
+                    }
                     return;
                 }
                 Err(_) => {
                     tracing::warn!(session = %session_id, "flush_memory: semaphore timeout (60s), skipping");
-                    if let Some(ref cb) = on_flush_done { cb(&flush_session_id); }
+                    if let Some(ref cb) = on_flush_done {
+                        cb(&flush_session_id);
+                    }
                     return;
                 }
             };
 
-            if let Some(ref cb) = on_flush_executing { cb(&flush_session_id); }
+            if let Some(ref cb) = on_flush_executing {
+                cb(&flush_session_id);
+            }
 
             if let Err(e) = Self::flush_memory(&workspace_dir, &session_id, config).await {
                 tracing::warn!("Failed to flush memory for session {}: {:#}", session_id, e);
             }
 
-            if let Some(ref cb) = on_flush_done { cb(&flush_session_id); }
+            if let Some(ref cb) = on_flush_done {
+                cb(&flush_session_id);
+            }
             // _permit がここでドロップされ、セマフォが返却される
         });
     }
@@ -2881,7 +2893,11 @@ Keep it short.\n\
         // 計算式: (cw * 65 / 100 / 350).clamp(min, 150)  min = cw<=8192 ? 2 : 20
         assert_eq!(p16k.get_history_message_limit("default"), 30, "16k → 30件");
         assert_eq!(p32k.get_history_message_limit("default"), 60, "32k → 60件");
-        assert_eq!(p64k.get_history_message_limit("default"), 121, "64k → 121件");
+        assert_eq!(
+            p64k.get_history_message_limit("default"),
+            121,
+            "64k → 121件"
+        );
         assert_eq!(
             p131k.get_history_message_limit("default"),
             150,
@@ -2895,8 +2911,16 @@ Keep it short.\n\
 
         let p4k = Pipeline::new(make_config("4096"), flush_sem.clone());
         let p8k = Pipeline::new(make_config("8192"), flush_sem.clone());
-        assert_eq!(p4k.get_history_message_limit("default"), 7, "4096 → 7件（下限クランプ = 2 のため生の計算値が使われる）");
-        assert_eq!(p8k.get_history_message_limit("default"), 15, "8192 → 15件（下限クランプ = 2）");
+        assert_eq!(
+            p4k.get_history_message_limit("default"),
+            7,
+            "4096 → 7件（下限クランプ = 2 のため生の計算値が使われる）"
+        );
+        assert_eq!(
+            p8k.get_history_message_limit("default"),
+            15,
+            "8192 → 15件（下限クランプ = 2）"
+        );
     }
 
     #[test]
@@ -3370,8 +3394,11 @@ mod truncate_context_tests {
 
     #[tokio::test]
     async fn test_flush_callback_queued_called_synchronously() {
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
         use rustyclaw_config::{AgentsConfig, Config, ModelEntry, ModelNames};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
 
         fn make_flush_config() -> Config {
             Config {
@@ -3416,7 +3443,10 @@ mod truncate_context_tests {
 
         pipeline.trigger_memory_flush_async(std::path::Path::new("/tmp"), "test-session");
 
-        assert!(called.load(Ordering::SeqCst), "on_flush_queued は spawn 前に同期呼び出しされる");
+        assert!(
+            called.load(Ordering::SeqCst),
+            "on_flush_queued は spawn 前に同期呼び出しされる"
+        );
         assert_eq!(
             *received.lock().unwrap(),
             "flush:test-session",

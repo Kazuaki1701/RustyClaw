@@ -307,10 +307,8 @@ impl LaneRegistry {
                             if let Some(ctx) =
                                 try_ctx_search(&tool_server_handle, &heartbeat_rag_query).await
                             {
-                                prompt_parts.push(format!(
-                                    "Past context (from episodic memory):\n{}",
-                                    ctx
-                                ));
+                                prompt_parts
+                                    .push(format!("Past context (from episodic memory):\n{}", ctx));
                             }
                             let heartbeat_prompt = prompt_parts.join("\n\n");
 
@@ -640,21 +638,32 @@ impl LaneRegistry {
                                         session_id
                                     );
                                     let flush_desc = format!("Memory Flush ({})", session_id);
-                                    let pipeline = Pipeline::new(active_config.clone(), lane_sem.clone())
-                                        .with_flush_callbacks(
-                                            Arc::new({
-                                                let flush_desc = flush_desc.clone();
-                                                move |flush_sid: &str| {
-                                                    crate::queue_update_or_insert(flush_sid, "Waiting", 0.0, &flush_desc);
-                                                }
-                                            }),
-                                            Arc::new(|flush_sid: &str| {
-                                                crate::queue_update_or_insert(flush_sid, "Executing", 0.0, "");
-                                            }),
-                                            Arc::new(|flush_sid: &str| {
-                                                crate::queue_remove(flush_sid);
-                                            }),
-                                        );
+                                    let pipeline =
+                                        Pipeline::new(active_config.clone(), lane_sem.clone())
+                                            .with_flush_callbacks(
+                                                Arc::new({
+                                                    let flush_desc = flush_desc.clone();
+                                                    move |flush_sid: &str| {
+                                                        crate::queue_update_or_insert(
+                                                            flush_sid,
+                                                            "Waiting",
+                                                            0.0,
+                                                            &flush_desc,
+                                                        );
+                                                    }
+                                                }),
+                                                Arc::new(|flush_sid: &str| {
+                                                    crate::queue_update_or_insert(
+                                                        flush_sid,
+                                                        "Executing",
+                                                        0.0,
+                                                        "",
+                                                    );
+                                                }),
+                                                Arc::new(|flush_sid: &str| {
+                                                    crate::queue_remove(flush_sid);
+                                                }),
+                                            );
                                     // ProgressReporter（進捗表示とタイピング）のセットアップ
                                     let is_user_channel = !session_id.starts_with("cron")
                                         && channel_id.parse::<u64>().is_ok();
@@ -970,7 +979,9 @@ fn inject_vault_to_env() {
             }
             tracing::info!("vault: {} キーを環境変数に注入済み", count);
         }
-        Err(e) => tracing::warn!("vault 読み込みスキップ (ctx_execute スクリプトは vault キー未解決): {e}"),
+        Err(e) => tracing::warn!(
+            "vault 読み込みスキップ (ctx_execute スクリプトは vault キー未解決): {e}"
+        ),
     }
 }
 

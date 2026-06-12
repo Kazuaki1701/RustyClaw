@@ -96,7 +96,11 @@ impl CronService {
         db_path: std::path::PathBuf,
         workspace_path: std::path::PathBuf,
     ) -> Self {
-        Self { bus, db_path, workspace_path }
+        Self {
+            bus,
+            db_path,
+            workspace_path,
+        }
     }
 
     pub fn start(self) {
@@ -443,7 +447,10 @@ impl CronService {
                 return;
             }
 
-            tracing::info!("CronService: Starting HA snapshot polling (script: {:?})", script_path);
+            tracing::info!(
+                "CronService: Starting HA snapshot polling (script: {:?})",
+                script_path
+            );
 
             let mut last_spike_heartbeat: Option<tokio::time::Instant> = None;
 

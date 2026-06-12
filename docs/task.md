@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-12（Phase 51-1 完了。v0.4 残課題: Context 最適化・Dashboard 改善）  
+> **最終更新日**: 2026-06-13（Phase 51-2 完了。v0.4 残課題: Context 最適化・Dashboard 改善）  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
 > **最新アーカイブ**: [2026-06-11-completed-phases-45-1-28b3-47-1-48-1.md](archive/tasks/2026-06-11-completed-phases-45-1-28b3-47-1-48-1.md) (Phase 45-1, 28b-3, 47-1, 48-1)  
 > **将来課題の管理**: 未着手の将来課題は [`docs/specs/v0.3/`](specs/v0.3/) 各仕様ファイルの「将来拡張」節で管理しています。
@@ -10,6 +10,10 @@
 ---
 
 ## 優先課題
+
+- [x] **Phase 51-2: LANE QUEUE Memory Flush 可視化**（完了 2026-06-13）  
+  memory flush と Session Summary の LLM 実行を LANE QUEUE に表示。  
+  コールバック注入（Option A）: Pipeline.with_flush_callbacks() + SERVICE_BADGES 追加。
 
 - [x] **Phase 51-1: LLM config 制限の適切な適用**（完了 2026-06-12）  
   `LlmConfig` に定義された各種制限をパイプライン全体で正しく参照・適用する。

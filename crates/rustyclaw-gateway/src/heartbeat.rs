@@ -550,10 +550,17 @@ impl HeartbeatService {
     /// - ファイルが存在し非空 → Some(trimmed_content)
     /// - ファイルが存在しないか空 → None
     pub fn get_ha_env_context(&self) -> Option<String> {
-        let path = self.workspace_path.join("memory").join("ha-env-summary.txt");
+        let path = self
+            .workspace_path
+            .join("memory")
+            .join("ha-env-summary.txt");
         let content = fs::read_to_string(&path).ok()?;
         let trimmed = content.trim().to_string();
-        if trimmed.is_empty() { None } else { Some(trimmed) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     }
 
     /// HA スパイク検出チェック (memory/ha-state.json)
