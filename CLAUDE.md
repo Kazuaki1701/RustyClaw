@@ -1,8 +1,8 @@
-# RustyClaw — Claude Code 開発ルール
+# RustyClaw — AI エージェント開発ルール
 
-## 開発コマンド (Claude Code 専用)
+## 開発コマンド (AI エージェント専用)
 
-Claude Code が直接実行するための基本コマンドです。
+AI エージェントが直接実行するための基本コマンドです。
 
 - **ビルド**: `cargo build`
 - **テスト実行**: `TZ=UTC cargo test --all-features --workspace`
@@ -24,7 +24,7 @@ Claude Code が直接実行するための基本コマンドです。
 実装・コミット・ADR 起票の前に以下の 2 ファイルを必ず参照してください。
 
 - **`ai-rules.md`** — Git・コミット・ドキュメント管理・ADR の共通ルール（Workflow 全体）
-- **`docs/README.md` Section 7** — このプロジェクトの案件管理番号形式とコミット例
+- **`docs/README.md` §7 (Git・ドキュメント管理・ADR 運用ルール)** — このプロジェクトの案件管理番号形式とコミット例
 
 このプロジェクトの案件管理番号: `Phase XX-Y`（機能実装）/ `ISSUE-XX`（バグ・保留課題）
 
