@@ -14,13 +14,17 @@
   - **内容**: `HeartbeatToolWrapper` において、`web_fetch`, `workspace_read`, `ctx_execute`/`ctx_execute_file` の出力が 3,000 バイトを超えた際に、常駐する `context-mode` の FTS/検索機能等をプログラムから呼び出し、重要な情報のみにフィルタ・自動濃縮して LLM に還流する。
   - **関連設計書**: [docs/plans/2026-06-13-ctx-execute-file-design.md](plans/2026-06-13-ctx-execute-file-design.md)
 
+- [ ] **Phase 52-9: context-mode 連携による日またぎウォームスタートの実装**
+  - **目的**: 日付変更時（セッション初期化）に会話履歴がクリアされ、昨日のデバッグ状況やタスク進捗を忘却する「コールドスタート問題」を解消する。
+  - **内容**: 前日最終の `session_guide` (XML) を `context-mode index` で FTS5 データベースに永続化し、新日初回起動時に `context-mode search` 経由で取得して [build_system_context](file:///home/kazuaki/Projects/RustyClaw/crates/rustyclaw-agent/src/lib.rs#L506) でシステムコンテキストに自動マウントする。
+  - **関連設計書**: [docs/plans/2026-06-13-precompact-sessionstart-validation.md](plans/2026-06-13-precompact-sessionstart-validation.md)
+
 ## 将来課題（低優先度）
 
 - [ ] **v0.5: 純 Rust 単一バイナリ**: `rustyclaw-context-mode` crate に EmbeddedKnowledgeBase + InProcessPatchMerger + SecureSandboxExecutor を実装
   - **再検討**: `SecureSandboxExecutor` 実装時に vault の per-call 解決（v0.3 相当）を導入。現在は起動時一括注入（Phase 49-2）だが、v0.5 では Rust が実行主体になるため `env: {"KEY": "$vault:key"}` 形式で最小限注入が自然に実現できる。
 - [ ] **コンテキスト最適化計画**: 外部 MCP `context-mode` の未使用機能を活用したコンテキスト削減・意味濃縮計画。詳細は [docs/plans/2026-06-13-context-optimization-proposal.md](plans/2026-06-13-context-optimization-proposal.md) 参照。
 - [ ] **ctx_execute_file ストリーム抽出設計**: 巨大ログ・AST・CSVデータのインメモリフィルタによるコンテキスト削減設計。詳細は [docs/plans/2026-06-13-ctx-execute-file-design.md](plans/2026-06-13-ctx-execute-file-design.md) 参照。
-- [ ] **PreCompact / SessionStart 検証計画**: コンパクション時の記憶ロストを防ぐ状態スナップショット伝播の検証。詳細は [docs/plans/2026-06-13-precompact-sessionstart-validation.md](plans/2026-06-13-precompact-sessionstart-validation.md) 参照。
 
 ### v0.6 案件
 
