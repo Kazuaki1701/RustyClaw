@@ -31,7 +31,6 @@
 - [x] **ctx_search の sort 戦略を用途別に分離**（完了: 2026-06-13, Phase 52-7）: 現在 `try_ctx_search` は常に `sort=timeline`（時系列順）固定だが、バイタル相関検索（`extract_vital_alert_query`）では `sort=relevance` の方が過去の類似エピソードを正確に引けるため、sort を引数化して用途に応じて切り替えられるようにする。対象: `crates/rustyclaw-gateway/src/lib.rs` の `try_ctx_search` 関数。
 - [x] **reindex_memory_after_flush の誤「完了」ログ修正**（完了: 2026-06-13, Phase 52-7）: 全 `ctx_index` 呼び出しが失敗した場合でも「N チャンク再インデックス完了」と `info` ログが出る。成功カウンタを別途保持し、失敗件数を `warn` で出力するよう修正する。対象: `crates/rustyclaw-agent/src/lib.rs` の `reindex_memory_after_flush`。
 - [x] **agent 側 ctx_index 失敗ログを warn に統一**（完了: 2026-06-13, Phase 52-7）: `reindex_memory_after_flush` 内の `ctx_index` 失敗が `debug` レベルで記録されており、本番ログでは不可視。gateway 側の `try_ctx_index`（`warn` レベル）と統一する。対象: `crates/rustyclaw-agent/src/lib.rs:1856` 付近。
-- [ ] **Phase 52-5b: ctx_patch 部分メモリ書き換え**: Memory Flush 時に LLM がメモリ全文を出力するのを禁止し、変更セクションのみを XML タグ形式で出力させて `ctx_patch` で部分書き換えする。Phase 52-5 で除外したスコープ。
 
 ### v0.4 残課題（`docs/specs/v0.4/` 精査 — 2026-06-12）
 
