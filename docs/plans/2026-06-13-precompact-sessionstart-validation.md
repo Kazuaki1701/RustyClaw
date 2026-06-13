@@ -51,7 +51,30 @@
 
 ---
 
-## 3. スナップショット (Session Guide) のプロトタイプ
+## 3. LLM Request 時のコンテキスト構築における統合・活用シーン
+LLM への PromptRequest を組み立てる「コンテキスト構築フェーズ」において、状態スナップショット（XML）は以下のように動的かつセキュアに注入・活用されます。
+
+### 3.1 活用シーン①：Chat対話での System Preamble への動的注入
+- **コードパス**: `rustyclaw-agent` 内の [build_system_context](file:///home/kazuaki/Projects/RustyClaw/crates/rustyclaw-agent/src/lib.rs#L506)
+- **仕組み**: 
+  - ユーザーメッセージを受け取って LLM Request を組み立てる際、セッション履歴に紐づく最新の `session_guide` (XML) が存在すれば、それを `USER.md` や `SOUL.md` と並列のシステムプロンプトヘッダーとして動的にインジェクションします。
+  - これにより、メッセージ履歴（`rig_history`）を直近 2〜3 ターンに極限まで削減しても、合意事項や残タスクを完璧に維持したリクエストを構成できます。
+
+### 3.2 活用シーン②：Heartbeat パトロール中の「調査コンテキスト」の伝播
+- **コードパス**: `rustyclaw-agent` 内の [build_heartbeat_context](file:///home/kazuaki/Projects/RustyClaw/crates/rustyclaw-agent/src/lib.rs#L1007) および [execute_heartbeat](file:///home/kazuaki/Projects/RustyClaw/crates/rustyclaw-agent/src/lib.rs#L1033) のループ処理
+- **仕組み**:
+  - 監視タスクでは、ログやデバイス状態を取得するツール出力が大量に発生します。これらが 3,000 バイトを超えコンパクションされた際、ラッパーレベルで「どのチェックが正常終了したか」という状態スナップショットを生成します。
+  - 次のループ実行時の `preamble` にこのスナップショットを注入することで、LLM は「前回のループでDB接続とConfigは確認済みである」という知識を最初から持った状態で、無駄な検証を繰り返すことなく動作できます。
+
+### 3.3 活用シーン③：RAG クエリ抽出の「文脈キーワード」としての利用
+- **コードパス**: `rustyclaw-agent` 内の RAG 検索クエリ構築 ([build_heartbeat_rag_query](file:///home/kazuaki/Projects/RustyClaw/crates/rustyclaw-agent/src/lib.rs#L144) 等)
+- **仕組み**:
+  - 単純に直近のメッセージだけで RAG を引くと、前後の文脈が抜けてノイズの多い類似箇所がヒットし、コンテキスト枠を無駄に埋めてしまいます。
+  - `session_guide` にある `current_goal` や `resolved_errors`（エラーIDなど）をクエリキーワードとして自動合成して RAG を引くことで、現在のタスクに 100% 直結した過去記憶（例：「3日前に同様の接続エラーを解消した時のログ」など）だけをピンポイントで引き当て、コンテキスト構築の効率を最大化します。
+
+---
+
+## 4. スナップショット (Session Guide) のプロトタイプ
 コンパクション時に生成され、履歴の先頭（システムコンテキストの直後）にインジェクションされる XML 構造体のプロトタイプです。
 
 ```xml
@@ -85,7 +108,7 @@
 
 ---
 
-## 4. 期待される効果 (定量的シミュレーション)
+## 5. 期待される効果 (定量的シミュレーション)
 
 対話が 20 ターン（通常、コンパクションが 1〜2 回発生する長さ）継続した場合のコンテキスト削減と品質への影響予測：
 
@@ -98,7 +121,7 @@
 
 ---
 
-## 5. 実装ロードマップ（Phase 53-2）
+## 6. 実装ロードマップ（Phase 53-2）
 
 1. **Step 1 (Snapshot Extractor)**: 
    `rustyclaw-storage` に `PreCompact` ハンドラを実装。`compact_if_needed` が `true` を返す直前に、履歴内の全メッセージを `context-mode` のバックエンド LLM に送り、上記の XML スナップショットを生成するモジュールを追加する。
