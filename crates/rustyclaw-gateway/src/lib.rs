@@ -755,13 +755,31 @@ impl LaneRegistry {
                                             Err(e) => Err(e),
                                         }
                                     } else {
-                                        let run_purpose = if session_id == "cron:topic-patrol" {
+                                        let run_purpose = if session_id.contains("topic-patrol") {
                                             "patrol"
                                         } else {
                                             "discord"
                                         };
-                                        // USER.md Interests を ctx_search で動的取得（cron 以外のみ）
-                                        let user_interests_extra: Option<String> = if !session_id.starts_with("cron:") {
+                                        // Interests 注入: patrol は USER.md 直読み + 固定フィード事前フェッチ、
+                                        //                 通常 chat は ctx_search で動的取得、その他 cron は None
+                                        let user_interests_extra: Option<String> = if session_id.contains("topic-patrol") {
+                                            // USER.md から Interests を直接読み込み
+                                            let interests_opt = std::fs::read_to_string(workspace_path.join("USER.md"))
+                                                .ok()
+                                                .map(|c| extract_interests_section(&c))
+                                                .filter(|s| !s.is_empty());
+
+                                            // 固定 RSS/Web フィードを ctx_fetch_and_index で事前インデックス登録
+                                            if let Some(ref interests_text) = interests_opt {
+                                                for url in extract_patrol_feed_urls(interests_text) {
+                                                    tracing::info!("Topic Patrol: ctx_fetch_and_index: {}", url);
+                                                    try_ctx_fetch_and_index(&tool_server_handle, &url).await;
+                                                }
+                                            }
+
+                                            interests_opt.map(|i| format!("\n\n# User Interests\n{}", i))
+                                        } else if !session_id.starts_with("cron:") {
+                                            // 通常 chat: ctx_search で動的取得
                                             let query = format!("{} user interests hobbies", content);
                                             try_ctx_search(&tool_server_handle, &query)
                                                 .await
@@ -1093,6 +1111,23 @@ async fn try_ctx_index(
     }
 }
 
+/// ctx_fetch_and_index を呼び出す。context-mode が未接続の場合は None を返す（fail-open）。
+/// 指定 URL の HTML コンテンツを Markdown に変換し、SQLite FTS5 にインデックス登録する。
+async fn try_ctx_fetch_and_index(
+    handle: &rig_core::tool::server::ToolServerHandle,
+    url: &str,
+) -> Option<String> {
+    let args = serde_json::json!({ "url": url }).to_string();
+    match handle.call_tool("ctx_fetch_and_index", &args).await {
+        Ok(result) if !result.trim().is_empty() => Some(result),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::debug!("ctx_fetch_and_index 呼び出し失敗 (url={}): {}", url, e);
+            None
+        }
+    }
+}
+
 static SKILL_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"\[skill:([a-z][a-z0-9-]*)\]").unwrap()
 });
@@ -1151,6 +1186,29 @@ fn extract_interests_section(content: &str) -> String {
         }
     }
     lines.join("\n")
+}
+
+/// USER.md Interests の sources: 行から HTTP/HTTPS URL のみを抽出する。
+/// HN, Reddit, github: ショートカットは除外する（動的検索は事前フェッチ不可のため）。
+fn extract_patrol_feed_urls(interests: &str) -> Vec<String> {
+    interests
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let value = if let Some(v) = trimmed.strip_prefix("sources: ") {
+                v
+            } else if let Some(v) = trimmed.strip_prefix("sources:") {
+                v.trim()
+            } else {
+                return None;
+            };
+            if value.starts_with("http://") || value.starts_with("https://") {
+                Some(value.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// 起動時に USER.md の Interests セクションを context-mode にインデックス登録する。
@@ -1795,6 +1853,22 @@ mod tests {
 
         handle.abort();
         Ok(())
+    }
+
+    #[test]
+    fn test_extract_patrol_feed_urls_http_only() {
+        let interests = "- AI Agent\n  sources: HN\n- Cloudflare\n  sources: https://blog.cloudflare.com\n- GitHub Rust\n  sources: github:rust-lang/rust\n- RSS feed\n  sources: https://example.com/feed.xml\n- Reddit\n  sources: Reddit/r/rust";
+        let urls = extract_patrol_feed_urls(interests);
+        assert_eq!(urls.len(), 2, "HTTP(S) URL が 2 件抽出されること: {:?}", urls);
+        assert!(urls.contains(&"https://blog.cloudflare.com".to_string()));
+        assert!(urls.contains(&"https://example.com/feed.xml".to_string()));
+    }
+
+    #[test]
+    fn test_extract_patrol_feed_urls_empty_when_no_http() {
+        let interests = "- AI Agent\n  sources: HN\n- GitHub\n  sources: github:rust-lang/rust";
+        let urls = extract_patrol_feed_urls(interests);
+        assert!(urls.is_empty(), "HTTP URL がない場合は空であること");
     }
 
     #[test]

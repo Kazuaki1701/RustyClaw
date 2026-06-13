@@ -1436,7 +1436,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         // システムプロンプトと RAG コンテキストの構築
         let cw = self.config.get_model(purpose).context_window_tokens;
-        let mut system_context = self.build_system_context(workspace_dir, cw)?;
+        let mut system_context = if purpose == "patrol" {
+            build_patrol_context()
+        } else {
+            self.build_system_context(workspace_dir, cw)?
+        };
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -1799,6 +1803,12 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         Ok(Box::pin(wrapped_stream))
     }
+}
+
+/// Topic Patrol 専用の極小システムコンテキストを構築する。
+/// SOUL.md や USER.md 全文は読まない。USER.md Interests は gateway から extra_system_context で渡される。
+fn build_patrol_context() -> String {
+    "You are a topic patrol agent. Find and summarize interesting news based on the user's interests provided below.\n".to_string()
 }
 
 /// MEMORY.md のバレット行を 1件 1チャンクに分割する。
@@ -3685,5 +3695,28 @@ mod tests_karakeep {
         let summary = parsed["bookmarks"][0]["summary"].as_str().unwrap();
         assert!(summary.chars().count() <= 202, "summary がトリミングされること");
         assert!(summary.ends_with('…'));
+    }
+}
+
+#[cfg(test)]
+mod tests_patrol {
+    use super::*;
+
+    #[test]
+    fn test_build_patrol_context_excludes_soul_and_user_md() {
+        let ctx = build_patrol_context();
+        assert!(
+            !ctx.to_lowercase().contains("soul"),
+            "SOUL.md は patrol コンテキストに含まれないこと"
+        );
+        assert!(
+            !ctx.to_lowercase().contains("# user"),
+            "USER.md 全文は patrol コンテキストに含まれないこと"
+        );
+        assert!(
+            ctx.contains("patrol") || ctx.contains("agent"),
+            "patrol の目的が含まれること: {:?}",
+            ctx
+        );
     }
 }
