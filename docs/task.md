@@ -7,6 +7,13 @@
 > **最新アーカイブ**: [2026-06-13-completed-phase52-all.md](archive/tasks/2026-06-13-completed-phase52-all.md) (Phase 52-1〜52-7 Context 最適化・reindexログ・エピソード記憶連携)  
 > **将来課題の管理**: 未着手の将来課題は [`docs/specs/v0.4/`](specs/v0.4/) 各仕様ファイルの「将来拡張」節で管理しています。
 
+## 優先対応案件
+
+- [ ] **Phase 52-8: rustyclaw-agent 側でのストリーム抽出自動圧縮の実装**
+  - **目的**: Gmail等の大容量ツール出力が 3,000 バイト制限（強制切り詰め）で情報欠損（Silent Fail）するのを防ぐため、ラッパーレベルで自動濃縮を行う。
+  - **内容**: `HeartbeatToolWrapper` において、`web_fetch`, `workspace_read`, `ctx_execute`/`ctx_execute_file` の出力が 3,000 バイトを超えた際に、常駐する `context-mode` の FTS/検索機能等をプログラムから呼び出し、重要な情報のみにフィルタ・自動濃縮して LLM に還流する。
+  - **関連設計書**: [docs/plans/2026-06-13-ctx-execute-file-design.md](plans/2026-06-13-ctx-execute-file-design.md)
+
 ## 将来課題（低優先度）
 
 - [ ] **v0.5: 純 Rust 単一バイナリ**: `rustyclaw-context-mode` crate に EmbeddedKnowledgeBase + InProcessPatchMerger + SecureSandboxExecutor を実装
