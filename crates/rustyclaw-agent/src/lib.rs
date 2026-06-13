@@ -168,11 +168,20 @@ async fn run_confirmation_gate(tool_name: &str, args: &str, workspace_dir: &Path
 struct HeartbeatToolWrapper {
     inner: Arc<dyn rig_core::tool::ToolDyn>,
     db_path: PathBuf,
+    tool_handle: Option<rig_core::tool::server::ToolServerHandle>,
 }
 
 impl HeartbeatToolWrapper {
-    fn new(inner: Arc<dyn rig_core::tool::ToolDyn>, db_path: PathBuf) -> Self {
-        Self { inner, db_path }
+    fn new(
+        inner: Arc<dyn rig_core::tool::ToolDyn>,
+        db_path: PathBuf,
+        tool_handle: Option<rig_core::tool::server::ToolServerHandle>,
+    ) -> Self {
+        Self {
+            inner,
+            db_path,
+            tool_handle,
+        }
     }
 }
 
@@ -201,7 +210,37 @@ impl rig_core::tool::ToolDyn for HeartbeatToolWrapper {
                 tool_content = filter_seen_tool_result(&tool_name, &args, &tool_content, &db);
             }
 
-            tool_content = truncate_70_20(&tool_content, 3_000);
+            if tool_content.len() > 3_000 {
+                if let Some(handle) = &self.tool_handle {
+                    let source = format!("heartbeat-tool:{}", tool_name);
+                    let index_args = serde_json::json!({
+                        "content": &tool_content,
+                        "source": &source
+                    })
+                    .to_string();
+                    if handle.call_tool("ctx_index", &index_args).await.is_ok() {
+                        let search_args = serde_json::json!({
+                            "queries": [&tool_name],
+                            "sort": "timeline",
+                            "limit": 3
+                        })
+                        .to_string();
+                        if let Ok(condensed) = handle.call_tool("ctx_search", &search_args).await {
+                            if !condensed.trim().is_empty() {
+                                tool_content = condensed;
+                            } else {
+                                tool_content = truncate_70_20(&tool_content, 3_000);
+                            }
+                        } else {
+                            tool_content = truncate_70_20(&tool_content, 3_000);
+                        }
+                    } else {
+                        tool_content = truncate_70_20(&tool_content, 3_000);
+                    }
+                } else {
+                    tool_content = truncate_70_20(&tool_content, 3_000);
+                }
+            }
 
             Ok(tool_content)
         })
@@ -1053,6 +1092,7 @@ Rules:
         user_message: &str,
         tool_registry: &ToolRegistry,
         db_path: &Path,
+        tool_handle: Option<rig_core::tool::server::ToolServerHandle>,
     ) -> Result<LlmResponse> {
         let mut system_context = self.build_heartbeat_context(workspace_dir)?;
         let now = chrono::Local::now();
@@ -1078,7 +1118,8 @@ Rules:
 
         let mut wrapped_tools: Vec<Box<dyn rig_core::tool::ToolDyn>> = Vec::new();
         for (_, tool) in tool_registry.iter() {
-            let wrapped = HeartbeatToolWrapper::new(tool.clone(), db_path.to_path_buf());
+            let wrapped =
+                HeartbeatToolWrapper::new(tool.clone(), db_path.to_path_buf(), tool_handle.clone());
             wrapped_tools.push(Box::new(wrapped));
         }
 
