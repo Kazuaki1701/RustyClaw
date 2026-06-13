@@ -14,10 +14,10 @@
   - [x] 同一機能の外部スクリプト（Home Assistant）を `ha-control.sh` に集約（SKILL.md トークン ~60% 削減）。
   - [x] 会話履歴からの一時的なノイズ（進捗バー等）を削る `cleanse_for_memory_flush()` 関数の実装。
   - [x] 外部ツール（Gmail snippet / Calendar location）を 200 文字以内に切り詰める `truncate_tool_item_fields()` の実装。
-- [ ] **【Phase 52-2】用途別最適化 - Heartbeat（自動巡回監視）の実装**:
-  - [ ] Heartbeat 構築時の人格設定（`SOUL.md`）、ユーザー背景（`USER.md`）、会話履歴の除外処理の実装。
-  - [ ] 監視に特化した最小限のツール公開（Skillsのフィルタリング）の実装。
-  - [ ] ログ監視における `ctx_execute` / `ctx_execute_file` による前処理要約・フィルタリングの徹底。
+- [x] **【Phase 52-2】用途別最適化 - Heartbeat（自動巡回監視）の実装**（完了: 2026-06-13）:
+  - [x] `build_heartbeat_context` から `SOUL.md` を除外（HEARTBEAT.md のみに限定）。
+  - [x] Heartbeat 専用 `ToolRegistry` から `WorkspaceWriteTool` を除外（書き込みリスク排除）。
+  - [x] `ctx_execute` 利用は HEARTBEAT.md 既存指示（Calendar/Gmail）で対応済み。
 - [ ] **【Phase 52-3】用途別最適化 - Chat（ユーザー対話）の実装**:
   - [ ] `ctx_search` を用いた動的スキル選択（Dynamic Skill Selection）機能の実装。
   - [ ] `USER.md` 興味関心（Interests）を RAG で動的注入する機能の実装。

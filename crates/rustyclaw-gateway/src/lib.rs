@@ -1220,7 +1220,8 @@ impl Gateway {
                 self.workspace_path.clone(),
                 preview_base_url.clone(),
             );
-            tool_registry.register(Arc::new(t.clone()) as Arc<dyn rig_core::tool::ToolDyn>);
+            // Heartbeat には書き込みツールを公開しない（読み取りと通知のみ許可）。
+            // Chat 用 tool_server_handle には引き続き登録する。
             tool_server_handle.add_tool(t).await.ok();
         }
         tracing::info!("Registered Workspace I/O tools.");

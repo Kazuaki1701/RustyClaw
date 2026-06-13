@@ -986,11 +986,12 @@ Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
         Ok(())
     }
 
-    /// Heartbeat 専用の軽量システムコンテキストを構築する（SOUL + HEARTBEAT のみ）。
+    /// Heartbeat 専用の軽量システムコンテキストを構築する（HEARTBEAT のみ）。
+    /// SOUL.md（キャラクター設定）は監視タスクに不要なため除外（Phase 52-2）。
     /// MEMORY.md は RAG 経由で関連チャンクのみを動的注入する（ISSUE-28）。
     /// 静的ファイルのみを返す。動的な [now:] は呼び出し元 execute_heartbeat で追加する。
     pub fn build_heartbeat_context(&self, workspace_dir: &Path) -> Result<String> {
-        let files = ["SOUL.md", "HEARTBEAT.md"];
+        let files = ["HEARTBEAT.md"];
         let mut context = String::new();
         for filename in &files {
             let path = workspace_dir.join(filename);
@@ -3401,12 +3402,15 @@ Keep it short.\n\
         fs::write(ws.join("SOUL.md"), "# Soul").unwrap();
         fs::write(ws.join("HEARTBEAT.md"), "# Heartbeat").unwrap();
 
-        // build_heartbeat_context のファイルリストを再現
-        let files: &[&str] = &["SOUL.md", "HEARTBEAT.md"]; // MEMORY.md を含まない
-        let contains_memory = files.contains(&"MEMORY.md");
+        // build_heartbeat_context のファイルリストを再現（Phase 52-2: SOUL.md も除外）
+        let files: &[&str] = &["HEARTBEAT.md"];
         assert!(
-            !contains_memory,
+            !files.contains(&"MEMORY.md"),
             "build_heartbeat_context は MEMORY.md を静的ロードしないべき"
+        );
+        assert!(
+            !files.contains(&"SOUL.md"),
+            "build_heartbeat_context は SOUL.md（キャラクター設定）を含まないべき"
         );
     }
 
@@ -3422,7 +3426,10 @@ Keep it short.\n\
         let pipeline = Pipeline::new(config, flush_sem);
         let context = pipeline.build_heartbeat_context(ws).unwrap();
 
-        assert!(context.contains("# SOUL.md"));
+        assert!(
+            !context.contains("# SOUL.md"),
+            "SOUL.md は Heartbeat コンテキストから除外されるべき（Phase 52-2）"
+        );
         assert!(context.contains("# HEARTBEAT.md"));
         assert!(
             !context.contains("[now: "),
