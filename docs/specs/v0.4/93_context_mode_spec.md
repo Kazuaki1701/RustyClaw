@@ -135,12 +135,20 @@ Claude Code は全 5 フックに対応（最もフルサポート）。
 | 機能 | 利用状況 | 備考 |
 |---|---|---|
 | `ctx_execute` | ✅ Heartbeat ToolRegistry に登録（LLM 自律実行） | bwrap サンドボックスで実行 |
-| `ctx_search` | ⚠️ Heartbeat のみ（`try_ctx_search`） | 通常チャットでは未使用（G1） |
-| `ctx_index` | ⚠️ cron 8 種完了後のみ（`try_ctx_index`） | ユーザーチャット未対応（G2） |
+| `ctx_search` | ✅ Chat・Heartbeat・Patrol 全目的で利用 | Dynamic Skill Selection・Memory RAG・エピソード相関検索（Phase 52） |
+| `ctx_index` | ✅ cron 完了後・MEMORY.md チャンク・daily-summary に利用 | フラッシュ後の再インデックスも対応（Phase 52） |
 | `ctx_patch` | ✅ Heartbeat ToolRegistry に登録 | LLM 自律利用 |
 | `ctx_batch_execute` | ❌ 未使用 | — |
 | `ctx_execute_file` | ❌ 未使用 | — |
-| `ctx_fetch_and_index` | ❌ 未使用 | — |
+| `ctx_fetch_and_index` | ✅ Topic Patrol で外部 URL 事前キャッシュに利用 | Phase 52-4 で追加 |
 | `ctx_stats` / `ctx_doctor` 等 | ❌ 未統合（Claude Code プラグインで利用可） | — |
+
+### Phase 52 完了内容（2026-06-13）
+
+- **Dynamic Skill Selection**: ユーザー発話で `ctx_search` し BM25 上位スキルのみ inject（cron 除外）
+- **Memory RAG**: MEMORY.md をセクション単位でチャンク分割し `ctx_index` 登録。チャット時は `ctx_search` で関連チャンクのみ動的注入
+- **Topic Patrol RAG**: `ctx_fetch_and_index` で外部 URL を事前キャッシュし、巡回時は必要部分のみ参照
+- **daily-summary エピソード記憶**: `cron:daily-summary` 完了後に `[daily-summary:{date}]` タグ付きで自動登録
+- **バイタル相関検索**: Heartbeat digest に睡眠・疲労キーワードが含まれる場合のみ過去の類似エピソードを注入
 
 **ギャップ詳細**: [`docs/adr/006-context-mode-integration-scope.md`](../adr/006-context-mode-integration-scope.md) を参照。

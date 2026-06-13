@@ -7,6 +7,8 @@
 
 | 完了日 | 対象フェーズ / ISSUE | アーカイブファイルへのリンク |
 | :--- | :--- | :--- |
+| 2026-06-13 | Phase 52-1〜52-6 Context 最適化・Memory RAG・エピソード記憶連携 | [2026-06-13-completed-phase52-all.md](2026-06-13-completed-phase52-all.md) |
+| 2026-06-13 | Phase 51-1, 51-2, v0.4 本番バックアップ | [2026-06-13-completed-phases-51-1-51-2.md](2026-06-13-completed-phases-51-1-51-2.md) |
 | 2026-06-11 | バグ修正: GWSカレンダー・UnknownToolCall / weather_yolp廃止・天気ハイブリッド化 (BUG-02, BUG-03) | [2026-06-11-completed-bugs-02-03.md](2026-06-11-completed-bugs-02-03.md) |
 | 2026-06-11 | Phase 44-1〜44-5 | [2026-06-11-completed-phase44-1-to-5.md](2026-06-11-completed-phase44-1-to-5.md) |
 | 2026-06-09 | バグ修正: calendar-ops.sh args / Dashboard Chat 応答タイミング | [2026-06-09-completed-bugs-calendar-args-dashboard-session.md](2026-06-09-completed-bugs-calendar-args-dashboard-session.md) |

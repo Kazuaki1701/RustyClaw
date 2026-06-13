@@ -3,7 +3,7 @@
 > [!NOTE]
 > **ステータス**: `[ACTIVE]`
 > **バージョン**: v0.4
-> **最終更新日**: 2026-06-12（Phase 01〜03, 28b-3, 45-1, 47-1, 48-1, 50, 51-1 実装完了。Context 最適化を v0.4 残課題として追加）
+> **最終更新日**: 2026-06-13（Phase 52-1〜52-6 実装完了。Phase 52 Context 最適化・Memory RAG・エピソード記憶連携が完了し v0.4 実装完了）
 > **対象コード**: `crates/` 全クレート + `context-mode` 外部 MCP サーバー
 > **前バージョン比較**: v0.3 からの変更点は §4 参照
 > **Upstream 比較**: [`../v0.3/91_upstream_comparison.md`](../v0.3/91_upstream_comparison.md) / [`91_context_upstream_comparison.md`](91_context_upstream_comparison.md)（context 管理特化）
@@ -186,8 +186,8 @@ rustyclaw-storage (削減版)
 | `RateLimiter`（rpm / tpm ソフトリミット）| `rustyclaw-agent/src/lib.rs` | per-model 60 秒窓。rpm 超過→スリープ、tpm 超過→warn ログ `[実装済]`（Phase 51-1） |
 | `get_history_message_limit()` トークン予算式 | `rustyclaw-agent/src/lib.rs` | `(cw × 65% / 350).clamp(min, 150)`。小コンテキスト（≤ 8192）は min=2 `[実装済]`（Phase 51-1） |
 | `build_system_context()` 小コンテキスト対応 | `rustyclaw-agent/src/lib.rs` | `context_window_tokens ≤ 8192` → SOUL.md のみ注入（USER.md・proactive-posts 省略）`[実装済]`（Phase 51-1） |
-| **Heartbeat Digest 生成** | `rustyclaw-gateway/src/heartbeat.rs` | Heartbeat 実行前に増分セッションダイジェストを生成し Heartbeat プロンプトに注入（GeminiClaw 参照実装あり）`[v0.4 残課題]` |
-| **Session-level Summary** | `rustyclaw-gateway` / `rustyclaw-agent` | アイドル 5 分後にセッションサマリーを生成し `try_ctx_index` でエピソード記憶に登録（GeminiClaw 参照実装あり）`[v0.4 残課題]` |
+| **Heartbeat Digest 生成** | `rustyclaw-gateway/src/heartbeat.rs` | Heartbeat 実行前に増分セッションダイジェストを生成し Heartbeat プロンプトに注入（GeminiClaw 参照実装あり）`[実装済]`（Phase 52-2） |
+| **Session-level Summary** | `rustyclaw-gateway` / `rustyclaw-agent` | アイドル 5 分後にセッションサマリーを生成し `try_ctx_index` でエピソード記憶に登録（GeminiClaw 参照実装あり）`[実装済]`（Phase 52-3） |
 | **ContextBuilder context window 対応** | `rustyclaw-agent/src/lib.rs` | 70/20/10 予算分割による本格的な token budget アセンブリ（v0.3 §5.3 参照）`[v0.4 残課題]`（Phase 51-1 で `get_history_message_limit` トークン予算式・小コンテキスト時プロンプト圧縮を先行実装済み） |
 
 #### try_ctx_search / try_ctx_index 概要
@@ -196,6 +196,18 @@ rustyclaw-storage (削減版)
 - **Session-summary**: `generate_session_summary()` 成功後に `try_ctx_index(content, source="session-summary:{id}")` でエピソード記憶に登録する
 - どちらも失敗時は `warn!` ログのみ。Pipeline/Heartbeat を停止しない（fail-open）
 - `tool_server_handle.call_tool(name, args_json)` を直接使用し、Agent Pipeline を経由しない
+
+#### Phase 52 完了内容（2026-06-13）
+
+| 機能 | 実装場所 | 概要 |
+|------|----------|------|
+| Dynamic Skill Selection | `rustyclaw-gateway/src/lib.rs` | ユーザー発話で `ctx_search` し BM25 上位スキルのみ inject（cron 除外）`[実装済]` |
+| Memory RAG（chunk_memory_md） | `rustyclaw-agent/src/lib.rs` + `rustyclaw-gateway/src/lib.rs` | MEMORY.md をセクション単位でチャンク分割し `ctx_index` 登録。チャット時は `ctx_search` で関連チャンクのみ動的注入 `[実装済]` |
+| Heartbeat 専用コンテキスト | `rustyclaw-gateway/src/lib.rs` | SOUL.md 除外・書き込みツール非公開の最小 Heartbeat コンテキスト `[実装済]` |
+| Topic Patrol RAG | `rustyclaw-gateway/src/lib.rs` | `ctx_fetch_and_index` で外部 URL を事前キャッシュし、巡回時は `ctx_search` で必要部分のみ参照 `[実装済]` |
+| daily-summary エピソード記憶 | `rustyclaw-gateway/src/lib.rs` | `cron:daily-summary` 完了後に `[daily-summary:{date}]` タグ付きで SQLite FTS5 に自動登録 `[実装済]` |
+| バイタル相関検索アドバイザリー | `rustyclaw-gateway/src/lib.rs` | Heartbeat digest に睡眠・疲労キーワードが含まれる場合のみ `ctx_search` で過去の類似エピソードを注入 `[実装済]` |
+| フラッシュ後メモリ再インデックス | `rustyclaw-agent/src/lib.rs` | `trigger_memory_flush_async` 完了後に MEMORY.md チャンクを再登録（`reindex_memory_after_flush`） `[実装済]` |
 
 ### 4.3 context-mode プロセス管理
 

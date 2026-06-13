@@ -1,7 +1,7 @@
 # Phase 52-2: 用途別最適化 - Heartbeat 実装計画書
 
 > [!NOTE]
-> **ステータス**: `[ACTIVE]` (実装準備中)
+> **ステータス**: `[DONE]` (完了: 2026-06-13)
 > **最終更新日**: 2026-06-13
 > **対象コード**: `crates/rustyclaw-agent/src/lib.rs`, `crates/rustyclaw-gateway/src/lib.rs`
 > **設計仕様書**: [`docs/specs/2026-06-13-phase52-context-optimization-design.md`](../specs/2026-06-13-phase52-context-optimization-design.md)
