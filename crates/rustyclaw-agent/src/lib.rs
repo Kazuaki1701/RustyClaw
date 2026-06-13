@@ -1845,18 +1845,29 @@ async fn reindex_memory_after_flush(
         }
     };
     let chunks = chunk_memory_md(&content);
-    let count = chunks.len();
+    let total = chunks.len();
+    let mut success: usize = 0;
     for (i, chunk) in chunks.iter().enumerate() {
         let args = serde_json::json!({
             "content": format!("[memory-chunk]\n{}", chunk),
             "source": format!("memory-chunk:{}", i)
         })
         .to_string();
-        if let Err(e) = handle.call_tool("ctx_index", &args).await {
-            tracing::debug!("reindex_memory: ctx_index 失敗（fail-open）: {}", e);
+        match handle.call_tool("ctx_index", &args).await {
+            Ok(_) => success += 1,
+            Err(e) => tracing::warn!("reindex_memory: ctx_index 失敗（fail-open）: {}", e),
         }
     }
-    tracing::info!("memory flush: {} チャンク再インデックス完了", count);
+    if success == total {
+        tracing::info!("memory flush: {}/{} チャンク再インデックス完了", success, total);
+    } else {
+        tracing::warn!(
+            "memory flush: 再インデックス {}/{} チャンク成功（{} 件失敗）",
+            success,
+            total,
+            total - success,
+        );
+    }
 }
 
 /// MEMORY.md のバレット行を 1件 1チャンクに分割する。
@@ -3770,5 +3781,15 @@ mod tests_patrol {
             "patrol の目的が含まれること: {:?}",
             ctx
         );
+    }
+
+    #[tokio::test]
+    async fn test_reindex_memory_after_flush_no_panic_on_missing_file() {
+        // MEMORY.md が存在しない状態でもパニックしないこと（fail-open）
+        let dir = tempfile::tempdir().unwrap();
+        let server = rig_core::tool::server::ToolServer::new();
+        let handle = server.run();
+        reindex_memory_after_flush(dir.path(), &handle).await;
+        // パニックしなければ OK
     }
 }
