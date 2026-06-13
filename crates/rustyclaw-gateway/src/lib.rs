@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rustyclaw_agent::{Pipeline, build_heartbeat_rag_query};
+use rustyclaw_agent::{Pipeline, build_heartbeat_rag_query, chunk_memory_md};
 use rustyclaw_channels::{Channel, DiscordConnector};
 use rustyclaw_config::Config;
 use std::collections::HashMap;
@@ -705,21 +705,23 @@ impl LaneRegistry {
                                     });
 
                                     // ctx_search でスキルを動的選択（cron セッション以外のみ）
-                                    let ctx_skill_names: Option<Vec<String>> = if !session_id.starts_with("cron:") {
-                                        try_ctx_search(&tool_server_handle, &content)
-                                            .await
-                                            .map(|ctx| parse_skill_names_from_ctx(&ctx))
-                                            .filter(|names| !names.is_empty())
-                                    } else {
-                                        None
-                                    };
+                                    let ctx_skill_names: Option<Vec<String>> =
+                                        if !session_id.starts_with("cron:") {
+                                            try_ctx_search(&tool_server_handle, &content)
+                                                .await
+                                                .map(|ctx| parse_skill_names_from_ctx(&ctx))
+                                                .filter(|names| !names.is_empty())
+                                        } else {
+                                            None
+                                        };
 
                                     // スキルファイル注入（ctx_search 結果のスキルのみ Activation、Discovery は全件）
-                                    let injected_content = crate::skills::inject_skill_content_with_filter(
-                                        &workspace_path,
-                                        &content,
-                                        ctx_skill_names.as_deref(),
-                                    );
+                                    let injected_content =
+                                        crate::skills::inject_skill_content_with_filter(
+                                            &workspace_path,
+                                            &content,
+                                            ctx_skill_names.as_deref(),
+                                        );
                                     let exec_res = if let Some(target_session_id) =
                                         session_id.strip_prefix("cron:session-summary:")
                                     {
@@ -762,32 +764,70 @@ impl LaneRegistry {
                                         };
                                         // Interests 注入: patrol は USER.md 直読み + 固定フィード事前フェッチ、
                                         //                 通常 chat は ctx_search で動的取得、その他 cron は None
-                                        let user_interests_extra: Option<String> = if session_id.contains("topic-patrol") {
+                                        let user_interests_extra: Option<String> = if session_id
+                                            .contains("topic-patrol")
+                                        {
                                             // USER.md から Interests を直接読み込み
-                                            let interests_opt = std::fs::read_to_string(workspace_path.join("USER.md"))
-                                                .ok()
-                                                .map(|c| extract_interests_section(&c))
-                                                .filter(|s| !s.is_empty());
+                                            let interests_opt = std::fs::read_to_string(
+                                                workspace_path.join("USER.md"),
+                                            )
+                                            .ok()
+                                            .map(|c| extract_interests_section(&c))
+                                            .filter(|s| !s.is_empty());
 
                                             // 固定 RSS/Web フィードを ctx_fetch_and_index で事前インデックス登録
                                             if let Some(ref interests_text) = interests_opt {
-                                                for url in extract_patrol_feed_urls(interests_text) {
-                                                    tracing::info!("Topic Patrol: ctx_fetch_and_index: {}", url);
-                                                    try_ctx_fetch_and_index(&tool_server_handle, &url).await;
+                                                for url in extract_patrol_feed_urls(interests_text)
+                                                {
+                                                    tracing::info!(
+                                                        "Topic Patrol: ctx_fetch_and_index: {}",
+                                                        url
+                                                    );
+                                                    try_ctx_fetch_and_index(
+                                                        &tool_server_handle,
+                                                        &url,
+                                                    )
+                                                    .await;
                                                 }
                                             }
 
-                                            interests_opt.map(|i| format!("\n\n# User Interests\n{}", i))
+                                            interests_opt
+                                                .map(|i| format!("\n\n# User Interests\n{}", i))
                                         } else if !session_id.starts_with("cron:") {
                                             // 通常 chat: ctx_search で動的取得
-                                            let query = format!("{} user interests hobbies", content);
+                                            let query =
+                                                format!("{} user interests hobbies", content);
                                             try_ctx_search(&tool_server_handle, &query)
                                                 .await
                                                 .filter(|r| r.contains("[user-interests]"))
-                                                .map(|r| format!("\n\n# Relevant User Interests\n{}", r))
+                                                .map(|r| {
+                                                    format!("\n\n# Relevant User Interests\n{}", r)
+                                                })
                                         } else {
                                             None
                                         };
+
+                                        // 関連メモリを ctx_search で動的取得（cron 以外のみ）
+                                        let memory_extra: Option<String> = if !session_id
+                                            .starts_with("cron:")
+                                        {
+                                            try_ctx_search(&tool_server_handle, &content)
+                                                .await
+                                                .filter(|r| r.contains("[memory-chunk]"))
+                                                .map(|r| format!("\n\n# Relevant Memory\n{}", r))
+                                        } else {
+                                            None
+                                        };
+
+                                        // user_interests_extra と memory_extra を結合して extra_system_context を構築
+                                        let extra_system_context: Option<String> =
+                                            match (user_interests_extra, memory_extra) {
+                                                (Some(u), Some(m)) => Some(format!("{}{}", u, m)),
+                                                (Some(u), None) => Some(u),
+                                                (None, Some(m)) => Some(m),
+                                                (None, None) => None,
+                                            };
+
                                         pipeline
                                             .execute_with_rig_agent(
                                                 &workspace_path,
@@ -797,7 +837,7 @@ impl LaneRegistry {
                                                 tool_server_handle.clone(),
                                                 run_purpose,
                                                 progress_tx_opt,
-                                                user_interests_extra,
+                                                extra_system_context,
                                             )
                                             .await
                                     };
@@ -1128,9 +1168,8 @@ async fn try_ctx_fetch_and_index(
     }
 }
 
-static SKILL_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"\[skill:([a-z][a-z0-9-]*)\]").unwrap()
-});
+static SKILL_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\[skill:([a-z][a-z0-9-]*)\]").unwrap());
 
 /// ctx_search の返却テキストから [skill:NAME] パターンを抽出してスキル名リストに変換する。
 fn parse_skill_names_from_ctx(ctx: &str) -> Vec<String> {
@@ -1221,7 +1260,10 @@ async fn index_user_interests(
     let content = match std::fs::read_to_string(&user_md_path) {
         Ok(c) => c,
         Err(e) => {
-            tracing::warn!("USER.md 読み込み失敗（Interests インデックス登録スキップ）: {}", e);
+            tracing::warn!(
+                "USER.md 読み込み失敗（Interests インデックス登録スキップ）: {}",
+                e
+            );
             return;
         }
     };
@@ -1233,6 +1275,33 @@ async fn index_user_interests(
     let indexed = format!("[user-interests]\n{}", interests);
     try_ctx_index(handle, &indexed, "user-interests").await;
     tracing::info!("context-mode: USER.md Interests インデックス登録完了");
+}
+
+async fn index_memory_to_context_mode(
+    workspace_path: &Path,
+    handle: &rig_core::tool::server::ToolServerHandle,
+) {
+    let memory_path = workspace_path.join("MEMORY.md");
+    let content = match std::fs::read_to_string(&memory_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("MEMORY.md 読み込み失敗（インデックス登録スキップ）: {}", e);
+            return;
+        }
+    };
+    let chunks = chunk_memory_md(&content);
+    if chunks.is_empty() {
+        tracing::info!("MEMORY.md にチャンクが見つからないためスキップ");
+        return;
+    }
+    for (i, chunk) in chunks.iter().enumerate() {
+        let indexed = format!("[memory-chunk]\n{}", chunk);
+        try_ctx_index(handle, &indexed, &format!("memory-chunk:{}", i)).await;
+    }
+    tracing::info!(
+        "context-mode: MEMORY.md {} チャンク インデックス登録完了",
+        chunks.len()
+    );
 }
 
 pub struct Gateway {
@@ -1331,6 +1400,16 @@ impl Gateway {
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 index_user_interests(&ws, &tsh).await;
+            });
+        }
+
+        // MEMORY.md チャンクを context-mode に非同期インデックス登録（5 秒後）
+        {
+            let ws = self.workspace_path.clone();
+            let tsh = tool_server_handle.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                index_memory_to_context_mode(&ws, &tsh).await;
             });
         }
 
@@ -1748,17 +1827,29 @@ mod tests {
     fn test_extract_interests_section_extracts_correctly() {
         let user_md = "# User Profile\n\n## Basics\n- Name: K\n\n## Interests\n- AI Agent\n  sources: HN\n- Cloudflare\n  sources: blog\n\n## Work Context\n- Workplace: Atsugi";
         let interests = extract_interests_section(user_md);
-        assert!(interests.contains("AI Agent"), "Interests セクションが抽出されること");
+        assert!(
+            interests.contains("AI Agent"),
+            "Interests セクションが抽出されること"
+        );
         assert!(interests.contains("Cloudflare"), "複数行が含まれること");
-        assert!(!interests.contains("Basics"), "Basics セクションは除外されること");
-        assert!(!interests.contains("Work Context"), "Work Context セクションは除外されること");
+        assert!(
+            !interests.contains("Basics"),
+            "Basics セクションは除外されること"
+        );
+        assert!(
+            !interests.contains("Work Context"),
+            "Work Context セクションは除外されること"
+        );
     }
 
     #[test]
     fn test_extract_interests_section_empty_when_missing() {
         let user_md = "# User Profile\n\n## Basics\n- Name: K\n";
         let interests = extract_interests_section(user_md);
-        assert!(interests.is_empty(), "Interests セクションがない場合は空文字を返すこと");
+        assert!(
+            interests.is_empty(),
+            "Interests セクションがない場合は空文字を返すこと"
+        );
     }
 
     #[tokio::test]
@@ -1859,7 +1950,12 @@ mod tests {
     fn test_extract_patrol_feed_urls_http_only() {
         let interests = "- AI Agent\n  sources: HN\n- Cloudflare\n  sources: https://blog.cloudflare.com\n- GitHub Rust\n  sources: github:rust-lang/rust\n- RSS feed\n  sources: https://example.com/feed.xml\n- Reddit\n  sources: Reddit/r/rust";
         let urls = extract_patrol_feed_urls(interests);
-        assert_eq!(urls.len(), 2, "HTTP(S) URL が 2 件抽出されること: {:?}", urls);
+        assert_eq!(
+            urls.len(),
+            2,
+            "HTTP(S) URL が 2 件抽出されること: {:?}",
+            urls
+        );
         assert!(urls.contains(&"https://blog.cloudflare.com".to_string()));
         assert!(urls.contains(&"https://example.com/feed.xml".to_string()));
     }

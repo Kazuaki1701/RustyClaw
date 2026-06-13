@@ -1,7 +1,7 @@
 # Phase 52 用途別 LLM コンテキスト最適化・軽量化 実装計画書
 
 > [!NOTE]
-> **ステータス**: `[ACTIVE]` (Phase 52-1〜52-4 完了、52-3b 検証済み。Phase 52-5 着手待ち)  
+> **ステータス**: `[ACTIVE]` (Phase 52-1〜52-5 完了、52-3b 検証済み。Phase 52-6 以降着手待ち)  
 > **最終更新日**: 2026-06-13  
 > **対象コード**: `crates/rustyclaw-agent/src/lib.rs`, `crates/rustyclaw-gateway/src/lib.rs` 等  
 > **設計仕様書**: [`docs/specs/2026-06-13-phase52-context-optimization-design.md`](../specs/2026-06-13-phase52-context-optimization-design.md)  
@@ -26,10 +26,10 @@
 - [x] **【Phase 52-4】用途別最適化 - Topic Patrol の実装**（完了: 2026-06-13）:
   - [x] `ctx_fetch_and_index` を用いた巡回先Web/フィードのキャッシュ・インデックス化の実装。
   - [x] ニュース要約に特化した極小コンテキスト構築処理の実装。
-- [ ] **【Phase 52-5】長期記憶（MEMORY.md）のセマンティック分割（Memory RAG）の実装**:
-  - [ ] `MEMORY.md` のセクション分割と `ctx_index` による SQLite FTS5 同期の実装。
-  - [ ] チャット開始時のメモリ動的ロード（`ctx_search`）の実装。
-  - [ ] `ctx_patch` を用いた部分メモリ書き換えの実装。
+- [x] **【Phase 52-5】長期記憶（MEMORY.md）のセマンティック分割（Memory RAG）の実装**（完了: 2026-06-13）:
+  - [x] `MEMORY.md` のセクション分割と `ctx_index` による SQLite FTS5 同期の実装。
+  - [x] チャット開始時のメモリ動的ロード（`ctx_search`）の実装。
+  - [x] `ctx_patch` を用いた部分メモリ書き換えの実装。（スコープ外: Phase 52-5b として延期）
 - [ ] **【Phase 52-6】エピソード記憶連携とブリーフィング高度化の実装**:
   - [ ] ブリーフィング結果の自動 `ctx_index` 登録処理の実装。
   - [ ] `ctx_search` を用いた過去のバイタル・予定傾向の相関検索とアドバイス注入の実装。

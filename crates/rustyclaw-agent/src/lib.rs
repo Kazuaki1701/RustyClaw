@@ -48,14 +48,16 @@ impl RateLimiter {
         let rpm = model.rpm?;
         let mut map = self.windows.lock().unwrap();
         let now = Instant::now();
-        let entry = map.entry(model.config_name.clone()).or_insert_with(|| RateLimitWindow {
-            minute_start: now,
-            requests: 0,
-            tokens: 0,
-            day_start: now,
-            day_requests: 0,
-            day_tokens: 0,
-        });
+        let entry = map
+            .entry(model.config_name.clone())
+            .or_insert_with(|| RateLimitWindow {
+                minute_start: now,
+                requests: 0,
+                tokens: 0,
+                day_start: now,
+                day_requests: 0,
+                day_tokens: 0,
+            });
 
         // 分ウィンドウのリセット
         let minute_elapsed = entry.minute_start.elapsed();
@@ -111,7 +113,9 @@ impl RateLimiter {
     /// リクエスト完了後にトークン数を記録し、tpm / tpd 超過を warn する。
     fn record_tokens(&self, model: &LlmModelConfig, tokens: u64) {
         let mut map = self.windows.lock().unwrap();
-        let Some(entry) = map.get_mut(&model.config_name) else { return };
+        let Some(entry) = map.get_mut(&model.config_name) else {
+            return;
+        };
         entry.tokens += tokens;
         entry.day_tokens += tokens;
         if let Some(tpm) = model.tpm
@@ -731,7 +735,12 @@ impl Pipeline {
     /// flush が同時に複数走って gmn プロセスが意図した上限を超えるのを防ぐ。
     /// LANE QUEUE 可視化: on_flush_queued は spawn 前に同期呼び出し、
     /// on_flush_executing はセマフォ取得後、on_flush_done は完了時に呼ぶ。
-    pub fn trigger_memory_flush_async(&self, workspace_dir: &Path, session_id: &str) {
+    pub fn trigger_memory_flush_async(
+        &self,
+        workspace_dir: &Path,
+        session_id: &str,
+        reindex_handle: Option<rig_core::tool::server::ToolServerHandle>,
+    ) {
         let workspace_dir = workspace_dir.to_path_buf();
         let session_id = session_id.to_string();
         let flush_session_id = format!("flush:{}", session_id);
@@ -777,6 +786,11 @@ impl Pipeline {
 
             if let Err(e) = Self::flush_memory(&workspace_dir, &session_id, config).await {
                 tracing::warn!("Failed to flush memory for session {}: {:#}", session_id, e);
+            }
+
+            // Memory Flush 後に SQLite チャンクを再インデックス（fail-open）
+            if let Some(ref handle) = reindex_handle {
+                reindex_memory_after_flush(&workspace_dir, handle).await;
             }
 
             if let Some(ref cb) = on_flush_done {
@@ -1085,7 +1099,8 @@ Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
         let last_usage: Option<LlmResponse> = usage_sink.lock().unwrap().take();
         if let Some(ref usage) = last_usage {
             if let Some(total) = usage.total_tokens {
-                self.rate_limiter.record_tokens(&heartbeat_cfg, total as u64);
+                self.rate_limiter
+                    .record_tokens(&heartbeat_cfg, total as u64);
             }
             if let Ok(db) = rustyclaw_storage::DbManager::new(db_path) {
                 let _ = db.record_usage(
@@ -1227,7 +1242,7 @@ Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
             .context("Failed to save assistant response in session log (fail-closed)")?;
 
         if !session_id.starts_with("cron") {
-            self.trigger_memory_flush_async(workspace_dir, session_id);
+            self.trigger_memory_flush_async(workspace_dir, session_id, None);
         }
 
         Ok(response)
@@ -1484,6 +1499,8 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let usage_sink = model.usage_sink();
 
         // max_turns を明示設定。未設定時は usize::default()=0 となり tool call 1往復後に MaxTurnsError になる (rig-core#0.38)
+        // reindex で再利用するため move 前に clone しておく
+        let tool_handle_for_reindex = tool_handle.clone();
         let agent = AgentBuilder::new(model)
             .preamble(&system_context)
             .tool_server_handle(tool_handle)
@@ -1605,7 +1622,11 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
             .context("Failed to save assistant response")?;
 
         if !session_id.starts_with("cron") {
-            self.trigger_memory_flush_async(workspace_dir, session_id);
+            self.trigger_memory_flush_async(
+                workspace_dir,
+                session_id,
+                Some(tool_handle_for_reindex),
+            );
         }
 
         Ok(LlmResponse {
@@ -1811,10 +1832,36 @@ fn build_patrol_context() -> String {
     "You are a topic patrol agent. Find and summarize interesting news based on the user's interests provided below.\n".to_string()
 }
 
+/// Memory Flush 完了後に MEMORY.md の内容を SQLite チャンクとして再インデックスする (fail-open)。
+async fn reindex_memory_after_flush(
+    workspace_dir: &Path,
+    handle: &rig_core::tool::server::ToolServerHandle,
+) {
+    let content = match tokio::fs::read_to_string(workspace_dir.join("MEMORY.md")).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("reindex_memory: MEMORY.md 読み込み失敗: {}", e);
+            return;
+        }
+    };
+    let chunks = chunk_memory_md(&content);
+    let count = chunks.len();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let args = serde_json::json!({
+            "content": format!("[memory-chunk]\n{}", chunk),
+            "source": format!("memory-chunk:{}", i)
+        })
+        .to_string();
+        if let Err(e) = handle.call_tool("ctx_index", &args).await {
+            tracing::debug!("reindex_memory: ctx_index 失敗（fail-open）: {}", e);
+        }
+    }
+    tracing::info!("memory flush: {} チャンク再インデックス完了", count);
+}
+
 /// MEMORY.md のバレット行を 1件 1チャンクに分割する。
 /// ヘッダー行 (#) や空行はスキップ。最大 512 文字で末尾切捨て。
-#[allow(dead_code)]
-pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
+pub fn chunk_memory_md(content: &str) -> Vec<String> {
     let mut chunks: Vec<String> = Vec::new();
     let mut current_section = "General".to_string();
     let mut current_bullets: Vec<String> = Vec::new();
@@ -1927,8 +1974,7 @@ fn truncate_karakeep_result(tool_result: &str) -> String {
         .map(|item| truncate_tool_item_fields("karakeep", item))
         .collect();
     root["bookmarks"] = serde_json::Value::Array(truncated);
-    let new_json = serde_json::to_string_pretty(&root)
-        .unwrap_or_else(|_| tool_result.to_string());
+    let new_json = serde_json::to_string_pretty(&root).unwrap_or_else(|_| tool_result.to_string());
     rebuild_tool_result(tool_result, &new_json)
 }
 
@@ -2511,7 +2557,10 @@ mod tests {
         let item = serde_json::json!({"id": "1", "snippet": long_snippet});
         let result = truncate_tool_item_fields("gmail", item);
         let snippet = result["snippet"].as_str().unwrap();
-        assert!(snippet.chars().count() <= 202, "truncated + ellipsis ≤ 202 chars");
+        assert!(
+            snippet.chars().count() <= 202,
+            "truncated + ellipsis ≤ 202 chars"
+        );
         assert!(snippet.ends_with('…'));
     }
 
@@ -3643,7 +3692,7 @@ mod truncate_context_tests {
             Arc::new(|_: &str| {}),
         );
 
-        pipeline.trigger_memory_flush_async(std::path::Path::new("/tmp"), "test-session");
+        pipeline.trigger_memory_flush_async(std::path::Path::new("/tmp"), "test-session", None);
 
         assert!(
             called.load(Ordering::SeqCst),
@@ -3693,7 +3742,10 @@ mod tests_karakeep {
         let result = truncate_karakeep_result(&tool_result);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         let summary = parsed["bookmarks"][0]["summary"].as_str().unwrap();
-        assert!(summary.chars().count() <= 202, "summary がトリミングされること");
+        assert!(
+            summary.chars().count() <= 202,
+            "summary がトリミングされること"
+        );
         assert!(summary.ends_with('…'));
     }
 }
