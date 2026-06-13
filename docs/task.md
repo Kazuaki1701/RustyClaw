@@ -19,6 +19,16 @@
   - **内容**: 前日最終の `session_guide` (XML) を `context-mode index` で FTS5 データベースに永続化し、新日初回起動時に `context-mode search` 経由で取得して [build_system_context](file:///home/kazuaki/Projects/RustyClaw/crates/rustyclaw-agent/src/lib.rs#L506) でシステムコンテキストに自動マウントする。
   - **関連設計書**: [docs/plans/2026-06-13-precompact-sessionstart-validation.md](plans/2026-06-13-precompact-sessionstart-validation.md)
 
+- [ ] **Phase 52-10: build_system_context における複数素材の「一括非同期ロード＆クレンジング」の実装**
+  - **目的**: RPi4 の MicroSD カード等の遅い I/O 速度を非同期並列化で回避し、ユーザー対話応答の TTFT (初期応答ラグ) を削減する。
+  - **内容**: `SOUL.md`, `USER.md`, `findings.md` 等を `tokio::fs` を用いて並列ロードし、コメント・空行のクレンジング処理をバックグラウンドで並列実行して LLM Request にマウントする。
+  - **関連計画書**: [docs/plans/2026-06-13-context-optimization-proposal.md](plans/2026-06-13-context-optimization-proposal.md)
+
+- [ ] **Phase 52-11: build_heartbeat_context における patrol/state.json の「動的プリクレンジング（意味濃縮）」の実装**
+  - **目的**: 毎時実行される cron 監視での送信トークンを劇的に削減（約 8 割削減）し、RPi4 環境での API Quota (TPD) 超過死を防ぐ。
+  - **内容**: 30KB ある `patrol/state.json` のロード時、LLM にとって不要な詳細ヒストリを除去し、「エラー・未解決ステータス情報のみ」に動的圧縮してシステムプロンプトに注入する。
+  - **関連計画書**: [docs/plans/2026-06-13-context-optimization-proposal.md](plans/2026-06-13-context-optimization-proposal.md)
+
 ## 将来課題（低優先度）
 
 - [ ] **v0.5: 純 Rust 単一バイナリ**: `rustyclaw-context-mode` crate に EmbeddedKnowledgeBase + InProcessPatchMerger + SecureSandboxExecutor を実装
