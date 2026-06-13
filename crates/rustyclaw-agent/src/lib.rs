@@ -20,12 +20,17 @@ const HEARTBEAT_RAG_TAIL_LINES: usize = 10;
 type FlushCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
 struct RateLimitWindow {
-    start: Instant,
+    // 分単位ウィンドウ
+    minute_start: Instant,
     requests: u64,
     tokens: u64,
+    // 日単位ウィンドウ（rpd / tpd 追跡用）
+    day_start: Instant,
+    day_requests: u64,
+    day_tokens: u64,
 }
 
-/// モデルごとの rpm/tpm ソフトリミット追跡（超過時は warn + スリープ）
+/// モデルごとの rpm/tpm/rpd/tpd ソフトリミット追跡
 struct RateLimiter {
     windows: Mutex<HashMap<String, RateLimitWindow>>,
 }
@@ -37,45 +42,97 @@ impl RateLimiter {
         }
     }
 
-    /// rpm をチェックしリクエストカウントを増加させる。
-    /// 超過していた場合は残り時間を返す（呼び出し元でスリープする）。
+    /// rpm / tpm / rpd を事前チェックし、超過時は残り待機時間を返す。
+    /// 返値が Some の場合、呼び出し元でスリープしてからリトライする。
     fn check_rpm(&self, model: &LlmModelConfig) -> Option<Duration> {
         let rpm = model.rpm?;
         let mut map = self.windows.lock().unwrap();
-        let entry = map
-            .entry(model.config_name.clone())
-            .or_insert_with(|| RateLimitWindow {
-                start: Instant::now(),
-                requests: 0,
-                tokens: 0,
-            });
-        let elapsed = entry.start.elapsed();
-        if elapsed >= Duration::from_secs(60) {
-            entry.start = Instant::now();
+        let now = Instant::now();
+        let entry = map.entry(model.config_name.clone()).or_insert_with(|| RateLimitWindow {
+            minute_start: now,
+            requests: 0,
+            tokens: 0,
+            day_start: now,
+            day_requests: 0,
+            day_tokens: 0,
+        });
+
+        // 分ウィンドウのリセット
+        let minute_elapsed = entry.minute_start.elapsed();
+        if minute_elapsed >= Duration::from_secs(60) {
+            entry.minute_start = now;
             entry.requests = 0;
             entry.tokens = 0;
         }
-        if entry.requests >= rpm {
-            return Some(Duration::from_secs(60).saturating_sub(elapsed));
+        // 日ウィンドウのリセット
+        if entry.day_start.elapsed() >= Duration::from_secs(86400) {
+            entry.day_start = now;
+            entry.day_requests = 0;
+            entry.day_tokens = 0;
         }
+
+        // rpd チェック（日次リクエスト上限）
+        if let Some(rpd) = model.rpd
+            && entry.day_requests >= rpd
+        {
+            tracing::warn!(
+                model = %model.config_name,
+                day_requests = entry.day_requests,
+                rpd_limit = rpd,
+                "RPD daily limit reached"
+            );
+        }
+
+        // tpm チェック（分単位トークン上限）— 超過時はスリープ
+        if let Some(tpm) = model.tpm
+            && entry.tokens >= tpm
+        {
+            let sleep = Duration::from_secs(60).saturating_sub(minute_elapsed);
+            tracing::warn!(
+                model = %model.config_name,
+                tokens_this_minute = entry.tokens,
+                tpm_limit = tpm,
+                sleep_ms = sleep.as_millis(),
+                "TPM limit reached, sleeping"
+            );
+            return Some(sleep);
+        }
+
+        // rpm チェック（分単位リクエスト上限）
+        if entry.requests >= rpm {
+            return Some(Duration::from_secs(60).saturating_sub(minute_elapsed));
+        }
+
         entry.requests += 1;
+        entry.day_requests += 1;
         None
     }
 
-    /// tpm を確認し、超過していた場合は warn ログを出力する。
+    /// リクエスト完了後にトークン数を記録し、tpm / tpd 超過を warn する。
     fn record_tokens(&self, model: &LlmModelConfig, tokens: u64) {
-        let Some(tpm) = model.tpm else { return };
         let mut map = self.windows.lock().unwrap();
-        if let Some(entry) = map.get_mut(&model.config_name) {
-            entry.tokens += tokens;
-            if entry.tokens >= tpm {
-                tracing::warn!(
-                    model = %model.config_name,
-                    tokens_this_minute = entry.tokens,
-                    tpm_limit = tpm,
-                    "TPM soft limit reached this minute"
-                );
-            }
+        let Some(entry) = map.get_mut(&model.config_name) else { return };
+        entry.tokens += tokens;
+        entry.day_tokens += tokens;
+        if let Some(tpm) = model.tpm
+            && entry.tokens >= tpm
+        {
+            tracing::warn!(
+                model = %model.config_name,
+                tokens_this_minute = entry.tokens,
+                tpm_limit = tpm,
+                "TPM soft limit reached this minute"
+            );
+        }
+        if let Some(tpd) = model.tpd
+            && entry.day_tokens >= tpd
+        {
+            tracing::warn!(
+                model = %model.config_name,
+                tokens_today = entry.day_tokens,
+                tpd_limit = tpd,
+                "TPD daily token limit reached"
+            );
         }
     }
 }
@@ -996,6 +1053,16 @@ Rules:
         use rig_core::agent::AgentBuilder;
         use rustyclaw_providers::RustyclawCompletionModel;
 
+        let heartbeat_cfg = self.config.get_model("heartbeat");
+        if let Some(sleep_dur) = self.rate_limiter.check_rpm(&heartbeat_cfg) {
+            tracing::warn!(
+                model = %heartbeat_cfg.config_name,
+                sleep_ms = sleep_dur.as_millis(),
+                "RPM/TPM limit reached in execute_heartbeat, sleeping"
+            );
+            tokio::time::sleep(sleep_dur).await;
+        }
+
         let model = RustyclawCompletionModel::new(self.config.clone(), "heartbeat", session_id);
         let usage_sink = model.usage_sink();
 
@@ -1026,20 +1093,22 @@ Rules:
         let response_text = filter_json_leaks(&response_text);
 
         let last_usage: Option<LlmResponse> = usage_sink.lock().unwrap().take();
-        if let Some(ref usage) = last_usage
-            && let Ok(db) = rustyclaw_storage::DbManager::new(db_path)
-        {
-            let heartbeat_model = self.config.get_model("heartbeat");
-            let _ = db.record_usage(
-                session_id,
-                usage.prompt_tokens.unwrap_or(0),
-                usage.completion_tokens.unwrap_or(0),
-                usage.total_tokens.unwrap_or(0),
-                &heartbeat_model.model_name,
-                "heartbeat",
-                Some(&heartbeat_model.model_provider),
-                0,
-            );
+        if let Some(ref usage) = last_usage {
+            if let Some(total) = usage.total_tokens {
+                self.rate_limiter.record_tokens(&heartbeat_cfg, total as u64);
+            }
+            if let Ok(db) = rustyclaw_storage::DbManager::new(db_path) {
+                let _ = db.record_usage(
+                    session_id,
+                    usage.prompt_tokens.unwrap_or(0),
+                    usage.completion_tokens.unwrap_or(0),
+                    usage.total_tokens.unwrap_or(0),
+                    &heartbeat_cfg.model_name,
+                    "heartbeat",
+                    Some(&heartbeat_cfg.model_provider),
+                    0,
+                );
+            }
         }
 
         let response = LlmResponse {
@@ -1049,8 +1118,8 @@ Rules:
             prompt_tokens: last_usage.as_ref().and_then(|u| u.prompt_tokens),
             completion_tokens: last_usage.as_ref().and_then(|u| u.completion_tokens),
             total_tokens: last_usage.as_ref().and_then(|u| u.total_tokens),
-            model_used: Some(self.config.get_model("heartbeat").model_name),
-            provider_id: Some(self.config.get_model("heartbeat").model_provider),
+            model_used: Some(heartbeat_cfg.model_name),
+            provider_id: Some(heartbeat_cfg.model_provider),
         };
 
         Ok(response)
@@ -1111,6 +1180,16 @@ Rules:
 
         let system_content = messages[0].content.clone();
 
+        let default_cfg = self.config.get_model("default");
+        if let Some(sleep_dur) = self.rate_limiter.check_rpm(&default_cfg) {
+            tracing::warn!(
+                model = %default_cfg.config_name,
+                sleep_ms = sleep_dur.as_millis(),
+                "RPM/TPM limit reached in execute, sleeping"
+            );
+            tokio::time::sleep(sleep_dur).await;
+        }
+
         let model = RustyclawCompletionModel::new(self.config.clone(), "default", session_id);
         let usage_sink = model.usage_sink();
 
@@ -1127,6 +1206,11 @@ Rules:
         let response_text = filter_json_leaks(&response_text);
 
         let last_usage: Option<LlmResponse> = usage_sink.lock().unwrap().take();
+        if let Some(ref u) = last_usage
+            && let Some(total) = u.total_tokens
+        {
+            self.rate_limiter.record_tokens(&default_cfg, total as u64);
+        }
         let response = LlmResponse {
             content: response_text,
             role: "assistant".to_string(),
@@ -1134,8 +1218,8 @@ Rules:
             prompt_tokens: last_usage.as_ref().and_then(|u| u.prompt_tokens),
             completion_tokens: last_usage.as_ref().and_then(|u| u.completion_tokens),
             total_tokens: last_usage.as_ref().and_then(|u| u.total_tokens),
-            model_used: Some(self.config.get_model("default").model_name),
-            provider_id: Some(self.config.get_model("default").model_provider),
+            model_used: Some(default_cfg.model_name),
+            provider_id: Some(default_cfg.model_provider),
         };
 
         // 4. 会話ログの保存 (fail-closed)
