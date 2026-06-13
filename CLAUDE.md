@@ -18,7 +18,6 @@ Claude Code が直接実行するための基本コマンドです。
 ## スキル実行時の制約
 
 - **計画書の保存先**: `superpowers:writing-plans` を使用する場合、保存先は必ず `docs/plans/` を指定してください（スキルのデフォルト `docs/superpowers/plans/` より優先）。
-- **マージの `--no-ff` 必須**: `superpowers:finishing-a-development-branch` 等のスキルがマージを実行する場合も、必ず `--no-ff` オプションを付与してください。
 
 ## ドキュメント・Git 管理ルール
 
