@@ -305,7 +305,7 @@ impl LaneRegistry {
 
                             let heartbeat_rag_query = build_heartbeat_rag_query(&digest);
                             if let Some(ctx) =
-                                try_ctx_search(&tool_server_handle, &heartbeat_rag_query).await
+                                try_ctx_search(&tool_server_handle, &heartbeat_rag_query, "timeline").await
                             {
                                 prompt_parts
                                     .push(format!("Past context (from episodic memory):\n{}", ctx));
@@ -313,7 +313,7 @@ impl LaneRegistry {
                             // バイタルキーワードを検出した場合のみ過去の類似エピソードを追加検索
                             if let Some(vital_query) = extract_vital_alert_query(&digest)
                                 && let Some(advisory) =
-                                    try_ctx_search(&tool_server_handle, &vital_query).await
+                                    try_ctx_search(&tool_server_handle, &vital_query, "relevance").await
                             {
                                 prompt_parts
                                     .push(format!("Past similar situation (advisory):\n{}", advisory));
@@ -725,7 +725,7 @@ impl LaneRegistry {
                                     // ctx_search でスキルを動的選択（cron セッション以外のみ）
                                     let ctx_skill_names: Option<Vec<String>> =
                                         if !session_id.starts_with("cron:") {
-                                            try_ctx_search(&tool_server_handle, &content)
+                                            try_ctx_search(&tool_server_handle, &content, "relevance")
                                                 .await
                                                 .map(|ctx| parse_skill_names_from_ctx(&ctx))
                                                 .filter(|names| !names.is_empty())
@@ -815,7 +815,7 @@ impl LaneRegistry {
                                             // 通常 chat: ctx_search で動的取得
                                             let query =
                                                 format!("{} user interests hobbies", content);
-                                            try_ctx_search(&tool_server_handle, &query)
+                                            try_ctx_search(&tool_server_handle, &query, "relevance")
                                                 .await
                                                 .filter(|r| r.contains("[user-interests]"))
                                                 .map(|r| {
@@ -829,7 +829,7 @@ impl LaneRegistry {
                                         let memory_extra: Option<String> = if !session_id
                                             .starts_with("cron:")
                                         {
-                                            try_ctx_search(&tool_server_handle, &content)
+                                            try_ctx_search(&tool_server_handle, &content, "relevance")
                                                 .await
                                                 .filter(|r| r.contains("[memory-chunk]"))
                                                 .map(|r| format!("\n\n# Relevant Memory\n{}", r))
@@ -1135,10 +1135,11 @@ async fn start_context_mode(
 async fn try_ctx_search(
     handle: &rig_core::tool::server::ToolServerHandle,
     query: &str,
+    sort: &str,
 ) -> Option<String> {
     let args = serde_json::json!({
         "queries": [query],
-        "sort": "timeline",
+        "sort": sort,
         "limit": 3
     })
     .to_string();
@@ -2042,5 +2043,18 @@ mod tests {
         let digest = "User feels fatigue from long work sessions.";
         let query = extract_vital_alert_query(digest);
         assert!(query.is_some());
+    }
+
+    // Phase 52-7 tests
+    #[test]
+    fn test_extract_vital_alert_query_returns_some_on_sleep() {
+        let digest = "User mentioned poor sleep and fatigue.";
+        assert!(extract_vital_alert_query(digest).is_some());
+    }
+
+    #[test]
+    fn test_extract_vital_alert_query_returns_none_on_normal() {
+        let digest = "User asked about the calendar for tomorrow.";
+        assert!(extract_vital_alert_query(digest).is_none());
     }
 }
