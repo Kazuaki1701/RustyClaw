@@ -503,7 +503,8 @@ impl ConversationHistory {
     /// 会話履歴の圧縮 (70/20/10 戦略)
     /// - `limit` は総トークン上限
     /// - 推定トークン数が `limit` の 80% を超えたらトリガー
-    /// - 先頭 40% (背景) と末尾 40% (直近の対話) を保持し、中間 20% を省略メッセージで置換
+    /// - 先頭 70% (背景) と末尾 20% (直近の対話) を保持し、中間 10% を省略メッセージで置換
+    #[deprecated(since = "0.4.0", note = "Abolished in favor of PreCompact snapshots (ADR 007)")]
     pub fn compact_if_needed(&mut self, limit: usize) -> bool {
         let current_tokens = self.estimate_tokens();
         let trigger_threshold = (limit * 80) / 100;
@@ -569,12 +570,14 @@ impl ConversationHistory {
     /// system プロンプト＋ツール定義などの固定オーバーヘッド（推定トークン）を考慮して圧縮する。
     /// 実効上限を `limit - overhead_tokens` に下げてから既存の圧縮判定を行うことで、
     /// 履歴＋システム＋ツールの合計がモデル上限を超えて 413 になるのを防ぐ。
+    #[deprecated(since = "0.4.0", note = "Abolished in favor of PreCompact snapshots (ADR 007)")]
     pub fn compact_if_needed_with_overhead(
         &mut self,
         limit: usize,
         overhead_tokens: usize,
     ) -> bool {
         let effective = limit.saturating_sub(overhead_tokens);
+        #[allow(deprecated)]
         self.compact_if_needed(effective)
     }
 
@@ -605,6 +608,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(deprecated)]
     fn overhead_lowers_effective_limit_and_triggers_compaction() {
         // 10 件 × 100 文字 ≒ 1,500 推定トークン
         let msgs: Vec<Message> = (0..10)
@@ -755,6 +759,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_conversation_history_compression() {
         let mut messages = Vec::new();
         // 10メッセージ、各100文字 (合計1000文字相当)
