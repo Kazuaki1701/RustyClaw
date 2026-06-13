@@ -22,36 +22,27 @@
 ```
 docs/
 ├── specs/                     # 【常に最新】コードの最新実装と100%一致させる「基本仕様書」
-│   ├── 00_rustyclaw.md        # 総合システム仕様書 ＆ ドキュメントインデックス
-│   ├── 01_architecture.md     # 全体アーキテクチャ・開発環境仕様
-│   ├── 02_agent_pipeline.md   # パイプライン・LLMプロバイダ仕様
-│   ├── 03_workspace_spec.md   # ワークスペースファイル・ストレージ仕様
-│   ├── 04_heartbeat_spec.md   # Heartbeat 自発行動システム仕様
-│   ├── 05_gateway_spec.md     # Gateway・並列制御 Lane Queue 仕様
-│   ├── 06_dashboard_spec.md   # Web Dashboard・管理用 API 仕様
-│   ├── 08_operation_inspection.md  # 稼働点検ガイド（コマンド集・既知パターン）
-│   ├── 10_git_collaboration_rules.md # GitHub 共同開発・運用ガイドライン仕様
-│   ├── 12_weather_hybrid_spec.md # 気象庁・Open-Meteo ハイブリッド天気予報設計仕様
-│   ├── 13_rag_file_operations.md # 実運用 RAG 運用マークダウン仕様
-│   ├── 11_skills_spec.md      # Skills システム仕様・GeminiClaw 比較・移植記録
-│   ├── 81_llm_provider_model_selection.md # プロバイダー・モデル選定指針仕様
-│   ├── 91_geminiclaw_comparison.md # GeminiClaw との機能・コード比較移植仕様
-│   └── 92_picoclaw_comparison.md  # PicoClaw とのアーキテクチャ・機能比較仕様
+│   ├── v0.4/                  # バージョン別の仕様書フォルダ（通常は最新バージョンのディレクトリ内を更新）
+│   │   ├── 00_rustyclaw.md    # 総合システム仕様書 ＆ ドキュメントインデックス
+│   │   ├── 08_operation_inspection.md # 稼働点検ガイド（コマンド集・点検マニュアル等の運用基準）
+│   │   └── ...
+│   └── ...
 │
 ├── plans/                     # 【開発中】実装前または現在進行中の「個別実装計画書」
-│   └── YYYY-MM-DD-<機能名>.md  # 現在進行中の計画書（ファイル名は Phase に応じて変動）
+│   └── YYYY-MM-DD-<機能名>.md  # 現在進行中の計画書（[ACTIVE] タグ付き。開発完了後は archive/plans/ へ移動）
 │
-├── review/                    # 【点検・レビュー】コードレビュー、ログ点検、実行検証記録（現在は空）
+├── review/                    # 【検証・レビュー・報告書】ログ検証記録、動作点検、および技術的な「調査・分析報告書（Report）」
+│   └── YYYY-MM-DD-<報告書名>.md # 最適化報告書などのレポート、ログ監査記録（完了後は archive/review/ へ移動）
 │
 ├── adr/                       # 【永続保存】アーキテクチャ意思決定記録（Architecture Decision Records）
-│   └── 001-xxx.md             # 連番ファイル。SUPERSEDED になっても削除しない
+│   └── 001-xxx.md             # 連番ファイル。SUPERSEDED（古い決定）になっても履歴保持のため削除しない
 │
 ├── archive/                   # 【参照のみ・編集不可】すでに完了した「過去の計画書・報告書・タスクリスト」
 │   ├── plans/                 # 過去の実装計画書（Historical Plans）
 │   ├── review/                # 過去のログ検証・レビューレポート（Historical Reviews）
 │   └── tasks/                 # 過去の完了済みタスクリスト（Historical Tasks）
 │
-├── task.md                    # 直近の開発タスク管理リスト（完了マーク付き）
+├── task.md                    # 直近の開発タスク管理リスト（目次と計画書へのリンクのみ）
 └── README.md                  # 本ドキュメント運用ルール（本書）
 ```
 
