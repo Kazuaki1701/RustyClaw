@@ -17,26 +17,23 @@ Do NOT try to call a tool named `home_assistant_rest_api`. You MUST use `run_com
 
 ## 1. Using Standardized Internal Scripts (RECOMMENDED)
 
-監視や一括レポートに関しては、スキル内の `scripts/` フォルダにある最適化済みスクリプトを利用します。
+`ha-control.sh <subcommand>` で全 HA 操作を統一呼び出し。
 
-| Script | Purpose | Output Format |
-| :--- | :--- | :--- |
-| `210_ha_report.sh` | **統合レポート** (Logs + Health + Summary) | Text with icons |
-| `204_ha_all_states.sh`| **全エンティティ一括取得** (600+ entities) | `FriendlyName (entity_id): state` |
-| `203_ha_summary.sh` | **主要（一軍）センサーの状態サマリー** | `FriendlyName (entity_id): state` |
-| `202_ha_health.sh` | **ヘルスチェック** (Battery / Offline / Stale) | Detailed alerts |
-| `201_ha_logs.sh` | **エラーログ取得** (Grep/Sed 圧縮済み) | Condensed logs |
-| `get_exposed_entities.py` | **露出エンティティ取得** (WebSocket連携) | JSON (Exposed Mapping) |
-| `220_ha_env_snapshot.sh` | **環境スナップショット** (トレンド計算 + state 更新) | 1 行サマリー + `memory/ha-state.json` |
-
-```bash
-# Example: Get a comprehensive status report
-skills/home-assistant-rest-api/scripts/210_ha_report.sh --agent
-```
+| Subcommand | Purpose |
+| :--- | :--- |
+| `report` | 統合レポート（Logs + Health + Summary）**← 通常はこれ** |
+| `health` | バッテリー / Offline / Stale センサー確認 |
+| `summary` | 主要センサー状態サマリー |
+| `logs` | エラーログ取得（凝縮済み） |
+| `all_states` | 全エンティティ一括取得（600+） |
+| `env_snapshot` | 環境スナップショット（`memory/ha-state.json` 更新） |
 
 ```bash
-# Example: Take HA environment snapshot (updates memory/ha-state.json)
-# ctx_execute: language=bash, code="bash workspace/skills/home-assistant-rest-api/scripts/220_ha_env_snapshot.sh"
+# 統合レポート取得
+skills/home-assistant-rest-api/scripts/ha-control.sh report --agent
+
+# ヘルスチェックのみ
+skills/home-assistant-rest-api/scripts/ha-control.sh health
 ```
 
 ## 2. Direct REST API Access (curl)
