@@ -31,7 +31,7 @@
   肥大化する `MEMORY.md` を `ctx_index` で SQLite FTS5 に分割登録し、通常対話時は `ctx_search` で関連チャンクのみを動的ロード。Memory Flush も `ctx_patch` による部分書き換えに移行。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
-- [ ] **Phase 52-6: エピソード記憶連携とデイリーブリーフィングの高度化**:  
+- [x] **Phase 52-6: エピソード記憶連携とデイリーブリーフィングの高度化**（完了: 2026-06-13）:  
   日次ブリーフィング結果の自動 `ctx_index` 登録と、`ctx_search` による相関検索アドバイザリー（過去の同様状況の引き出し）。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
