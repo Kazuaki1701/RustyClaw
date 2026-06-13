@@ -19,7 +19,7 @@
   バックグラウンド自動処理（自動巡回監視）におけるプロンプト・ツール情報の極限スリム化。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
-- [ ] **Phase 52-3: 用途別最適化 - Chat**:  
+- [x] **Phase 52-3: 用途別最適化 - Chat**（完了: 2026-06-13、PreCompact/SessionStart は Phase 52-3b に分割）:  
   通常対話における動的フィルタリング（動的スキル選択、興味情報の動的注入、適応的クォータガード）と `context-mode` の完全統合。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 

@@ -1427,6 +1427,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         tool_handle: rig_core::tool::server::ToolServerHandle,
         purpose: &str,
         progress_tx: Option<tokio::sync::mpsc::Sender<String>>,
+        extra_system_context: Option<String>,
     ) -> Result<LlmResponse> {
         use rig_core::agent::AgentBuilder;
         use rustyclaw_providers::RustyclawCompletionModel;
@@ -1442,6 +1443,10 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         }
         let now = chrono::Local::now();
         system_context.push_str(&format!("[now: {}]\n", now.format("%Y-%m-%dT%H:%M:%S%:z")));
+        // 動的注入コンテキスト（ctx_search で取得した USER.md Interests 等）を追記
+        if let Some(extra) = extra_system_context {
+            system_context.push_str(&extra);
+        }
         // セッション履歴のロード（RAG クエリ構築にも使用するため先行ロード）
         let history_messages = if session_id.starts_with("cron:") {
             Vec::new()
@@ -1885,6 +1890,7 @@ fn truncate_tool_item_fields(category: &str, mut item: serde_json::Value) -> ser
     let field = match category {
         "gmail" => "snippet",
         "calendar" => "location",
+        "karakeep" => "summary",
         _ => return item,
     };
     if let Some(val) = item.get(field).and_then(|v| v.as_str())
@@ -1894,6 +1900,26 @@ fn truncate_tool_item_fields(category: &str, mut item: serde_json::Value) -> ser
         item[field] = serde_json::Value::String(format!("{}…", truncated));
     }
     item
+}
+
+/// Karakeep ツール結果の summary フィールドをトリミングする。
+/// Karakeep API は {"bookmarks": [...]} 形式のため Gmail/Calendar の配列形式とは別処理。
+fn truncate_karakeep_result(tool_result: &str) -> String {
+    let stdout = extract_stdout(tool_result);
+    let Ok(mut root) = serde_json::from_str::<serde_json::Value>(stdout) else {
+        return tool_result.to_string();
+    };
+    let Some(arr) = root.get("bookmarks").and_then(|b| b.as_array()).cloned() else {
+        return tool_result.to_string();
+    };
+    let truncated: Vec<serde_json::Value> = arr
+        .into_iter()
+        .map(|item| truncate_tool_item_fields("karakeep", item))
+        .collect();
+    root["bookmarks"] = serde_json::Value::Array(truncated);
+    let new_json = serde_json::to_string_pretty(&root)
+        .unwrap_or_else(|_| tool_result.to_string());
+    rebuild_tool_result(tool_result, &new_json)
 }
 
 /// `start_tag` と `end_tag` に囲まれたブロックを抽出する。
@@ -2036,6 +2062,11 @@ fn filter_seen_tool_result(
     }
     let args: serde_json::Value = serde_json::from_str(call_args).unwrap_or_default();
     let script_name = args["script_name"].as_str().unwrap_or("");
+
+    // karakeep: summary トリミングのみ（重複除外なし）
+    if script_name.contains("karakeep") {
+        return truncate_karakeep_result(tool_result);
+    }
 
     let (category, id_field): (&str, &str) = if script_name.contains("gmail") {
         ("gmail", "id")
@@ -3613,5 +3644,46 @@ mod truncate_context_tests {
             "flush:test-session",
             "flush_session_id は flush:<session_id> 形式"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_karakeep {
+    use super::*;
+
+    #[test]
+    fn test_truncate_tool_item_fields_karakeep_summary() {
+        let long_summary = "A".repeat(300);
+        let item = serde_json::json!({
+            "id": "bookmark1",
+            "title": "My Bookmark",
+            "summary": long_summary,
+        });
+        let result = truncate_tool_item_fields("karakeep", item);
+        let summary = result["summary"].as_str().unwrap();
+        assert!(
+            summary.chars().count() <= 202,
+            "200文字 + '…' で201文字以内、実際: {}",
+            summary.chars().count()
+        );
+        assert!(summary.ends_with('…'), "末尾に省略記号があること");
+    }
+
+    #[test]
+    fn test_truncate_karakeep_result_truncates_summary() {
+        let long_summary = "B".repeat(300);
+        let raw_json = serde_json::json!({
+            "bookmarks": [
+                {"id": "bk1", "title": "Test", "summary": long_summary},
+            ],
+            "nextCursor": null
+        });
+        // extract_stdout はマーカーがなければ入力をそのまま返すため生 JSON で問題なし
+        let tool_result = raw_json.to_string();
+        let result = truncate_karakeep_result(&tool_result);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let summary = parsed["bookmarks"][0]["summary"].as_str().unwrap();
+        assert!(summary.chars().count() <= 202, "summary がトリミングされること");
+        assert!(summary.ends_with('…'));
     }
 }
