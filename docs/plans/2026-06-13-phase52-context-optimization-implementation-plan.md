@@ -23,9 +23,9 @@
   - [x] `USER.md` 興味関心（Interests）を RAG で動的注入する機能の実装。
   - [x] Keep / Gmail 返却値が長大な場合の文字数制限（トリミング）または事前要約の実装。
   - [ ] `PreCompact` / `SessionStart` フックの有効化と SQLite スナップショット退避・復元の実装。（→ Phase 52-3b に分割）
-- [ ] **【Phase 52-4】用途別最適化 - Topic Patrol の実装**:
-  - [ ] `ctx_fetch_and_index` を用いた巡回先Web/フィードのキャッシュ・インデックス化の実装。
-  - [ ] ニュース要約に特化した極小コンテキスト構築処理の実装。
+- [x] **【Phase 52-4】用途別最適化 - Topic Patrol の実装**（完了: 2026-06-13）:
+  - [x] `ctx_fetch_and_index` を用いた巡回先Web/フィードのキャッシュ・インデックス化の実装。
+  - [x] ニュース要約に特化した極小コンテキスト構築処理の実装。
 - [ ] **【Phase 52-5】長期記憶（MEMORY.md）のセマンティック分割（Memory RAG）の実装**:
   - [ ] `MEMORY.md` のセクション分割と `ctx_index` による SQLite FTS5 同期の実装。
   - [ ] チャット開始時のメモリ動的ロード（`ctx_search`）の実装。

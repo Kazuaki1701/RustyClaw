@@ -23,7 +23,7 @@
   通常対話における動的フィルタリング（動的スキル選択、興味情報の動的注入、適応的クォータガード）と `context-mode` の完全統合。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
-- [ ] **Phase 52-4: 用途別最適化 - Topic Patrol**:  
+- [x] **Phase 52-4: 用途別最適化 - Topic Patrol**（完了: 2026-06-13）:  
   外部ニュース・メール・RSS 巡回タスクのコンテキスト極小化。`ctx_fetch_and_index` による HTML→Markdown キャッシュと `ctx_search` RAG 巡回、特化型プロンプト適用。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
