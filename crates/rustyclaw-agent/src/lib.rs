@@ -491,6 +491,9 @@ impl Pipeline {
         const MAX_CONTEXT_CHARS_PER_FILE: usize = 3_000;
         let mut context = String::new();
 
+        // Phase 52-9: 日またぎウォームスタート — 前日セッションガイドを注入
+        Self::try_inject_yesterday_session_guide(workspace_dir, &mut context).await;
+
         if context_window_tokens <= 8_192 {
             // small local models: SOUL.md のみ単独ロード
             let path = workspace_dir.join("SOUL.md");
@@ -549,6 +552,82 @@ impl Pipeline {
         }
 
         Ok(context)
+    }
+
+    pub(crate) fn generate_session_guide_xml(messages: &[Message]) -> String {
+        let generated_at = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z");
+        let msg_count = messages.len();
+
+        let escape = |s: &str| -> String {
+            s.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+        };
+
+        let last_user = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| escape(&m.content.chars().take(300).collect::<String>()))
+            .unwrap_or_default();
+
+        let last_assistant = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .map(|m| escape(&m.content.chars().take(400).collect::<String>()))
+            .unwrap_or_default();
+
+        format!(
+            "<session_guide generated_at=\"{generated_at}\" message_count=\"{msg_count}\">\n  <task_context>\n    <current_goal>{last_user}</current_goal>\n    <status>ACTIVE</status>\n  </task_context>\n  <next_steps>\n    <step order=\"1\">{last_assistant}</step>\n  </next_steps>\n</session_guide>"
+        )
+    }
+
+    pub(crate) async fn try_write_session_guide(workspace_dir: &Path, messages: &[Message]) {
+        if messages.is_empty() {
+            return;
+        }
+        let xml = Self::generate_session_guide_xml(messages);
+        let sessions_dir = workspace_dir.join("memory").join("sessions");
+        let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let xml_path = sessions_dir.join(format!("{date_str}.xml"));
+        if let Err(e) = tokio::fs::create_dir_all(&sessions_dir).await {
+            tracing::warn!("session guide: failed to create sessions dir: {}", e);
+            return;
+        }
+        if let Err(e) = tokio::fs::write(&xml_path, &xml).await {
+            tracing::warn!("session guide: failed to write {}: {}", xml_path.display(), e);
+        }
+    }
+
+    pub(crate) async fn try_inject_yesterday_session_guide(
+        workspace_dir: &Path,
+        context: &mut String,
+    ) {
+        let sessions_dir = workspace_dir.join("memory").join("sessions");
+        let today = chrono::Local::now().date_naive();
+        let today_path = sessions_dir.join(format!("{}.xml", today.format("%Y-%m-%d")));
+
+        // 今日の XML が既に存在する → 日またぎではない
+        if tokio::fs::try_exists(&today_path).await.unwrap_or(false) {
+            return;
+        }
+
+        let yesterday = today.pred_opt().unwrap_or(today);
+        let yesterday_path = sessions_dir.join(format!("{}.xml", yesterday.format("%Y-%m-%d")));
+
+        match tokio::fs::read_to_string(&yesterday_path).await {
+            Ok(xml) => {
+                context.push_str("# Yesterday's Session Guide\n\n");
+                context.push_str(&xml);
+                context.push_str("\n\n");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                tracing::warn!("session guide: failed to read yesterday guide: {}", e);
+            }
+        }
     }
 
     /// 過去履歴から「最後にユーザーが発言した時刻以降に記録された自発的投稿」を抽出し、
@@ -1204,6 +1283,7 @@ Rules:
             self.process_proactive_posts(session_id, history_messages, &mut system_context);
 
         let mut history = ConversationHistory::new(cleaned_history);
+        Self::try_write_session_guide(workspace_dir, &history.messages).await;
         history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
@@ -1498,6 +1578,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let cleaned_history =
             self.process_proactive_posts(session_id, history_messages, &mut system_context);
         let mut history = ConversationHistory::new(cleaned_history);
+        Self::try_write_session_guide(workspace_dir, &history.messages).await;
         history.trim_to_last(self.get_history_message_limit(purpose));
 
         // ユーザーメッセージを保存 (injected されていないオリジナルのメッセージのみ保存)
@@ -1682,6 +1763,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let mut history = ConversationHistory::new(history_messages);
+        Self::try_write_session_guide(workspace_dir, &history.messages).await;
         history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
@@ -3649,6 +3731,125 @@ step6 content
         let ctx = pipeline.build_heartbeat_context(ws).unwrap();
         assert!(ctx.contains("step1"), "JSON 不正 → 全文フォールバック");
         assert!(ctx.contains("step2"), "JSON 不正 → 全文フォールバック");
+    }
+
+    #[test]
+    fn test_generate_session_guide_xml_has_required_structure() {
+        let messages = vec![
+            Message { role: "user".to_string(), content: "タスクXを実装して".to_string(), name: None, ..Default::default() },
+            Message { role: "assistant".to_string(), content: "実装しました。次はテストです".to_string(), name: None, ..Default::default() },
+        ];
+        let xml = Pipeline::generate_session_guide_xml(&messages);
+        assert!(xml.contains("<session_guide"), "session_guide タグが必要");
+        assert!(xml.contains("<task_context>"), "task_context タグが必要");
+        assert!(xml.contains("<current_goal>"), "current_goal タグが必要");
+        assert!(xml.contains("<next_steps>"), "next_steps タグが必要");
+        assert!(xml.contains("</session_guide>"), "閉じタグが必要");
+        assert!(xml.contains("タスクXを実装して"), "最後のユーザーメッセージが含まれる");
+    }
+
+    #[test]
+    fn test_generate_session_guide_xml_empty_history() {
+        let messages: Vec<Message> = vec![];
+        let xml = Pipeline::generate_session_guide_xml(&messages);
+        assert!(xml.contains("<session_guide"), "空履歴でも session_guide タグは生成される");
+        assert!(xml.contains("message_count=\"0\""), "message_count=0");
+    }
+
+    #[test]
+    fn test_generate_session_guide_xml_escapes_special_chars() {
+        let messages = vec![
+            Message { role: "user".to_string(), content: "a < b & c > d".to_string(), name: None, ..Default::default() },
+        ];
+        let xml = Pipeline::generate_session_guide_xml(&messages);
+        assert!(xml.contains("&lt;"), "< を &lt; にエスケープ");
+        assert!(xml.contains("&amp;"), "& を &amp; にエスケープ");
+        assert!(xml.contains("&gt;"), "> を &gt; にエスケープ");
+    }
+
+    #[tokio::test]
+    async fn test_try_write_session_guide_creates_xml_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        let messages = vec![
+            Message { role: "user".to_string(), content: "hello".to_string(), name: None, ..Default::default() },
+        ];
+        Pipeline::try_write_session_guide(ws, &messages).await;
+
+        let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let xml_path = ws.join("memory").join("sessions").join(format!("{date_str}.xml"));
+        assert!(xml_path.exists(), "XML ファイルが作成される");
+        let content = std::fs::read_to_string(&xml_path).unwrap();
+        assert!(content.contains("<session_guide"), "XML 内容が正しい");
+    }
+
+    #[tokio::test]
+    async fn test_try_write_session_guide_skips_empty_messages() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        Pipeline::try_write_session_guide(ws, &[]).await;
+        assert!(!ws.join("memory").join("sessions").exists());
+    }
+
+    #[tokio::test]
+    async fn test_try_inject_yesterday_guide_injects_when_no_today_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        let sessions_dir = ws.join("memory").join("sessions");
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+
+        let yesterday = chrono::Local::now().date_naive().pred_opt().unwrap();
+        let yesterday_path = sessions_dir.join(format!("{}.xml", yesterday.format("%Y-%m-%d")));
+        tokio::fs::write(&yesterday_path, "<session_guide><task_context><current_goal>前日ゴール</current_goal></task_context></session_guide>").await.unwrap();
+
+        let mut context = String::new();
+        Pipeline::try_inject_yesterday_session_guide(ws, &mut context).await;
+
+        assert!(context.contains("前日ゴール"), "前日のセッションガイドが注入される");
+        assert!(context.contains("# Yesterday's Session Guide"), "ヘッダーが注入される");
+    }
+
+    #[tokio::test]
+    async fn test_try_inject_yesterday_guide_skips_when_today_file_exists() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        let sessions_dir = ws.join("memory").join("sessions");
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+
+        let today = chrono::Local::now().date_naive();
+        let today_path = sessions_dir.join(format!("{}.xml", today.format("%Y-%m-%d")));
+        tokio::fs::write(&today_path, "<session_guide/>").await.unwrap();
+
+        let yesterday = today.pred_opt().unwrap();
+        let yesterday_path = sessions_dir.join(format!("{}.xml", yesterday.format("%Y-%m-%d")));
+        tokio::fs::write(&yesterday_path, "<session_guide><task_context><current_goal>前日ゴール</current_goal></task_context></session_guide>").await.unwrap();
+
+        let mut context = String::new();
+        Pipeline::try_inject_yesterday_session_guide(ws, &mut context).await;
+
+        assert!(context.is_empty(), "今日の XML がある場合は注入しない");
+    }
+
+    #[tokio::test]
+    async fn test_build_system_context_injects_yesterday_guide() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        std::fs::write(ws.join("SOUL.md"), "soul").unwrap();
+
+        let sessions_dir = ws.join("memory").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let yesterday = chrono::Local::now().date_naive().pred_opt().unwrap();
+        let yesterday_path = sessions_dir.join(format!("{}.xml", yesterday.format("%Y-%m-%d")));
+        std::fs::write(&yesterday_path, "<session_guide><task_context><current_goal>昨日のゴール</current_goal></task_context></session_guide>").unwrap();
+
+        let config = make_test_config_with_url("http://localhost");
+        let sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+        let ctx = pipeline.build_system_context(ws, 32_768).await.unwrap();
+
+        assert!(ctx.contains("昨日のゴール"), "build_system_context に前日ガイドが注入される");
+        assert!(ctx.contains("# Yesterday's Session Guide"), "ヘッダーが含まれる");
+        assert!(ctx.contains("# SOUL.md"), "SOUL.md も引き続き含まれる");
     }
 }
 
