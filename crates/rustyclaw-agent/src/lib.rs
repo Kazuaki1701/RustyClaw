@@ -875,7 +875,8 @@ impl Pipeline {
         let start = delta_start.max(history.len().saturating_sub(10));
         let mut conversation_text = String::new();
         for msg in &history[start..] {
-            conversation_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
+            let cleaned = cleanse_for_memory_flush(&msg.content);
+            conversation_text.push_str(&format!("{}: {}\n", msg.role, cleaned));
         }
 
         let memory_model = config.get_model("memory");
@@ -899,27 +900,17 @@ impl Pipeline {
         let existing_memory = fs::read_to_string(&memory_path).unwrap_or_default();
 
         let system_prompt = "\
-You are a memory manager. Given the current MEMORY.md and a recent conversation, your tasks are:
+Memory manager. Rewrite MEMORY.md to incorporate new facts from the conversation. Remove outdated info. Keep concise bullet points. Also write a daily log summary.
 
-1. Produce a fully rewritten MEMORY.md that:
-   - Incorporates important new facts, decisions, preferences, and learnings from the conversation
-   - Removes outdated or redundant information
-   - Uses concise, factual bullet points under clear headings
-   - If nothing new is worth adding and the existing content is fine, output it unchanged
+Output only (no text outside tags):
+<mem>
+[complete rewritten MEMORY.md]
+</mem>
+<log>
+* [activity summary bullets]
+</log>
 
-2. Produce a concise bulleted daily log entry summarising what happened in the conversation.
-
-Output using exactly these delimiters (no extra text outside them):
----NEW_MEMORY---
-<complete rewritten MEMORY.md content>
----END_MEMORY---
----DAILY_LOG---
-<bulleted activity summary>
----END_DAILY_LOG---
-
-Rules:
-- Never truncate mid-sentence inside ---NEW_MEMORY---.
-- Write in the same language as the existing MEMORY.md content.
+Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
 ";
 
         let user_message = format!(
@@ -951,10 +942,8 @@ Rules:
             Self::record_aux_usage(&db, session_id, usage, "memory-flush");
         }
 
-        let new_memory =
-            extract_delimited_block(&response_text, "---NEW_MEMORY---", "---END_MEMORY---");
-        let daily_log =
-            extract_delimited_block(&response_text, "---DAILY_LOG---", "---END_DAILY_LOG---");
+        let new_memory = extract_delimited_block(&response_text, "<mem>", "</mem>");
+        let daily_log = extract_delimited_block(&response_text, "<log>", "</log>");
 
         // 1. MEMORY.md の全書き換え (fail-open)
         if let Some(final_content) = new_memory
@@ -1860,6 +1849,52 @@ pub(crate) fn chunk_memory_md(content: &str) -> Vec<String> {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// memory flush に渡す前に会話メッセージのノイズを除去する。
+/// 進捗バー行（`[###...]` と `%` を含む行）や空行の連続を削除する。
+fn cleanse_for_memory_flush(content: &str) -> String {
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            // 進捗バー行: "[" + "]" + "%" をすべて含む行を除去
+            !(t.contains('[') && t.contains(']') && t.contains('%'))
+        })
+        .collect();
+    // 3行以上連続した空行を 1行に圧縮
+    let mut result = String::new();
+    let mut blank_run = 0usize;
+    for line in &lines {
+        if line.trim().is_empty() {
+            blank_run += 1;
+            if blank_run <= 1 {
+                result.push('\n');
+            }
+        } else {
+            blank_run = 0;
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result.trim().to_string()
+}
+
+/// Gmail の snippet / Calendar の location を 200 文字以内に切り詰める。
+fn truncate_tool_item_fields(category: &str, mut item: serde_json::Value) -> serde_json::Value {
+    const MAX_CHARS: usize = 200;
+    let field = match category {
+        "gmail" => "snippet",
+        "calendar" => "location",
+        _ => return item,
+    };
+    if let Some(val) = item.get(field).and_then(|v| v.as_str())
+        && val.chars().count() > MAX_CHARS
+    {
+        let truncated: String = val.chars().take(MAX_CHARS).collect();
+        item[field] = serde_json::Value::String(format!("{}…", truncated));
+    }
+    item
+}
+
 /// `start_tag` と `end_tag` に囲まれたブロックを抽出する。
 /// `end_tag` が見つからない場合はテキスト末尾までを返す。
 fn extract_delimited_block(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
@@ -2032,10 +2067,10 @@ fn filter_seen_tool_result(
                 if let Err(e) = db.mark_item_seen(&item_id, category) {
                     tracing::warn!("Failed to mark {} as seen: {}", item_id, e);
                 }
-                new_items.push(item.clone());
+                new_items.push(truncate_tool_item_fields(category, item.clone()));
             }
         } else {
-            new_items.push(item.clone());
+            new_items.push(truncate_tool_item_fields(category, item.clone()));
         }
     }
 
@@ -2391,23 +2426,58 @@ mod tests {
 
     #[test]
     fn test_extract_delimited_block_found() {
-        let text = "preamble\n---NEW_MEMORY---\nhello world\n---END_MEMORY---\ntrailing";
-        let result = extract_delimited_block(text, "---NEW_MEMORY---", "---END_MEMORY---");
+        let text = "preamble\n<mem>\nhello world\n</mem>\ntrailing";
+        let result = extract_delimited_block(text, "<mem>", "</mem>");
         assert_eq!(result, Some("hello world".to_string()));
     }
 
     #[test]
     fn test_extract_delimited_block_no_end_tag() {
-        let text = "---NEW_MEMORY---\nhello world";
-        let result = extract_delimited_block(text, "---NEW_MEMORY---", "---END_MEMORY---");
+        let text = "<mem>\nhello world";
+        let result = extract_delimited_block(text, "<mem>", "</mem>");
         assert_eq!(result, Some("hello world".to_string()));
     }
 
     #[test]
     fn test_extract_delimited_block_missing() {
         let text = "no delimiters here";
-        let result = extract_delimited_block(text, "---NEW_MEMORY---", "---END_MEMORY---");
+        let result = extract_delimited_block(text, "<mem>", "</mem>");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_cleanse_for_memory_flush_strips_progress_bar() {
+        let input = "doing work\n[####......] 40%\ndone";
+        let result = cleanse_for_memory_flush(input);
+        assert!(!result.contains('['), "progress bar line should be removed");
+        assert!(result.contains("doing work"));
+        assert!(result.contains("done"));
+    }
+
+    #[test]
+    fn test_cleanse_for_memory_flush_collapses_blank_lines() {
+        let input = "a\n\n\n\n\nb";
+        let result = cleanse_for_memory_flush(input);
+        assert!(!result.contains("\n\n\n"), "3+ blank lines should collapse");
+        assert!(result.contains("a"));
+        assert!(result.contains("b"));
+    }
+
+    #[test]
+    fn test_truncate_tool_item_fields_gmail_snippet() {
+        let long_snippet = "x".repeat(300);
+        let item = serde_json::json!({"id": "1", "snippet": long_snippet});
+        let result = truncate_tool_item_fields("gmail", item);
+        let snippet = result["snippet"].as_str().unwrap();
+        assert!(snippet.chars().count() <= 202, "truncated + ellipsis ≤ 202 chars");
+        assert!(snippet.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_tool_item_fields_short_snippet_unchanged() {
+        let item = serde_json::json!({"id": "1", "snippet": "short"});
+        let result = truncate_tool_item_fields("gmail", item);
+        assert_eq!(result["snippet"].as_str().unwrap(), "short");
     }
 
     #[test]
