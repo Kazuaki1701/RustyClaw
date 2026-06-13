@@ -560,12 +560,24 @@ mod tests {
         let result = inject_skill_content_with_filter(dir.path(), "hello", Some(&names));
 
         // Discovery には両スキルが含まれる
-        assert!(result.contains("skill-alpha"), "Discovery に skill-alpha が含まれること");
-        assert!(result.contains("skill-beta"), "Discovery に skill-beta が含まれること");
+        assert!(
+            result.contains("skill-alpha"),
+            "Discovery に skill-alpha が含まれること"
+        );
+        assert!(
+            result.contains("skill-beta"),
+            "Discovery に skill-beta が含まれること"
+        );
 
         // Activation は skill-alpha のみ（skill-beta は除外）
-        assert!(result.contains("Alpha Instructions"), "skill-alpha の本文が含まれること");
-        assert!(!result.contains("Beta Instructions"), "skill-beta の本文は除外されること");
+        assert!(
+            result.contains("Alpha Instructions"),
+            "skill-alpha の本文が含まれること"
+        );
+        assert!(
+            !result.contains("Beta Instructions"),
+            "skill-beta の本文は除外されること"
+        );
     }
 
     #[test]
@@ -582,10 +594,17 @@ mod tests {
         .unwrap();
 
         // None: フォールバック（スキル名が user message に含まれる場合 Activation）
-        let result_with_name = inject_skill_content_with_filter(dir.path(), "skill-gamma rules", None);
-        assert!(result_with_name.contains("Gamma Instructions"), "名前一致でActivationされること");
+        let result_with_name =
+            inject_skill_content_with_filter(dir.path(), "skill-gamma rules", None);
+        assert!(
+            result_with_name.contains("Gamma Instructions"),
+            "名前一致でActivationされること"
+        );
 
         let result_without_name = inject_skill_content_with_filter(dir.path(), "hello world", None);
-        assert!(!result_without_name.contains("Gamma Instructions"), "名前なしでActivationされないこと");
+        assert!(
+            !result_without_name.contains("Gamma Instructions"),
+            "名前なしでActivationされないこと"
+        );
     }
 }
