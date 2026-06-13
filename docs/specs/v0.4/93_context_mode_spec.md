@@ -4,7 +4,7 @@
 > **ステータス**: `[ACTIVE]`
 > **最終更新日**: 2026-06-13
 > **出典**: https://github.com/mksglu/context-mode（README 調査・2026-06-13）
-> **関連**: [`docs/adr/006-context-mode-integration-scope.md`](../adr/006-context-mode-integration-scope.md) / [`docs/specs/v0.3/10_mcp.md`](../v0.3/10_mcp.md)
+> **関連**: [`docs/adr/006-context-mode-integration-scope.md`](../adr/006-context-mode-integration-scope.md) / [`10_mcp.md`](10_mcp.md)
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **目的**: RustyClaw v0.4 の context window 最適化実装に先立ち、4 upstream の context content 管理を整理・比較する  
 > **作成日**: 2026-06-12（Hermes Agent ソースコード反映: 2026-06-12）  
-> **関連**: [`v0.4/00_rustyclaw.md §4.2・§7 #26`](00_rustyclaw.md) / [`v0.3/02_memory.md §5.3`](../v0.3/02_memory.md)  
+> **関連**: [`v0.4/00_rustyclaw.md §4.2・§7 #26`](00_rustyclaw.md) / [`02_memory.md §5.3`](02_memory.md)  
 > **Hermes Agent ソース**: https://github.com/nousresearch/hermes-agent（Python）
 
 ---

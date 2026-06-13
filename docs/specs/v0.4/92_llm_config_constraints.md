@@ -192,7 +192,7 @@ if context_window_tokens <= 8_192 {
 
 ### 6.3 トークン予算アセンブリ（低優先・v0.4 Context 最適化と統合）
 
-`70/20/10` 戦略（`docs/specs/v0.3/02_memory.md §5.3`）の実装と統合。`ContextBuilder` が各コンポーネントの推計トークン数を合算し、予算内に収まる量だけ組み立てる。
+`70/20/10` 戦略（`docs/specs/v0.4/02_memory.md §5.3`）の実装と統合。`ContextBuilder` が各コンポーネントの推計トークン数を合算し、予算内に収める量だけ組み立てる。
 
 ---
 
@@ -202,6 +202,6 @@ if context_window_tokens <= 8_192 {
 |---|---|
 | `crates/rustyclaw-config/src/lib.rs` | `LlmModelConfig` / `parse_context_window()` |
 | `crates/rustyclaw-agent/src/lib.rs` | `RateLimiter` / `get_history_message_limit()` / `flush_memory()` |
-| `docs/specs/v0.3/02_memory.md §5.3` | 70/20/10 コンテキスト戦略仕様 |
+| `02_memory.md §5.3` | 70/20/10 コンテキスト戦略仕様 |
 | `docs/specs/v0.4/91_context_upstream_comparison.md` | Upstream 実装比較（Heartbeat Digest・ContextBuilder 等） |
 | `docs/task.md` | Phase 51-1 定義・残課題リスト |
