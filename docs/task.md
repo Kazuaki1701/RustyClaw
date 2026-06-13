@@ -20,6 +20,7 @@
   - **再検討**: `SecureSandboxExecutor` 実装時に vault の per-call 解決（v0.3 相当）を導入。現在は起動時一括注入（Phase 49-2）だが、v0.5 では Rust が実行主体になるため `env: {"KEY": "$vault:key"}` 形式で最小限注入が自然に実現できる。
 - [ ] **コンテキスト最適化計画**: 外部 MCP `context-mode` の未使用機能を活用したコンテキスト削減・意味濃縮計画。詳細は [docs/plans/2026-06-13-context-optimization-proposal.md](plans/2026-06-13-context-optimization-proposal.md) 参照。
 - [ ] **ctx_execute_file ストリーム抽出設計**: 巨大ログ・AST・CSVデータのインメモリフィルタによるコンテキスト削減設計。詳細は [docs/plans/2026-06-13-ctx-execute-file-design.md](plans/2026-06-13-ctx-execute-file-design.md) 参照。
+- [ ] **PreCompact / SessionStart 検証計画**: コンパクション時の記憶ロストを防ぐ状態スナップショット伝播の検証。詳細は [docs/plans/2026-06-13-precompact-sessionstart-validation.md](plans/2026-06-13-precompact-sessionstart-validation.md) 参照。
 
 ### v0.6 案件
 
