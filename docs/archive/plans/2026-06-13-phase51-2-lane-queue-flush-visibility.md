@@ -1,5 +1,9 @@
 # Phase 51-2: LANE QUEUE Memory Flush 可視化 実装計画
 
+> [!NOTE]
+> **ステータス**: `[HISTORICAL]` (実装完了・編集不可)  
+> **完了日**: 2026-06-13
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Memory flush と Session Summary の LLM 実行が Dashboard の LANE QUEUE に表示されるようにし、`UNKNOWN` バッジを解消する。

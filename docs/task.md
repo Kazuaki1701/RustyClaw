@@ -19,6 +19,8 @@
 - [ ] **Phase 52-2: リクエストプロンプト（指示文・スキル定義）の動的最適化**:  
   通常のチャットリクエストにおける入力トークンの肥大化（約10k）を防ぐための、プロンプト情報の動的読み込みとフィルタリング。
   - **内容**: ユーザー文脈に応じたスキルの動的選択（Dynamic Skill Selection）、USER.md の興味関心（Interests）等の動的注入、Home Assistant等のスクリプトインターフェース集約、外部スクリプトの MCP ツール化（context-modeネイティブ化）、ブリーフィング結果の相関検索および自動格納。
+  - **追加スコープ（2026-06-13 判明）**: 通常チャットへの `ctx_search` 動的注入（G1）、memory flush 後のセッション要約 `ctx_index`（G2）。関連: `docs/adr/006-context-mode-integration-scope.md`
+  - **要検討（スコープ抜け G3）**: Session-level Summary のアイドルトリガー（5分後）— Phase 52 以降で別途判断。
   - **詳細設計・改善提案**: [2026-06-13-request-prompt-optimization-report.md](file:///home/kazuaki/Projects/RustyClaw/docs/review/2026-06-13-request-prompt-optimization-report.md)
 
 ---
@@ -35,3 +37,4 @@
 ### v0.4 残課題（`docs/specs/v0.4/` 精査 — 2026-06-12）
 
 - [ ] **Dashboard 改善**: SETTING タブ（`GET/POST /api/config` + 2ステップ確定 UI）・RELOAD ボタン（既存 `GET /reload` をダッシュボードから呼び出す）
+- [ ] **Dashboard: Rate Limit / Context Window リアルタイム表示**: `GET /api/rate-limits` エンドポイントを追加し、purpose ごとの `rpm/tpm/rpd/tpd`（設定値・分/日消費量）と `context_window_tokens` をダッシュボードに 10 秒ポーリング表示。実装時に `RateLimiter` のクレート間公開方式（スナップショット型）の ADR を起票する。関連: `docs/adr/005-rate-limiter-quota-enforcement.md`

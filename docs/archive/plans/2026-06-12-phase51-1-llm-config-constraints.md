@@ -1,5 +1,9 @@
 # Phase 51-1: LLM Config 制限の適切な適用 Implementation Plan
 
+> [!NOTE]
+> **ステータス**: `[HISTORICAL]` (実装完了・編集不可)  
+> **完了日**: 2026-06-12
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `LlmModelConfig` に制限情報（context_window / rpm / tpm 等）を乗せてパイプライン全体で正しく参照し、小コンテキストモデルでも安全に動作させる。
