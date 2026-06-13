@@ -2,38 +2,10 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-13（Phase 52-6 完了。Phase 52 全フェーズ完了）  
+> **最終更新日**: 2026-06-13（Phase 52 完了。優先課題なし。将来課題のみ残存）  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
 > **最新アーカイブ**: [2026-06-13-completed-phase52-all.md](archive/tasks/2026-06-13-completed-phase52-all.md) (Phase 52-1〜52-6 Context 最適化・Memory RAG・エピソード記憶連携)  
 > **将来課題の管理**: 未着手の将来課題は [`docs/specs/v0.3/`](specs/v0.3/) 各仕様ファイルの「将来拡張」節で管理しています。
-
----
-
-## 優先課題
-
-- [x] **Phase 52-1: 全体共通の静的・基礎最適化**（完了: 2026-06-13）:  
-  全ての用途におけるLLMリクエストの静的トークンおよび外部ツール（Gmail/Calendar/Keep）出力の削減・整理。
-  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
-
-- [x] **Phase 52-2: 用途別最適化 - Heartbeat**（完了: 2026-06-13）:  
-  バックグラウンド自動処理（自動巡回監視）におけるプロンプト・ツール情報の極限スリム化。
-  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
-
-- [x] **Phase 52-3 + 52-3b: 用途別最適化 - Chat**（完了: 2026-06-13）:  
-  通常対話における動的フィルタリング（動的スキル選択、興味情報の動的注入）と `context-mode` の完全統合。PreCompact/SessionStart フックは context-mode plugin が 15 カテゴリで自動キャプチャ済みを確認（52-3b 検証完了）。
-  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
-
-- [x] **Phase 52-4: 用途別最適化 - Topic Patrol**（完了: 2026-06-13）:  
-  外部ニュース・メール・RSS 巡回タスクのコンテキスト極小化。`ctx_fetch_and_index` による HTML→Markdown キャッシュと `ctx_search` RAG 巡回、特化型プロンプト適用。
-  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
-
-- [x] **Phase 52-5: 長期記憶（MEMORY.md）のセマンティック分割（Memory RAG）**（完了: 2026-06-13）:  
-  肥大化する `MEMORY.md` を `ctx_index` で SQLite FTS5 に分割登録し、通常対話時は `ctx_search` で関連チャンクのみを動的ロード。Memory Flush も `ctx_patch` による部分書き換えに移行。
-  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
-
-- [x] **Phase 52-6: エピソード記憶連携とデイリーブリーフィングの高度化**（完了: 2026-06-13）:  
-  日次ブリーフィング結果の自動 `ctx_index` 登録と、`ctx_search` による相関検索アドバイザリー（過去の同様状況の引き出し）。
-  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
 ---
 
