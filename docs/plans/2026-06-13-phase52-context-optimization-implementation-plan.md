@@ -1,7 +1,7 @@
 # Phase 52 用途別 LLM コンテキスト最適化・軽量化 実装計画書
 
 > [!NOTE]
-> **ステータス**: `[ACTIVE]` (Phase 52-1 完了。Phase 52-2 着手待ち)  
+> **ステータス**: `[ACTIVE]` (Phase 52-1, 52-2, 52-3 完了。PreCompact/SessionStart は Phase 52-3b に分割。Phase 52-4 着手待ち)  
 > **最終更新日**: 2026-06-13  
 > **対象コード**: `crates/rustyclaw-agent/src/lib.rs`, `crates/rustyclaw-gateway/src/lib.rs` 等  
 > **設計仕様書**: [`docs/specs/2026-06-13-phase52-context-optimization-design.md`](../specs/2026-06-13-phase52-context-optimization-design.md)  
@@ -18,11 +18,11 @@
   - [x] `build_heartbeat_context` から `SOUL.md` を除外（HEARTBEAT.md のみに限定）。
   - [x] Heartbeat 専用 `ToolRegistry` から `WorkspaceWriteTool` を除外（書き込みリスク排除）。
   - [x] `ctx_execute` 利用は HEARTBEAT.md 既存指示（Calendar/Gmail）で対応済み。
-- [ ] **【Phase 52-3】用途別最適化 - Chat（ユーザー対話）の実装**:
-  - [ ] `ctx_search` を用いた動的スキル選択（Dynamic Skill Selection）機能の実装。
-  - [ ] `USER.md` 興味関心（Interests）を RAG で動的注入する機能の実装。
-  - [ ] Keep / Gmail 返却値が長大な場合の文字数制限（トリミング）または事前要約の実装。
-  - [ ] `PreCompact` / `SessionStart` フックの有効化と SQLite スナップショット退避・復元の実装。
+- [~] **【Phase 52-3】用途別最適化 - Chat（ユーザー対話）の実装**（完了: 2026-06-13、PreCompact/SessionStart は Phase 52-3b に分割）:
+  - [x] `ctx_search` を用いた動的スキル選択（Dynamic Skill Selection）機能の実装。
+  - [x] `USER.md` 興味関心（Interests）を RAG で動的注入する機能の実装。
+  - [x] Keep / Gmail 返却値が長大な場合の文字数制限（トリミング）または事前要約の実装。
+  - [ ] `PreCompact` / `SessionStart` フックの有効化と SQLite スナップショット退避・復元の実装。（→ Phase 52-3b に分割）
 - [ ] **【Phase 52-4】用途別最適化 - Topic Patrol の実装**:
   - [ ] `ctx_fetch_and_index` を用いた巡回先Web/フィードのキャッシュ・インデックス化の実装。
   - [ ] ニュース要約に特化した極小コンテキスト構築処理の実装。
