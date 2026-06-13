@@ -704,10 +704,21 @@ impl LaneRegistry {
                                         }
                                     });
 
-                                    // スキルファイル注入（workspace/skills/<name>.md が存在すれば前置）
-                                    let injected_content = crate::skills::inject_skill_content(
+                                    // ctx_search でスキルを動的選択（cron セッション以外のみ）
+                                    let ctx_skill_names: Option<Vec<String>> = if !session_id.starts_with("cron:") {
+                                        try_ctx_search(&tool_server_handle, &content)
+                                            .await
+                                            .map(|ctx| parse_skill_names_from_ctx(&ctx))
+                                            .filter(|names| !names.is_empty())
+                                    } else {
+                                        None
+                                    };
+
+                                    // スキルファイル注入（ctx_search 結果のスキルのみ Activation、Discovery は全件）
+                                    let injected_content = crate::skills::inject_skill_content_with_filter(
                                         &workspace_path,
                                         &content,
+                                        ctx_skill_names.as_deref(),
                                     );
                                     let exec_res = if let Some(target_session_id) =
                                         session_id.strip_prefix("cron:session-summary:")
@@ -749,6 +760,16 @@ impl LaneRegistry {
                                         } else {
                                             "discord"
                                         };
+                                        // USER.md Interests を ctx_search で動的取得（cron 以外のみ）
+                                        let user_interests_extra: Option<String> = if !session_id.starts_with("cron:") {
+                                            let query = format!("{} user interests hobbies", content);
+                                            try_ctx_search(&tool_server_handle, &query)
+                                                .await
+                                                .filter(|r| r.contains("[user-interests]"))
+                                                .map(|r| format!("\n\n# Relevant User Interests\n{}", r))
+                                        } else {
+                                            None
+                                        };
                                         pipeline
                                             .execute_with_rig_agent(
                                                 &workspace_path,
@@ -758,6 +779,7 @@ impl LaneRegistry {
                                                 tool_server_handle.clone(),
                                                 run_purpose,
                                                 progress_tx_opt,
+                                                user_interests_extra,
                                             )
                                             .await
                                     };
@@ -1071,6 +1093,90 @@ async fn try_ctx_index(
     }
 }
 
+static SKILL_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\[skill:([a-z][a-z0-9-]*)\]").unwrap()
+});
+
+/// ctx_search の返却テキストから [skill:NAME] パターンを抽出してスキル名リストに変換する。
+fn parse_skill_names_from_ctx(ctx: &str) -> Vec<String> {
+    let names: std::collections::HashSet<String> = SKILL_RE
+        .captures_iter(ctx)
+        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        .collect();
+    names.into_iter().collect()
+}
+
+/// 起動時に全 SKILL.md を context-mode にインデックス登録する。
+/// [skill:NAME] プレフィックスにより ctx_search でスキル名が特定できる。
+async fn index_skills_to_context_mode(
+    workspace_path: &Path,
+    handle: &rig_core::tool::server::ToolServerHandle,
+) {
+    let skills = crate::skills::load_skills(workspace_path);
+    if skills.is_empty() {
+        return;
+    }
+    for skill in &skills {
+        let content = format!(
+            "[skill:{}]\n{}\n{}",
+            skill.manifest.name,
+            skill.manifest.description,
+            skill.instructions.trim()
+        );
+        let source = format!("skill:{}", skill.manifest.name);
+        try_ctx_index(handle, &content, &source).await;
+    }
+    tracing::info!(
+        "context-mode: {} スキルをインデックス登録完了",
+        skills.len()
+    );
+}
+
+/// USER.md の "## Interests" セクション本文を抽出して返す。
+fn extract_interests_section(content: &str) -> String {
+    let mut in_section = false;
+    let mut lines: Vec<&str> = Vec::new();
+    for line in content.lines() {
+        if line.trim_start().starts_with("## Interests") {
+            in_section = true;
+            continue;
+        }
+        if in_section {
+            if line.starts_with("## ") {
+                break;
+            }
+            if !line.trim().is_empty() {
+                lines.push(line);
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+/// 起動時に USER.md の Interests セクションを context-mode にインデックス登録する。
+/// [user-interests] プレフィックスにより ctx_search 結果から識別できる。
+async fn index_user_interests(
+    workspace_path: &Path,
+    handle: &rig_core::tool::server::ToolServerHandle,
+) {
+    let user_md_path = workspace_path.join("USER.md");
+    let content = match std::fs::read_to_string(&user_md_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("USER.md 読み込み失敗（Interests インデックス登録スキップ）: {}", e);
+            return;
+        }
+    };
+    let interests = extract_interests_section(&content);
+    if interests.is_empty() {
+        tracing::info!("USER.md に Interests セクションが見つからないためスキップ");
+        return;
+    }
+    let indexed = format!("[user-interests]\n{}", interests);
+    try_ctx_index(handle, &indexed, "user-interests").await;
+    tracing::info!("context-mode: USER.md Interests インデックス登録完了");
+}
+
 pub struct Gateway {
     config_path: PathBuf,
     workspace_path: PathBuf,
@@ -1149,6 +1255,26 @@ impl Gateway {
         // context-mode 子プロセスを起動（fail-open: エラーでも Gateway は続行）
         let _ctx_mode_handle =
             start_context_mode(self.workspace_path.clone(), tool_server_handle.clone()).await;
+
+        // スキルを context-mode に非同期インデックス登録（context-mode 起動後 3 秒待ってから実行）
+        {
+            let ws = self.workspace_path.clone();
+            let tsh = tool_server_handle.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                index_skills_to_context_mode(&ws, &tsh).await;
+            });
+        }
+
+        // USER.md Interests を context-mode に非同期インデックス登録（4 秒後）
+        {
+            let ws = self.workspace_path.clone();
+            let tsh = tool_server_handle.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                index_user_interests(&ws, &tsh).await;
+            });
+        }
 
         // MCP サーバーへの接続 (rig-core rmcp 経由)
         for (name, conf) in &config.mcp {
@@ -1560,6 +1686,23 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    #[test]
+    fn test_extract_interests_section_extracts_correctly() {
+        let user_md = "# User Profile\n\n## Basics\n- Name: K\n\n## Interests\n- AI Agent\n  sources: HN\n- Cloudflare\n  sources: blog\n\n## Work Context\n- Workplace: Atsugi";
+        let interests = extract_interests_section(user_md);
+        assert!(interests.contains("AI Agent"), "Interests セクションが抽出されること");
+        assert!(interests.contains("Cloudflare"), "複数行が含まれること");
+        assert!(!interests.contains("Basics"), "Basics セクションは除外されること");
+        assert!(!interests.contains("Work Context"), "Work Context セクションは除外されること");
+    }
+
+    #[test]
+    fn test_extract_interests_section_empty_when_missing() {
+        let user_md = "# User Profile\n\n## Basics\n- Name: K\n";
+        let interests = extract_interests_section(user_md);
+        assert!(interests.is_empty(), "Interests セクションがない場合は空文字を返すこと");
+    }
+
     #[tokio::test]
     async fn test_message_bus_pub_sub() -> Result<()> {
         let bus = MessageBus::new();
@@ -1652,5 +1795,19 @@ mod tests {
 
         handle.abort();
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_skill_names_from_ctx_finds_skills() {
+        let ctx = "Some context\n[skill:home-assistant-rest-api]\nSome instructions\n[skill:gmail]\nMore text";
+        let mut names = parse_skill_names_from_ctx(ctx);
+        names.sort();
+        assert_eq!(names, vec!["gmail", "home-assistant-rest-api"]);
+    }
+
+    #[test]
+    fn test_parse_skill_names_from_ctx_empty() {
+        let names = parse_skill_names_from_ctx("no skill markers here");
+        assert!(names.is_empty());
     }
 }

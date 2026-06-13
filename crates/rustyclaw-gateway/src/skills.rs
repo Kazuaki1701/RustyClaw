@@ -332,29 +332,43 @@ pub fn generate_skills_directory(skills: &[Skill]) -> String {
     dir_str
 }
 
-/// ゲートウェイ L530 で呼ばれるメインエントリーポイント。
-/// 新しい段階的開示（Discovery & Activation）をハイブリッドに適用する。
+/// ゲートウェイで呼ばれるメインエントリーポイント（後方互換ラッパー）。
+#[allow(dead_code)]
 pub fn inject_skill_content(workspace_path: &Path, content: &str) -> String {
+    inject_skill_content_with_filter(workspace_path, content, None)
+}
+
+/// ctx_search 結果のスキル名リストを受け取り、そのスキルのみを Activation する版。
+/// - Some(names): names に含まれるスキルのみ全文注入（Discovery は全件）
+/// - None: キーワードマッチングフォールバック（既存の動作）
+pub fn inject_skill_content_with_filter(
+    workspace_path: &Path,
+    content: &str,
+    ctx_skill_names: Option<&[String]>,
+) -> String {
     let skills = load_skills(workspace_path);
     if skills.is_empty() {
         return content.to_string();
     }
 
-    // 1. Discovery (レベル1) の自動構築
     let skills_directory = generate_skills_directory(&skills);
-
-    // 2. Activation (レベル2) の動的ロード
     let search_target = content.to_lowercase();
     let mut injected_instructions = String::new();
 
     for skill in &skills {
-        let trigger_tag = format!("use-skill: {}", skill.manifest.name);
-        let name_match = format!("skill:{}", skill.manifest.name);
+        let should_inject = match ctx_skill_names {
+            Some(names) => names.iter().any(|n| n == &skill.manifest.name),
+            None => {
+                // フォールバック: キーワードマッチング（既存の動作）
+                let trigger_tag = format!("use-skill: {}", skill.manifest.name);
+                let name_match = format!("skill:{}", skill.manifest.name);
+                search_target.contains(&trigger_tag)
+                    || search_target.contains(&name_match)
+                    || search_target.contains(&skill.manifest.name)
+            }
+        };
 
-        if search_target.contains(&trigger_tag)
-            || search_target.contains(&name_match)
-            || search_target.contains(&skill.manifest.name)
-        {
+        if should_inject {
             tracing::info!(
                 "Activation: Dynamic loading of skill '{}' into prompt",
                 skill.manifest.name
@@ -367,7 +381,6 @@ pub fn inject_skill_content(workspace_path: &Path, content: &str) -> String {
         }
     }
 
-    // 元のプロンプトに Discovery と Activation を付与して返す
     let mut final_content = content.to_string();
     if !skills_directory.is_empty() {
         final_content = format!("{}{}", final_content, skills_directory);
@@ -520,5 +533,59 @@ mod tests {
         let result_patrol = inject_skill_content(dir.path(), prompt_patrol);
         assert!(result_patrol.contains("ACTIVE SKILL: topic-patrol"));
         assert!(result_patrol.contains("Patrol description"));
+    }
+
+    #[test]
+    fn test_inject_skill_content_with_filter_named_skills_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills_dir = dir.path().join("skills");
+
+        let skill_a = skills_dir.join("skill-alpha");
+        std::fs::create_dir_all(&skill_a).unwrap();
+        std::fs::write(
+            skill_a.join("SKILL.md"),
+            "---\nname: skill-alpha\ndescription: Alpha skill.\n---\n# Alpha Instructions\nDo alpha.",
+        )
+        .unwrap();
+
+        let skill_b = skills_dir.join("skill-beta");
+        std::fs::create_dir_all(&skill_b).unwrap();
+        std::fs::write(
+            skill_b.join("SKILL.md"),
+            "---\nname: skill-beta\ndescription: Beta skill.\n---\n# Beta Instructions\nDo beta.",
+        )
+        .unwrap();
+
+        let names = vec!["skill-alpha".to_string()];
+        let result = inject_skill_content_with_filter(dir.path(), "hello", Some(&names));
+
+        // Discovery には両スキルが含まれる
+        assert!(result.contains("skill-alpha"), "Discovery に skill-alpha が含まれること");
+        assert!(result.contains("skill-beta"), "Discovery に skill-beta が含まれること");
+
+        // Activation は skill-alpha のみ（skill-beta は除外）
+        assert!(result.contains("Alpha Instructions"), "skill-alpha の本文が含まれること");
+        assert!(!result.contains("Beta Instructions"), "skill-beta の本文は除外されること");
+    }
+
+    #[test]
+    fn test_inject_skill_content_with_filter_none_falls_back_to_keyword() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills_dir = dir.path().join("skills");
+
+        let skill_a = skills_dir.join("skill-gamma");
+        std::fs::create_dir_all(&skill_a).unwrap();
+        std::fs::write(
+            skill_a.join("SKILL.md"),
+            "---\nname: skill-gamma\ndescription: Gamma skill.\n---\n# Gamma Instructions\nDo gamma.",
+        )
+        .unwrap();
+
+        // None: フォールバック（スキル名が user message に含まれる場合 Activation）
+        let result_with_name = inject_skill_content_with_filter(dir.path(), "skill-gamma rules", None);
+        assert!(result_with_name.contains("Gamma Instructions"), "名前一致でActivationされること");
+
+        let result_without_name = inject_skill_content_with_filter(dir.path(), "hello world", None);
+        assert!(!result_without_name.contains("Gamma Instructions"), "名前なしでActivationされないこと");
     }
 }
