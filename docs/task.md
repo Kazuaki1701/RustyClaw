@@ -11,17 +11,17 @@
 
 ## 優先課題
 
-- [ ] **Phase 52-1: Memory Flush のコンテキスト最適化**:  
-  `memory flush` 実行時における LLM リクエストおよびレスポンスのトークン数節約、およびコンテキスト窓（32k）の効率的な管理。
-  - **内容**: XMLデリミタへの移行、システムプロンプトの圧縮、会話履歴のクレンジング、長期的なメモリセマンティック分割（RAG化）。
-  - **詳細設計・改善提案**: [2026-06-13-phase52-1-memory-flush-context-optimization.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-1-memory-flush-context-optimization.md)
+- [ ] **Phase 52-1: 全体共通の静的・基礎最適化**:  
+  全ての用途におけるLLMリクエストの静的トークンおよび外部ツール（Gmail/Calendar/Keep）出力の削減・整理。
+  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
-- [ ] **Phase 52-2: リクエストプロンプト（指示文・スキル定義）の動的最適化**:  
-  通常のチャットリクエストにおける入力トークンの肥大化（約10k）を防ぐための、プロンプト情報の動的読み込みとフィルタリング。
-  - **内容**: ユーザー文脈に応じたスキルの動的選択（Dynamic Skill Selection）、USER.md の興味関心（Interests）等の動的注入、Home Assistant等のスクリプトインターフェース集約、外部スクリプトの MCP ツール化（context-modeネイティブ化）、ブリーフィング結果の相関検索および自動格納。
-  - **追加スコープ（2026-06-13 判明）**: 通常チャットへの `ctx_search` 動的注入（G1）、memory flush 後のセッション要約 `ctx_index`（G2）。関連: `docs/adr/006-context-mode-integration-scope.md`
-  - **要検討（スコープ抜け G3）**: Session-level Summary のアイドルトリガー（5分後）— Phase 52 以降で別途判断。
-  - **詳細設計・改善提案**: [2026-06-13-request-prompt-optimization-report.md](file:///home/kazuaki/Projects/RustyClaw/docs/review/2026-06-13-request-prompt-optimization-report.md)
+- [ ] **Phase 52-2: 用途別最適化 - Heartbeat**:  
+  バックグラウンド自動処理（自動巡回監視）におけるプロンプト・ツール情報の極限スリム化。
+  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
+
+- [ ] **Phase 52-3: 用途別最適化 - Chat**:  
+  通常対話における動的フィルタリング（動的スキル選択、興味情報の動的注入、適応的クォータガード）と `context-mode` の完全統合。
+  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
 ---
 
