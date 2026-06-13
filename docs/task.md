@@ -11,11 +11,11 @@
 
 ## 優先課題
 
-- [ ] **Phase 52-1: 全体共通の静的・基礎最適化**:  
+- [x] **Phase 52-1: 全体共通の静的・基礎最適化**（完了: 2026-06-13）:  
   全ての用途におけるLLMリクエストの静的トークンおよび外部ツール（Gmail/Calendar/Keep）出力の削減・整理。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
-- [ ] **Phase 52-2: 用途別最適化 - Heartbeat**:  
+- [x] **Phase 52-2: 用途別最適化 - Heartbeat**（完了: 2026-06-13）:  
   バックグラウンド自動処理（自動巡回監視）におけるプロンプト・ツール情報の極限スリム化。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
