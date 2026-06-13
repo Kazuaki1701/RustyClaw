@@ -959,32 +959,90 @@ Rules:
         Ok(())
     }
 
+    fn select_heartbeat_steps(
+        content: &str,
+        last_checks: &serde_json::Value,
+        now: chrono::DateTime<chrono::Local>,
+    ) -> String {
+        let mut sections: Vec<String> = Vec::new();
+        let mut current = String::new();
+        for line in content.lines() {
+            if line.starts_with("## ") && !current.is_empty() {
+                sections.push(std::mem::take(&mut current));
+            }
+            current.push_str(line);
+            current.push('\n');
+        }
+        if !current.is_empty() {
+            sections.push(current);
+        }
+
+        if sections.len() <= 1 {
+            return content.to_string();
+        }
+
+        let elapsed_mins = |key: &str| -> Option<i64> {
+            let ts = last_checks.get(key)?.as_str()?;
+            let dt = chrono::DateTime::parse_from_rfc3339(ts).ok()?;
+            Some((now - dt.with_timezone(&chrono::Local)).num_minutes())
+        };
+
+        let mut selected = String::new();
+        for section in &sections {
+            let should_skip = if section.starts_with("## Step 2:") {
+                elapsed_mins("weather").map(|m| m < 30).unwrap_or(false)
+            } else if section.starts_with("## Step 3:") {
+                let cal = elapsed_mins("calendar").map(|m| m < 30).unwrap_or(false);
+                let email = elapsed_mins("email").map(|m| m < 30).unwrap_or(false);
+                cal && email
+            } else if section.starts_with("## Step 4:") {
+                elapsed_mins("lastUserContact")
+                    .map(|m| m < 480)
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            if !should_skip {
+                selected.push_str(section);
+            }
+        }
+
+        if selected.trim().is_empty() {
+            content.to_string()
+        } else {
+            selected
+        }
+    }
+
     /// Heartbeat 専用の軽量システムコンテキストを構築する（SOUL + HEARTBEAT のみ）。
     /// MEMORY.md は RAG 経由で関連チャンクのみを動的注入する（ISSUE-28）。
     /// 静的ファイルのみを返す。動的な [now:] は呼び出し元 execute_heartbeat で追加する。
     pub fn build_heartbeat_context(&self, workspace_dir: &Path) -> Result<String> {
-        let files = ["SOUL.md", "HEARTBEAT.md"];
-        let mut context = String::new();
-        for filename in &files {
-            let path = workspace_dir.join(filename);
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to read context file {:?}: {}. Using empty content.",
-                        path,
-                        e
-                    );
-                    String::new()
-                }
-            };
-            context.push_str(&format!(
-                "# {}\n\n{}\n\n",
-                filename,
-                Self::strip_comments(&content)
-            ));
-        }
-        Ok(context)
+        let raw = match fs::read_to_string(workspace_dir.join("HEARTBEAT.md")) {
+            Ok(content) => content,
+            Err(e) => {
+                tracing::warn!("Failed to read HEARTBEAT.md: {}. Using empty content.", e);
+                String::new()
+            }
+        };
+
+        let state_path = workspace_dir.join("memory").join("heartbeat-state.json");
+        let content = match fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            Some(state) => {
+                let now = chrono::Local::now();
+                Self::select_heartbeat_steps(&raw, &state["lastChecks"], now)
+            }
+            None => raw,
+        };
+
+        Ok(format!(
+            "# HEARTBEAT.md\n\n{}\n\n",
+            Self::strip_comments(&content)
+        ))
     }
 
     /// Heartbeat 専用実行（軽量コンテキスト使用、履歴なし、ツールループ付き）
@@ -3290,7 +3348,7 @@ Keep it short.\n\
         let pipeline = Pipeline::new(config, flush_sem);
         let context = pipeline.build_heartbeat_context(ws).unwrap();
 
-        assert!(context.contains("# SOUL.md"));
+        // Phase 52-11: build_heartbeat_context は HEARTBEAT.md のみを返す（SOUL.md は除外）
         assert!(context.contains("# HEARTBEAT.md"));
         assert!(
             !context.contains("[now: "),
@@ -3326,6 +3384,230 @@ Keep it short.\n\
             soul_section.contains("[RustyClaw]"),
             "SOUL.md が切り詰められているはず"
         );
+    }
+
+    // ── select_heartbeat_steps ──────────────────────────────────────────────
+
+    fn make_heartbeat_content() -> &'static str {
+        "\
+# Heartbeat — Memory & Awareness
+
+preamble text
+
+## Quiet hours (0:00–4:59)
+quiet content
+
+## Step 1: Review recent activity
+step1 content
+
+## Step 2: Weather & Home Environment alert
+step2 content
+
+## Step 3: Calendar & Email check
+step3 content
+
+## Step 4: Check-in if silent too long
+step4 content
+
+## Step 5: Proactive work
+step5 content
+
+## Step 6: Response
+step6 content
+"
+    }
+
+    fn mins_ago(mins: i64) -> String {
+        (chrono::Local::now() - chrono::Duration::minutes(mins))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_skips_step2_if_weather_recent() {
+        let now = chrono::Local::now();
+        let checks = serde_json::json!({
+            "weather": mins_ago(10),
+            "calendar": mins_ago(120),
+            "email": mins_ago(120),
+            "lastUserContact": mins_ago(600),
+        });
+        let result = Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks, now);
+        assert!(result.contains("step1 content"), "Step 1 は毎回含まれる");
+        assert!(
+            !result.contains("step2 content"),
+            "Step 2 は weather 30分未満でスキップ"
+        );
+        assert!(
+            result.contains("step3 content"),
+            "Step 3 は含まれる（calendar/email 古い）"
+        );
+        assert!(
+            result.contains("step4 content"),
+            "Step 4 は含まれる（10h 経過）"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_includes_step2_if_weather_old() {
+        let now = chrono::Local::now();
+        let checks = serde_json::json!({
+            "weather": mins_ago(60),
+            "calendar": mins_ago(10),
+            "email": mins_ago(10),
+            "lastUserContact": mins_ago(10),
+        });
+        let result = Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks, now);
+        assert!(
+            result.contains("step2 content"),
+            "Step 2 は weather 60分後なら含まれる"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_skips_step3_only_if_both_recent() {
+        let now = chrono::Local::now();
+        let checks_one_recent = serde_json::json!({
+            "weather": mins_ago(60),
+            "calendar": mins_ago(5),
+            "email": mins_ago(120),
+            "lastUserContact": mins_ago(600),
+        });
+        let result =
+            Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks_one_recent, now);
+        assert!(
+            result.contains("step3 content"),
+            "email が古いので Step 3 は含まれる"
+        );
+
+        let checks_both_recent = serde_json::json!({
+            "weather": mins_ago(60),
+            "calendar": mins_ago(5),
+            "email": mins_ago(5),
+            "lastUserContact": mins_ago(600),
+        });
+        let result2 =
+            Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks_both_recent, now);
+        assert!(
+            !result2.contains("step3 content"),
+            "両方直近なので Step 3 スキップ"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_skips_step4_if_contact_recent() {
+        let now = chrono::Local::now();
+        let checks = serde_json::json!({
+            "weather": mins_ago(60),
+            "calendar": mins_ago(60),
+            "email": mins_ago(60),
+            "lastUserContact": mins_ago(60),
+        });
+        let result = Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks, now);
+        assert!(
+            !result.contains("step4 content"),
+            "Step 4 は 8h 未満でスキップ"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_always_includes_step1_step5_step6() {
+        let now = chrono::Local::now();
+        let checks = serde_json::json!({
+            "weather": mins_ago(1),
+            "calendar": mins_ago(1),
+            "email": mins_ago(1),
+            "lastUserContact": mins_ago(1),
+        });
+        let result = Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks, now);
+        assert!(result.contains("step1 content"), "Step 1 は常に含まれる");
+        assert!(result.contains("step5 content"), "Step 5 は常に含まれる");
+        assert!(result.contains("step6 content"), "Step 6 は常に含まれる");
+        assert!(
+            result.contains("quiet content"),
+            "Quiet hours は常に含まれる"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_fallback_no_h2_sections() {
+        let now = chrono::Local::now();
+        let content = "no sections here, no ## headings";
+        let checks = serde_json::json!({});
+        let result = Pipeline::select_heartbeat_steps(content, &checks, now);
+        assert_eq!(result, content, "## 見出しなし → 全文フォールバック");
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_fallback_invalid_timestamp() {
+        let now = chrono::Local::now();
+        let content = make_heartbeat_content();
+        let checks = serde_json::json!({
+            "weather": "not-a-valid-timestamp",
+            "calendar": mins_ago(120),
+            "email": mins_ago(120),
+            "lastUserContact": mins_ago(600),
+        });
+        let result = Pipeline::select_heartbeat_steps(content, &checks, now);
+        assert!(
+            result.contains("step2 content"),
+            "タイムスタンプ不正 → fail-open でStep 2を含める"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_fallback_missing_key() {
+        let now = chrono::Local::now();
+        let content = make_heartbeat_content();
+        let checks = serde_json::json!({
+            "calendar": mins_ago(120),
+            "email": mins_ago(120),
+            "lastUserContact": mins_ago(600),
+        });
+        let result = Pipeline::select_heartbeat_steps(content, &checks, now);
+        assert!(
+            result.contains("step2 content"),
+            "キー欠如 → fail-open でStep 2を含める"
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_context_falls_back_without_state_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        std::fs::write(
+            ws.join("HEARTBEAT.md"),
+            "## Step 1: Review\nstep1\n\n## Step 2: Weather\nstep2\n",
+        )
+        .unwrap();
+        let config = make_test_config_with_url("http://localhost");
+        let sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+        let ctx = pipeline.build_heartbeat_context(ws).unwrap();
+        assert!(ctx.contains("step1"), "state なし → 全文含まれる");
+        assert!(ctx.contains("step2"), "state なし → 全文含まれる");
+    }
+
+    #[test]
+    fn test_build_heartbeat_context_falls_back_with_invalid_json() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        std::fs::write(
+            ws.join("HEARTBEAT.md"),
+            "## Step 1: Review\nstep1\n\n## Step 2: Weather\nstep2\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(ws.join("memory")).unwrap();
+        std::fs::write(
+            ws.join("memory").join("heartbeat-state.json"),
+            "not valid json",
+        )
+        .unwrap();
+        let config = make_test_config_with_url("http://localhost");
+        let sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+        let ctx = pipeline.build_heartbeat_context(ws).unwrap();
+        assert!(ctx.contains("step1"), "JSON 不正 → 全文フォールバック");
+        assert!(ctx.contains("step2"), "JSON 不正 → 全文フォールバック");
     }
 }
 
