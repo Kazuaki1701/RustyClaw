@@ -1,8 +1,8 @@
 # RustyClaw Memory Flush コンテキスト窓 最適化計画書
 
 > [!NOTE]
-> **ステータス**: `[ACTIVE]` (実装準備中)  
-> **最終更新日**: 2026-06-13  
+> **ステータス**: `[HISTORICAL]` (編集不可)  
+> **完了日**: 2026-06-13（設計フェーズ完了。内容は [`docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md`](../plans/2026-06-13-phase52-context-optimization-implementation-plan.md) の Phase 52-1 に統合）  
 > **対象コード**: `crates/rustyclaw-agent/src/lib.rs` 等のメモリ処理関連
 
 ## 開発タスクチェックリスト

@@ -23,6 +23,18 @@
   通常対話における動的フィルタリング（動的スキル選択、興味情報の動的注入、適応的クォータガード）と `context-mode` の完全統合。
   - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
 
+- [ ] **Phase 52-4: 用途別最適化 - Topic Patrol**:  
+  外部ニュース・メール・RSS 巡回タスクのコンテキスト極小化。`ctx_fetch_and_index` による HTML→Markdown キャッシュと `ctx_search` RAG 巡回、特化型プロンプト適用。
+  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
+
+- [ ] **Phase 52-5: 長期記憶（MEMORY.md）のセマンティック分割（Memory RAG）**:  
+  肥大化する `MEMORY.md` を `ctx_index` で SQLite FTS5 に分割登録し、通常対話時は `ctx_search` で関連チャンクのみを動的ロード。Memory Flush も `ctx_patch` による部分書き換えに移行。
+  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
+
+- [ ] **Phase 52-6: エピソード記憶連携とデイリーブリーフィングの高度化**:  
+  日次ブリーフィング結果の自動 `ctx_index` 登録と、`ctx_search` による相関検索アドバイザリー（過去の同様状況の引き出し）。
+  - **詳細設計・計画書**: [2026-06-13-phase52-context-optimization-design.md](file:///home/kazuaki/Projects/RustyClaw/docs/specs/2026-06-13-phase52-context-optimization-design.md) / [2026-06-13-phase52-context-optimization-implementation-plan.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-context-optimization-implementation-plan.md)
+
 ---
 
 ## 将来課題（低優先度）
