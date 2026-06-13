@@ -2,20 +2,10 @@
 
 > [!NOTE]
 > **ステータス**: `[ACTIVE]` (現在進行中のタスクリスト)  
-> **最終更新日**: 2026-06-13（Phase 52-7 完了）  
+> **最終更新日**: 2026-06-13（Phase 52-7 をアーカイブへ退避完了）  
 > **アーカイブ**: 完了済みの過去タスク履歴は [archive/tasks/README.md](file:///home/kazuaki/Projects/RustyClaw/docs/archive/tasks/README.md) を参照してください。  
-> **最新アーカイブ**: [2026-06-13-completed-phase52-all.md](archive/tasks/2026-06-13-completed-phase52-all.md) (Phase 52-1〜52-6 Context 最適化・Memory RAG・エピソード記憶連携)  
+> **最新アーカイブ**: [2026-06-13-completed-phase52-all.md](archive/tasks/2026-06-13-completed-phase52-all.md) (Phase 52-1〜52-7 Context 最適化・reindexログ・エピソード記憶連携)  
 > **将来課題の管理**: 未着手の将来課題は [`docs/specs/v0.3/`](specs/v0.3/) 各仕様ファイルの「将来拡張」節で管理しています。
-
----
-
-## 優先課題
-
-- [x] **Phase 52-7: ctx_search sort 最適化・reindex ログ修正**（完了: 2026-06-13）:  
-  `try_ctx_search` に sort 引数を追加して用途別（`timeline`/`relevance`）に最適化し、`reindex_memory_after_flush` の誤「完了」ログおよびデバッグレベル不一致を修正。
-  - **詳細設計・計画書**: [2026-06-13-phase52-7-search-log-improvements.md](file:///home/kazuaki/Projects/RustyClaw/docs/plans/2026-06-13-phase52-7-search-log-improvements.md)
-
----
 
 ## 将来課題（低優先度）
 

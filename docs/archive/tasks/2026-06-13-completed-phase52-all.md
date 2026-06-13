@@ -13,6 +13,7 @@
 | Phase 52-4 | Topic Patrol 最適化（ctx_fetch_and_index キャッシュ・特化型プロンプト） | 2026-06-13 |
 | Phase 52-5 | MEMORY.md セマンティック分割・ctx_search 動的注入・フラッシュ後再インデックス | 2026-06-13 |
 | Phase 52-6 | daily-summary エピソード記憶 ctx_index 登録・Heartbeat バイタル相関検索アドバイザリー | 2026-06-13 |
+| Phase 52-7 | ctx_search sort 最適化・reindex ログ修正・エラーログ警告統一 | 2026-06-13 |
 
 ## 主な成果
 
@@ -20,6 +21,8 @@
 - MEMORY.md を chunk_memory_md でセクション分割し context-mode SQLite FTS5 に登録。チャット時は ctx_search で関連チャンクのみ動的注入
 - daily-summary 結果がエピソード記憶として蓄積され、Heartbeat RAG で過去の類似状況を参照可能に
 - バイタルキーワード（睡眠・疲労等）検出時の追加アドバイザリー検索を実装
+- `try_ctx_search` の sort 戦略を用途別（timeline / relevance）に分離し、検索精度を向上
+- `reindex_memory_after_flush` の誤「完了」ログバグを修正し、全失敗時の誤表記を解消。エラーログの警告レベルを `warn` に統一
 
 ## 計画書・設計書
 

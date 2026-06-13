@@ -1,7 +1,7 @@
 # Phase 52-7: ctx_search sort 最適化・reindex ログ修正 実装計画書
 
 > [!NOTE]
-> **ステータス**: `[DONE]` (完了: 2026-06-13)
+> **ステータス**: `[HISTORICAL]` (完了: 2026-06-13)
 > **最終更新日**: 2026-06-13
 > **対象コード**: `crates/rustyclaw-gateway/src/lib.rs`, `crates/rustyclaw-agent/src/lib.rs`
 > **元課題**: `docs/task.md` § Phase 52 後続改善候補（2026-06-13 最終レビュー抽出）
