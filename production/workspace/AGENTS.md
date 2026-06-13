@@ -102,8 +102,8 @@ If a secret is missing, guide the user to run the following CLI commands (the ag
 # Save a secret to the vault (entered with echo-off)
 rustyclaw vault set <key-name>
 
-# Set a $vault: reference in config.json
-rustyclaw config set <dot.path> '$vault:<key-name>'
+# Migrate a plaintext token from config.json to the vault, automatically writing the $vault: reference
+rustyclaw vault migrate <dot.path> <key-name>
 ```
 
 ## Task Processing Flow
