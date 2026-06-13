@@ -442,7 +442,7 @@ impl Pipeline {
             .join("\n")
     }
 
-    pub fn build_system_context(
+    pub async fn build_system_context(
         &self,
         workspace_dir: &Path,
         context_window_tokens: usize,
@@ -450,37 +450,56 @@ impl Pipeline {
         // 静的ブロック（SOUL/USER）のみを返す。
         // 動的な [now:] は呼び出し元で追加する（build_heartbeat_context と同パターン）。
         const MAX_CONTEXT_CHARS_PER_FILE: usize = 3_000;
-        // small local models (≤ 8_192) get SOUL.md only to save token budget
-        let files: &[&str] = if context_window_tokens <= 8_192 {
-            &["SOUL.md"]
-        } else {
-            &["SOUL.md", "USER.md"]
-        };
         let mut context = String::new();
 
-        for filename in files {
-            let path = workspace_dir.join(filename);
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to read context file {:?}: {}. Using empty content.",
-                        path,
-                        e
-                    );
-                    String::new()
-                }
-            };
-
+        if context_window_tokens <= 8_192 {
+            // small local models: SOUL.md のみ単独ロード
+            let path = workspace_dir.join("SOUL.md");
+            let content = tokio::fs::read_to_string(&path).await.unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to read context file {:?}: {}. Using empty content.",
+                    path,
+                    e
+                );
+                String::new()
+            });
             let stripped = Self::strip_comments(&content);
             let truncated = Self::truncate_context_content(&stripped, MAX_CONTEXT_CHARS_PER_FILE);
-            context.push_str(&format!("# {}\n\n{}\n\n", filename, truncated));
-        }
+            context.push_str(&format!("# SOUL.md\n\n{}\n\n", truncated));
+        } else {
+            // 大コンテキストモデル: SOUL.md + USER.md を並列ロード
+            let soul_path = workspace_dir.join("SOUL.md");
+            let user_path = workspace_dir.join("USER.md");
+            let (soul_res, user_res) = tokio::join!(
+                tokio::fs::read_to_string(&soul_path),
+                tokio::fs::read_to_string(&user_path),
+            );
+            let soul_content = soul_res.unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to read context file {:?}: {}. Using empty content.",
+                    soul_path,
+                    e
+                );
+                String::new()
+            });
+            let user_content = user_res.unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to read context file {:?}: {}. Using empty content.",
+                    user_path,
+                    e
+                );
+                String::new()
+            });
+            for (filename, content) in [("SOUL.md", soul_content), ("USER.md", user_content)] {
+                let stripped = Self::strip_comments(&content);
+                let truncated =
+                    Self::truncate_context_content(&stripped, MAX_CONTEXT_CHARS_PER_FILE);
+                context.push_str(&format!("# {}\n\n{}\n\n", filename, truncated));
+            }
 
-        // proactive-posts.md を注入（最終1件のみ・大コンテキストモデルのみ）
-        if context_window_tokens > 8_192 {
+            // proactive-posts.md を注入（最終1件のみ・大コンテキストモデルのみ）
             let posts_path = workspace_dir.join("memory").join("proactive-posts.md");
-            if let Ok(posts) = fs::read_to_string(&posts_path)
+            if let Ok(posts) = tokio::fs::read_to_string(&posts_path).await
                 && let Some(last_entry) = posts.lines().rfind(|l| !l.trim().is_empty())
             {
                 context.push_str(&format!(
@@ -1064,7 +1083,7 @@ Rules:
         user_message: &str,
     ) -> Result<LlmResponse> {
         let cw = self.config.get_model("default").context_window_tokens;
-        let mut system_context = self.build_system_context(workspace_dir, cw)?;
+        let mut system_context = self.build_system_context(workspace_dir, cw).await?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -1361,7 +1380,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
 
         // システムプロンプトと RAG コンテキストの構築
         let cw = self.config.get_model(purpose).context_window_tokens;
-        let mut system_context = self.build_system_context(workspace_dir, cw)?;
+        let mut system_context = self.build_system_context(workspace_dir, cw).await?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -1545,7 +1564,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         user_message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let cw = self.config.get_model("default").context_window_tokens;
-        let mut system_context = self.build_system_context(workspace_dir, cw)?;
+        let mut system_context = self.build_system_context(workspace_dir, cw).await?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -2266,15 +2285,18 @@ mod tests {
 
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    #[test]
-    fn test_build_system_context_returns_static_content() {
+    #[tokio::test]
+    async fn test_build_system_context_returns_static_content() {
         let ws_dir = tempdir().unwrap();
         std::fs::write(ws_dir.path().join("SOUL.md"), "soul").unwrap();
 
         let config = make_test_config_with_url("http://localhost");
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        let context = pipeline.build_system_context(ws_dir.path(), 4_096).unwrap();
+        let context = pipeline
+            .build_system_context(ws_dir.path(), 4_096)
+            .await
+            .unwrap();
 
         assert!(context.contains("# SOUL.md"));
         assert!(
@@ -2283,8 +2305,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_build_system_context_small_model_omits_user_md() {
+    #[tokio::test]
+    async fn test_build_system_context_small_model_omits_user_md() {
         let dir = tempfile::TempDir::new().unwrap();
         let ws = dir.path();
         std::fs::write(ws.join("SOUL.md"), "soul content").unwrap();
@@ -2295,12 +2317,12 @@ mod tests {
         let pipeline = Pipeline::new(config, sem);
 
         // 4096 tokens モデル → SOUL.md のみ
-        let ctx = pipeline.build_system_context(ws, 4_096).unwrap();
+        let ctx = pipeline.build_system_context(ws, 4_096).await.unwrap();
         assert!(ctx.contains("# SOUL.md"), "SOUL.md は常に注入される");
         assert!(!ctx.contains("# USER.md"), "4096 では USER.md を省略");
 
         // 32768 tokens モデル → 両方注入
-        let ctx32k = pipeline.build_system_context(ws, 32_768).unwrap();
+        let ctx32k = pipeline.build_system_context(ws, 32_768).await.unwrap();
         assert!(ctx32k.contains("# SOUL.md"), "32k: SOUL.md 注入");
         assert!(ctx32k.contains("# USER.md"), "32k: USER.md 注入");
     }
@@ -2606,8 +2628,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_build_system_context_injects_proactive_posts() {
+    #[tokio::test]
+    async fn test_build_system_context_injects_proactive_posts() {
         let dir = tempfile::TempDir::new().unwrap();
         let ws = dir.path();
         let memory_dir = ws.join("memory");
@@ -2627,7 +2649,7 @@ mod tests {
         let config = rustyclaw_config::Config::default();
         let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
         let pipeline = Pipeline::new(config, sem);
-        let ctx = pipeline.build_system_context(ws, 32_768).unwrap();
+        let ctx = pipeline.build_system_context(ws, 32_768).await.unwrap();
         assert!(
             ctx.contains("傘を持ってください"),
             "proactive-posts が注入されるべき"
@@ -3276,8 +3298,8 @@ Keep it short.\n\
         );
     }
 
-    #[test]
-    fn test_build_system_context_truncates_large_files() {
+    #[tokio::test]
+    async fn test_build_system_context_truncates_large_files() {
         use std::fs;
         use tempfile::TempDir;
 
@@ -3292,7 +3314,10 @@ Keep it short.\n\
         let config = make_test_config_with_url("http://localhost");
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        let result = pipeline.build_system_context(workspace, 32_768).unwrap();
+        let result = pipeline
+            .build_system_context(workspace, 32_768)
+            .await
+            .unwrap();
 
         let soul_section_start = result.find("# SOUL.md").unwrap();
         let user_section_start = result.find("# USER.md").unwrap();
