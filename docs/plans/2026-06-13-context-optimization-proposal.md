@@ -1,5 +1,11 @@
 # context-mode 未使用機能の有効活用 ＆ コンテキスト最適化計画書
 
+> **ステータス**: `[PLANNING]` (一部 `[ACTIVE]`: Phase 52-8 進行中)  
+> **作成日**: 2026-06-13  
+> **関連**: [`docs/plans/2026-06-13-ctx-execute-file-design.md`](2026-06-13-ctx-execute-file-design.md), [`docs/task.md`](../task.md) (Phase 52-8)  
+
+---
+
 本計画書は、現在 RustyClaw v0.4 で「未使用（未統合）」となっている `context-mode` の機能を精査し、特に **コンテキスト量（トークン数）の削減** と **情報の意味濃縮（Semantic Condensation）** に最大の効果をもたらす項目について、具体的な検証内容と将来の実装対応候補を整理したものです。
 
 ---
@@ -85,7 +91,7 @@ AIエージェントが複雑な検証（例えば「ファイルを書き換え
 
 | 優先度 | 対応候補機能 | 実装対象コンポーネント | 具体的なユースケース |
 |:---:|---|---|---|
-| **S** (最優先) | **`ctx_execute_file` によるストリーム・フィルタリングの統合** | `rustyclaw-agent` / `rustyclaw-tools` | 巨大なログファイル (`journalctl` や本番エラーログ) の自律パトロール時、および巨大CSVのオンデマンド部分抽出。 |
+| **S** (最優先) | **`ctx_execute_file` によるストリーム・フィルタリングの統合**<br>*(Phase 52-8 として実装中: [`docs/task.md`](../task.md))* | `rustyclaw-agent` / `rustyclaw-tools` | 巨大なログファイル (`journalctl` や本番エラーログ) の自律パトロール時、および巨大CSV of インメモリ集計。 |
 | **A** | **`PreCompact` を模した Session Guide スナップショットの導入** | `rustyclaw-gateway` (`ExternalMcpController` と RAG の連携) | Discord/LINE 対話セッションにおける、コンパクション発生時のコンテキスト健全性維持と記憶ロストの防止。 |
 | **B** | **`ctx_batch_execute` による並行テスト・Clippy検証** | `rustyclaw-agent` (推論時の ToolRegistry) | 開発自動化フェーズにおける、ビルド・静的解析・テストタスクの並行処理による高速検証。 |
 | **C** | **`ctx_stats` からのコンテキスト健全性自己監査の導入** | `rustyclaw-gateway` / `rustyclaw-agent` | エージェントが自律的にコンテキスト節約統計を読み取り、`MEMORY.md` などのガベージコレクションを自発的に起動するトリガー。 |
