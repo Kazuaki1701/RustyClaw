@@ -1,19 +1,19 @@
 # Phase 52 用途別 LLM コンテキスト最適化・軽量化 実装計画書
 
 > [!NOTE]
-> **ステータス**: `[ACTIVE]` (実装準備中)  
+> **ステータス**: `[ACTIVE]` (Phase 52-1 完了。Phase 52-2 着手待ち)  
 > **最終更新日**: 2026-06-13  
 > **対象コード**: `crates/rustyclaw-agent/src/lib.rs`, `crates/rustyclaw-gateway/src/lib.rs` 等  
 > **設計仕様書**: [`docs/specs/2026-06-13-phase52-context-optimization-design.md`](../specs/2026-06-13-phase52-context-optimization-design.md)  
 
 ## 開発タスクチェックリスト
 
-- [ ] **【Phase 52-1】全体共通の静的・基礎最適化の実装**:
-  - [ ] デリミタの XML タグ化 (`<mem>`, `</mem>`, `<log>`, `</log>`) への変更とパースロジックの修正。
-  - [ ] 各システムプロンプトのシンプル英語化と `// ` による日本語訳併記スタイルの適用（コメントストリップ機能の活用）。
-  - [ ] 同一機能の外部スクリプト（Home Assistant等）を引数制御の1スクリプトへ集約。
-  - [ ] 会話履歴からの一時的なノイズ（進捗バー等）を削る正規表現クレンジング機能の実装。
-  - [ ] 外部ツール（Gmail, Calendar）返却データの静的クレンジング（不要ヘッダー・冗長キーのパージ）実装。
+- [x] **【Phase 52-1】全体共通の静的・基礎最適化の実装**（完了: 2026-06-13）:
+  - [x] デリミタの XML タグ化 (`<mem>`, `</mem>`, `<log>`, `</log>`) への変更とパースロジックの修正。
+  - [x] 各システムプロンプトのシンプル英語化（memory flush prompt を圧縮英語化、~100 トークン削減）。
+  - [x] 同一機能の外部スクリプト（Home Assistant）を `ha-control.sh` に集約（SKILL.md トークン ~60% 削減）。
+  - [x] 会話履歴からの一時的なノイズ（進捗バー等）を削る `cleanse_for_memory_flush()` 関数の実装。
+  - [x] 外部ツール（Gmail snippet / Calendar location）を 200 文字以内に切り詰める `truncate_tool_item_fields()` の実装。
 - [ ] **【Phase 52-2】用途別最適化 - Heartbeat（自動巡回監視）の実装**:
   - [ ] Heartbeat 構築時の人格設定（`SOUL.md`）、ユーザー背景（`USER.md`）、会話履歴の除外処理の実装。
   - [ ] 監視に特化した最小限のツール公開（Skillsのフィルタリング）の実装。
