@@ -310,6 +310,14 @@ impl LaneRegistry {
                                 prompt_parts
                                     .push(format!("Past context (from episodic memory):\n{}", ctx));
                             }
+                            // バイタルキーワードを検出した場合のみ過去の類似エピソードを追加検索
+                            if let Some(vital_query) = extract_vital_alert_query(&digest)
+                                && let Some(advisory) =
+                                    try_ctx_search(&tool_server_handle, &vital_query).await
+                            {
+                                prompt_parts
+                                    .push(format!("Past similar situation (advisory):\n{}", advisory));
+                            }
                             let heartbeat_prompt = prompt_parts.join("\n\n");
 
                             let mut attempt = 0;
@@ -486,6 +494,16 @@ impl LaneRegistry {
                                             let _ = rustyclaw_storage::atomic_write(
                                                 &file_path,
                                                 response.content.as_bytes(),
+                                            )
+                                            .await;
+
+                                            // エピソード記憶として SQLite FTS5 に自動登録（Heartbeat RAG で活用）
+                                            let indexed_summary =
+                                                format!("[daily-summary:{}]\n{}", today, response.content);
+                                            try_ctx_index(
+                                                &tool_server_handle,
+                                                &indexed_summary,
+                                                &format!("daily-summary:{}", today),
                                             )
                                             .await;
 
@@ -1250,6 +1268,21 @@ fn extract_patrol_feed_urls(interests: &str) -> Vec<String> {
         .collect()
 }
 
+/// Heartbeat digest 中に睡眠・疲労系のキーワードが含まれる場合、
+/// 過去の類似エピソードを ctx_search するためのクエリを返す（なければ None）。
+fn extract_vital_alert_query(digest: &str) -> Option<String> {
+    let lower = digest.to_lowercase();
+    let keywords = [
+        "sleep", "tired", "fatigue", "exhausted", "sleepy",
+        "睡眠", "疲れ", "疲労", "眠い", "不眠", "睡眠不足",
+    ];
+    if keywords.iter().any(|kw| lower.contains(kw)) {
+        Some("daily-summary sleep deprivation fatigue advice past similar situation".to_string())
+    } else {
+        None
+    }
+}
+
 /// 起動時に USER.md の Interests セクションを context-mode にインデックス登録する。
 /// [user-interests] プレフィックスにより ctx_search 結果から識別できる。
 async fn index_user_interests(
@@ -1979,5 +2012,35 @@ mod tests {
     fn test_parse_skill_names_from_ctx_empty() {
         let names = parse_skill_names_from_ctx("no skill markers here");
         assert!(names.is_empty());
+    }
+
+    // Phase 52-6 tests
+    #[test]
+    fn test_extract_vital_alert_query_no_keywords() {
+        let digest = "User asked about the weather. Replied with sunny 22°C.";
+        assert!(extract_vital_alert_query(digest).is_none());
+    }
+
+    #[test]
+    fn test_extract_vital_alert_query_sleep_keyword_en() {
+        let digest = "User mentioned they felt tired and had poor sleep last night.";
+        let query = extract_vital_alert_query(digest);
+        assert!(query.is_some());
+        let q = query.unwrap();
+        assert!(q.contains("sleep"));
+    }
+
+    #[test]
+    fn test_extract_vital_alert_query_sleep_keyword_ja() {
+        let digest = "ユーザーが睡眠不足だと報告しました。";
+        let query = extract_vital_alert_query(digest);
+        assert!(query.is_some());
+    }
+
+    #[test]
+    fn test_extract_vital_alert_query_fatigue_keyword() {
+        let digest = "User feels fatigue from long work sessions.";
+        let query = extract_vital_alert_query(digest);
+        assert!(query.is_some());
     }
 }
