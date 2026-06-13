@@ -361,6 +361,7 @@ impl LaneRegistry {
                                                 &heartbeat_prompt,
                                                 &tool_registry,
                                                 &db_path,
+                                                Some(tool_server_handle.clone()),
                                             )
                                             .await
                                         {

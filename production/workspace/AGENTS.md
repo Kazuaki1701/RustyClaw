@@ -142,3 +142,8 @@ When a message is received, determine whether it is a **simple question or a tas
 - Focus exclusively on the user's request
 - Do NOT run background checks or heartbeat tasks
 - Do NOT reply with HEARTBEAT_OK
+
+## ctx_execute_file — ファイルストリーム抽出ルール
+
+- **ctx_execute_file** — ファイルに対してスクリプト（grep/awk/python等）を実行し、必要な行や統計データのみを抽出します。
+  - **重要ルール**: 1,000行を超えるファイル、ログファイル、またはCSV/JSONの特定レコードを探索する場合は、`workspace_read` でファイル全体を読むのではなく、必ず `ctx_execute_file` を用いて必要な行のみに前処理（フィルタリング）を行ってください。これにより、コンテキストの枯渇（トークン死）を防ぎます。

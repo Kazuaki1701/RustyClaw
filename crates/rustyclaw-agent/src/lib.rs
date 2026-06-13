@@ -229,11 +229,20 @@ async fn run_confirmation_gate(tool_name: &str, args: &str, workspace_dir: &Path
 struct HeartbeatToolWrapper {
     inner: Arc<dyn rig_core::tool::ToolDyn>,
     db_path: PathBuf,
+    tool_handle: Option<rig_core::tool::server::ToolServerHandle>,
 }
 
 impl HeartbeatToolWrapper {
-    fn new(inner: Arc<dyn rig_core::tool::ToolDyn>, db_path: PathBuf) -> Self {
-        Self { inner, db_path }
+    fn new(
+        inner: Arc<dyn rig_core::tool::ToolDyn>,
+        db_path: PathBuf,
+        tool_handle: Option<rig_core::tool::server::ToolServerHandle>,
+    ) -> Self {
+        Self {
+            inner,
+            db_path,
+            tool_handle,
+        }
     }
 }
 
@@ -262,7 +271,37 @@ impl rig_core::tool::ToolDyn for HeartbeatToolWrapper {
                 tool_content = filter_seen_tool_result(&tool_name, &args, &tool_content, &db);
             }
 
-            tool_content = truncate_70_20(&tool_content, 3_000);
+            if tool_content.len() > 3_000 {
+                if let Some(handle) = &self.tool_handle {
+                    let source = format!("heartbeat-tool:{}", tool_name);
+                    let index_args = serde_json::json!({
+                        "content": &tool_content,
+                        "source": &source
+                    })
+                    .to_string();
+                    if handle.call_tool("ctx_index", &index_args).await.is_ok() {
+                        let search_args = serde_json::json!({
+                            "queries": [&tool_name],
+                            "sort": "timeline",
+                            "limit": 3
+                        })
+                        .to_string();
+                        if let Ok(condensed) = handle.call_tool("ctx_search", &search_args).await {
+                            if !condensed.trim().is_empty() {
+                                tool_content = condensed;
+                            } else {
+                                tool_content = truncate_70_20(&tool_content, 3_000);
+                            }
+                        } else {
+                            tool_content = truncate_70_20(&tool_content, 3_000);
+                        }
+                    } else {
+                        tool_content = truncate_70_20(&tool_content, 3_000);
+                    }
+                } else {
+                    tool_content = truncate_70_20(&tool_content, 3_000);
+                }
+            }
 
             Ok(tool_content)
         })
@@ -503,7 +542,7 @@ impl Pipeline {
             .join("\n")
     }
 
-    pub fn build_system_context(
+    pub async fn build_system_context(
         &self,
         workspace_dir: &Path,
         context_window_tokens: usize,
@@ -511,37 +550,59 @@ impl Pipeline {
         // 静的ブロック（SOUL/USER）のみを返す。
         // 動的な [now:] は呼び出し元で追加する（build_heartbeat_context と同パターン）。
         const MAX_CONTEXT_CHARS_PER_FILE: usize = 3_000;
-        // small local models (≤ 8_192) get SOUL.md only to save token budget
-        let files: &[&str] = if context_window_tokens <= 8_192 {
-            &["SOUL.md"]
-        } else {
-            &["SOUL.md", "USER.md"]
-        };
         let mut context = String::new();
 
-        for filename in files {
-            let path = workspace_dir.join(filename);
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to read context file {:?}: {}. Using empty content.",
-                        path,
-                        e
-                    );
-                    String::new()
-                }
-            };
+        // Phase 52-9: 日またぎウォームスタート — 前日セッションガイドを注入
+        Self::try_inject_yesterday_session_guide(workspace_dir, &mut context).await;
 
+        if context_window_tokens <= 8_192 {
+            // small local models: SOUL.md のみ単独ロード
+            let path = workspace_dir.join("SOUL.md");
+            let content = tokio::fs::read_to_string(&path).await.unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to read context file {:?}: {}. Using empty content.",
+                    path,
+                    e
+                );
+                String::new()
+            });
             let stripped = Self::strip_comments(&content);
             let truncated = Self::truncate_context_content(&stripped, MAX_CONTEXT_CHARS_PER_FILE);
-            context.push_str(&format!("# {}\n\n{}\n\n", filename, truncated));
-        }
+            context.push_str(&format!("# SOUL.md\n\n{}\n\n", truncated));
+        } else {
+            // 大コンテキストモデル: SOUL.md + USER.md を並列ロード
+            let soul_path = workspace_dir.join("SOUL.md");
+            let user_path = workspace_dir.join("USER.md");
+            let (soul_res, user_res) = tokio::join!(
+                tokio::fs::read_to_string(&soul_path),
+                tokio::fs::read_to_string(&user_path),
+            );
+            let soul_content = soul_res.unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to read context file {:?}: {}. Using empty content.",
+                    soul_path,
+                    e
+                );
+                String::new()
+            });
+            let user_content = user_res.unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to read context file {:?}: {}. Using empty content.",
+                    user_path,
+                    e
+                );
+                String::new()
+            });
+            for (filename, content) in [("SOUL.md", soul_content), ("USER.md", user_content)] {
+                let stripped = Self::strip_comments(&content);
+                let truncated =
+                    Self::truncate_context_content(&stripped, MAX_CONTEXT_CHARS_PER_FILE);
+                context.push_str(&format!("# {}\n\n{}\n\n", filename, truncated));
+            }
 
-        // proactive-posts.md を注入（最終1件のみ・大コンテキストモデルのみ）
-        if context_window_tokens > 8_192 {
+            // proactive-posts.md を注入（最終1件のみ・大コンテキストモデルのみ）
             let posts_path = workspace_dir.join("memory").join("proactive-posts.md");
-            if let Ok(posts) = fs::read_to_string(&posts_path)
+            if let Ok(posts) = tokio::fs::read_to_string(&posts_path).await
                 && let Some(last_entry) = posts.lines().rfind(|l| !l.trim().is_empty())
             {
                 context.push_str(&format!(
@@ -552,6 +613,82 @@ impl Pipeline {
         }
 
         Ok(context)
+    }
+
+    pub(crate) fn generate_session_guide_xml(messages: &[Message]) -> String {
+        let generated_at = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z");
+        let msg_count = messages.len();
+
+        let escape = |s: &str| -> String {
+            s.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+        };
+
+        let last_user = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| escape(&m.content.chars().take(300).collect::<String>()))
+            .unwrap_or_default();
+
+        let last_assistant = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .map(|m| escape(&m.content.chars().take(400).collect::<String>()))
+            .unwrap_or_default();
+
+        format!(
+            "<session_guide generated_at=\"{generated_at}\" message_count=\"{msg_count}\">\n  <task_context>\n    <current_goal>{last_user}</current_goal>\n    <status>ACTIVE</status>\n  </task_context>\n  <next_steps>\n    <step order=\"1\">{last_assistant}</step>\n  </next_steps>\n</session_guide>"
+        )
+    }
+
+    pub(crate) async fn try_write_session_guide(workspace_dir: &Path, messages: &[Message]) {
+        if messages.is_empty() {
+            return;
+        }
+        let xml = Self::generate_session_guide_xml(messages);
+        let sessions_dir = workspace_dir.join("memory").join("sessions");
+        let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let xml_path = sessions_dir.join(format!("{date_str}.xml"));
+        if let Err(e) = tokio::fs::create_dir_all(&sessions_dir).await {
+            tracing::warn!("session guide: failed to create sessions dir: {}", e);
+            return;
+        }
+        if let Err(e) = tokio::fs::write(&xml_path, &xml).await {
+            tracing::warn!("session guide: failed to write {}: {}", xml_path.display(), e);
+        }
+    }
+
+    pub(crate) async fn try_inject_yesterday_session_guide(
+        workspace_dir: &Path,
+        context: &mut String,
+    ) {
+        let sessions_dir = workspace_dir.join("memory").join("sessions");
+        let today = chrono::Local::now().date_naive();
+        let today_path = sessions_dir.join(format!("{}.xml", today.format("%Y-%m-%d")));
+
+        // 今日の XML が既に存在する → 日またぎではない
+        if tokio::fs::try_exists(&today_path).await.unwrap_or(false) {
+            return;
+        }
+
+        let yesterday = today.pred_opt().unwrap_or(today);
+        let yesterday_path = sessions_dir.join(format!("{}.xml", yesterday.format("%Y-%m-%d")));
+
+        match tokio::fs::read_to_string(&yesterday_path).await {
+            Ok(xml) => {
+                context.push_str("# Yesterday's Session Guide\n\n");
+                context.push_str(&xml);
+                context.push_str("\n\n");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                tracing::warn!("session guide: failed to read yesterday guide: {}", e);
+            }
+        }
     }
 
     /// 過去履歴から「最後にユーザーが発言した時刻以降に記録された自発的投稿」を抽出し、
@@ -1000,33 +1137,91 @@ Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
         Ok(())
     }
 
+    fn select_heartbeat_steps(
+        content: &str,
+        last_checks: &serde_json::Value,
+        now: chrono::DateTime<chrono::Local>,
+    ) -> String {
+        let mut sections: Vec<String> = Vec::new();
+        let mut current = String::new();
+        for line in content.lines() {
+            if line.starts_with("## ") && !current.is_empty() {
+                sections.push(std::mem::take(&mut current));
+            }
+            current.push_str(line);
+            current.push('\n');
+        }
+        if !current.is_empty() {
+            sections.push(current);
+        }
+
+        if sections.len() <= 1 {
+            return content.to_string();
+        }
+
+        let elapsed_mins = |key: &str| -> Option<i64> {
+            let ts = last_checks.get(key)?.as_str()?;
+            let dt = chrono::DateTime::parse_from_rfc3339(ts).ok()?;
+            Some((now - dt.with_timezone(&chrono::Local)).num_minutes())
+        };
+
+        let mut selected = String::new();
+        for section in &sections {
+            let should_skip = if section.starts_with("## Step 2:") {
+                elapsed_mins("weather").map(|m| m < 30).unwrap_or(false)
+            } else if section.starts_with("## Step 3:") {
+                let cal = elapsed_mins("calendar").map(|m| m < 30).unwrap_or(false);
+                let email = elapsed_mins("email").map(|m| m < 30).unwrap_or(false);
+                cal && email
+            } else if section.starts_with("## Step 4:") {
+                elapsed_mins("lastUserContact")
+                    .map(|m| m < 480)
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            if !should_skip {
+                selected.push_str(section);
+            }
+        }
+
+        if selected.trim().is_empty() {
+            content.to_string()
+        } else {
+            selected
+        }
+    }
+
     /// Heartbeat 専用の軽量システムコンテキストを構築する（HEARTBEAT のみ）。
     /// SOUL.md（キャラクター設定）は監視タスクに不要なため除外（Phase 52-2）。
     /// MEMORY.md は RAG 経由で関連チャンクのみを動的注入する（ISSUE-28）。
     /// 静的ファイルのみを返す。動的な [now:] は呼び出し元 execute_heartbeat で追加する。
     pub fn build_heartbeat_context(&self, workspace_dir: &Path) -> Result<String> {
-        let files = ["HEARTBEAT.md"];
-        let mut context = String::new();
-        for filename in &files {
-            let path = workspace_dir.join(filename);
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to read context file {:?}: {}. Using empty content.",
-                        path,
-                        e
-                    );
-                    String::new()
-                }
-            };
-            context.push_str(&format!(
-                "# {}\n\n{}\n\n",
-                filename,
-                Self::strip_comments(&content)
-            ));
-        }
-        Ok(context)
+        let raw = match fs::read_to_string(workspace_dir.join("HEARTBEAT.md")) {
+            Ok(content) => content,
+            Err(e) => {
+                tracing::warn!("Failed to read HEARTBEAT.md: {}. Using empty content.", e);
+                String::new()
+            }
+        };
+
+        let state_path = workspace_dir.join("memory").join("heartbeat-state.json");
+        let content = match fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            Some(state) => {
+                let now = chrono::Local::now();
+                Self::select_heartbeat_steps(&raw, &state["lastChecks"], now)
+            }
+            None => raw,
+        };
+
+        Ok(format!(
+            "# HEARTBEAT.md\n\n{}\n\n",
+            Self::strip_comments(&content)
+        ))
     }
 
     /// Heartbeat 専用実行（軽量コンテキスト使用、履歴なし、ツールループ付き）
@@ -1037,6 +1232,7 @@ Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
         user_message: &str,
         tool_registry: &ToolRegistry,
         db_path: &Path,
+        tool_handle: Option<rig_core::tool::server::ToolServerHandle>,
     ) -> Result<LlmResponse> {
         let mut system_context = self.build_heartbeat_context(workspace_dir)?;
         let now = chrono::Local::now();
@@ -1072,7 +1268,8 @@ Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
 
         let mut wrapped_tools: Vec<Box<dyn rig_core::tool::ToolDyn>> = Vec::new();
         for (_, tool) in tool_registry.iter() {
-            let wrapped = HeartbeatToolWrapper::new(tool.clone(), db_path.to_path_buf());
+            let wrapped =
+                HeartbeatToolWrapper::new(tool.clone(), db_path.to_path_buf(), tool_handle.clone());
             wrapped_tools.push(Box::new(wrapped));
         }
 
@@ -1138,7 +1335,7 @@ Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
         user_message: &str,
     ) -> Result<LlmResponse> {
         let cw = self.config.get_model("default").context_window_tokens;
-        let mut system_context = self.build_system_context(workspace_dir, cw)?;
+        let mut system_context = self.build_system_context(workspace_dir, cw).await?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -1160,6 +1357,7 @@ Same language as existing MEMORY.md. Never truncate mid-sentence inside <mem>.
             self.process_proactive_posts(session_id, history_messages, &mut system_context);
 
         let mut history = ConversationHistory::new(cleaned_history);
+        Self::try_write_session_guide(workspace_dir, &history.messages).await;
         history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
@@ -1454,7 +1652,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let mut system_context = if purpose == "patrol" {
             build_patrol_context()
         } else {
-            self.build_system_context(workspace_dir, cw)?
+            self.build_system_context(workspace_dir, cw).await?
         };
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
@@ -1478,6 +1676,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         let cleaned_history =
             self.process_proactive_posts(session_id, history_messages, &mut system_context);
         let mut history = ConversationHistory::new(cleaned_history);
+        Self::try_write_session_guide(workspace_dir, &history.messages).await;
         history.trim_to_last(self.get_history_message_limit(purpose));
 
         // ユーザーメッセージを保存 (injected されていないオリジナルのメッセージのみ保存)
@@ -1649,7 +1848,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         user_message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
         let cw = self.config.get_model("default").context_window_tokens;
-        let mut system_context = self.build_system_context(workspace_dir, cw)?;
+        let mut system_context = self.build_system_context(workspace_dir, cw).await?;
         if let Some(continuation) = self.get_session_continuation_context(workspace_dir, session_id)
         {
             system_context.push_str(&continuation);
@@ -1668,6 +1867,7 @@ Output ONLY the markdown content. Do not include any introductory or concluding 
         };
 
         let mut history = ConversationHistory::new(history_messages);
+        Self::try_write_session_guide(workspace_dir, &history.messages).await;
         history.trim_to_last(self.get_history_message_limit("default"));
 
         // 2. 送信用メッセージリストの構築 (System + History + User)
@@ -2484,15 +2684,18 @@ mod tests {
 
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    #[test]
-    fn test_build_system_context_returns_static_content() {
+    #[tokio::test]
+    async fn test_build_system_context_returns_static_content() {
         let ws_dir = tempdir().unwrap();
         std::fs::write(ws_dir.path().join("SOUL.md"), "soul").unwrap();
 
         let config = make_test_config_with_url("http://localhost");
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        let context = pipeline.build_system_context(ws_dir.path(), 4_096).unwrap();
+        let context = pipeline
+            .build_system_context(ws_dir.path(), 4_096)
+            .await
+            .unwrap();
 
         assert!(context.contains("# SOUL.md"));
         assert!(
@@ -2501,8 +2704,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_build_system_context_small_model_omits_user_md() {
+    #[tokio::test]
+    async fn test_build_system_context_small_model_omits_user_md() {
         let dir = tempfile::TempDir::new().unwrap();
         let ws = dir.path();
         std::fs::write(ws.join("SOUL.md"), "soul content").unwrap();
@@ -2513,12 +2716,12 @@ mod tests {
         let pipeline = Pipeline::new(config, sem);
 
         // 4096 tokens モデル → SOUL.md のみ
-        let ctx = pipeline.build_system_context(ws, 4_096).unwrap();
+        let ctx = pipeline.build_system_context(ws, 4_096).await.unwrap();
         assert!(ctx.contains("# SOUL.md"), "SOUL.md は常に注入される");
         assert!(!ctx.contains("# USER.md"), "4096 では USER.md を省略");
 
         // 32768 tokens モデル → 両方注入
-        let ctx32k = pipeline.build_system_context(ws, 32_768).unwrap();
+        let ctx32k = pipeline.build_system_context(ws, 32_768).await.unwrap();
         assert!(ctx32k.contains("# SOUL.md"), "32k: SOUL.md 注入");
         assert!(ctx32k.contains("# USER.md"), "32k: USER.md 注入");
     }
@@ -2862,8 +3065,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_build_system_context_injects_proactive_posts() {
+    #[tokio::test]
+    async fn test_build_system_context_injects_proactive_posts() {
         let dir = tempfile::TempDir::new().unwrap();
         let ws = dir.path();
         let memory_dir = ws.join("memory");
@@ -2883,7 +3086,7 @@ mod tests {
         let config = rustyclaw_config::Config::default();
         let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
         let pipeline = Pipeline::new(config, sem);
-        let ctx = pipeline.build_system_context(ws, 32_768).unwrap();
+        let ctx = pipeline.build_system_context(ws, 32_768).await.unwrap();
         assert!(
             ctx.contains("傘を持ってください"),
             "proactive-posts が注入されるべき"
@@ -3538,8 +3741,8 @@ Keep it short.\n\
         );
     }
 
-    #[test]
-    fn test_build_system_context_truncates_large_files() {
+    #[tokio::test]
+    async fn test_build_system_context_truncates_large_files() {
         use std::fs;
         use tempfile::TempDir;
 
@@ -3554,7 +3757,10 @@ Keep it short.\n\
         let config = make_test_config_with_url("http://localhost");
         let flush_sem = Arc::new(Semaphore::new(1));
         let pipeline = Pipeline::new(config, flush_sem);
-        let result = pipeline.build_system_context(workspace, 32_768).unwrap();
+        let result = pipeline
+            .build_system_context(workspace, 32_768)
+            .await
+            .unwrap();
 
         let soul_section_start = result.find("# SOUL.md").unwrap();
         let user_section_start = result.find("# USER.md").unwrap();
@@ -3563,6 +3769,349 @@ Keep it short.\n\
             soul_section.contains("[RustyClaw]"),
             "SOUL.md が切り詰められているはず"
         );
+    }
+
+    // ── select_heartbeat_steps ──────────────────────────────────────────────
+
+    fn make_heartbeat_content() -> &'static str {
+        "\
+# Heartbeat — Memory & Awareness
+
+preamble text
+
+## Quiet hours (0:00–4:59)
+quiet content
+
+## Step 1: Review recent activity
+step1 content
+
+## Step 2: Weather & Home Environment alert
+step2 content
+
+## Step 3: Calendar & Email check
+step3 content
+
+## Step 4: Check-in if silent too long
+step4 content
+
+## Step 5: Proactive work
+step5 content
+
+## Step 6: Response
+step6 content
+"
+    }
+
+    fn mins_ago(mins: i64) -> String {
+        (chrono::Local::now() - chrono::Duration::minutes(mins))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_skips_step2_if_weather_recent() {
+        let now = chrono::Local::now();
+        let checks = serde_json::json!({
+            "weather": mins_ago(10),
+            "calendar": mins_ago(120),
+            "email": mins_ago(120),
+            "lastUserContact": mins_ago(600),
+        });
+        let result = Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks, now);
+        assert!(result.contains("step1 content"), "Step 1 は毎回含まれる");
+        assert!(
+            !result.contains("step2 content"),
+            "Step 2 は weather 30分未満でスキップ"
+        );
+        assert!(
+            result.contains("step3 content"),
+            "Step 3 は含まれる（calendar/email 古い）"
+        );
+        assert!(
+            result.contains("step4 content"),
+            "Step 4 は含まれる（10h 経過）"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_includes_step2_if_weather_old() {
+        let now = chrono::Local::now();
+        let checks = serde_json::json!({
+            "weather": mins_ago(60),
+            "calendar": mins_ago(10),
+            "email": mins_ago(10),
+            "lastUserContact": mins_ago(10),
+        });
+        let result = Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks, now);
+        assert!(
+            result.contains("step2 content"),
+            "Step 2 は weather 60分後なら含まれる"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_skips_step3_only_if_both_recent() {
+        let now = chrono::Local::now();
+        let checks_one_recent = serde_json::json!({
+            "weather": mins_ago(60),
+            "calendar": mins_ago(5),
+            "email": mins_ago(120),
+            "lastUserContact": mins_ago(600),
+        });
+        let result =
+            Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks_one_recent, now);
+        assert!(
+            result.contains("step3 content"),
+            "email が古いので Step 3 は含まれる"
+        );
+
+        let checks_both_recent = serde_json::json!({
+            "weather": mins_ago(60),
+            "calendar": mins_ago(5),
+            "email": mins_ago(5),
+            "lastUserContact": mins_ago(600),
+        });
+        let result2 =
+            Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks_both_recent, now);
+        assert!(
+            !result2.contains("step3 content"),
+            "両方直近なので Step 3 スキップ"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_skips_step4_if_contact_recent() {
+        let now = chrono::Local::now();
+        let checks = serde_json::json!({
+            "weather": mins_ago(60),
+            "calendar": mins_ago(60),
+            "email": mins_ago(60),
+            "lastUserContact": mins_ago(60),
+        });
+        let result = Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks, now);
+        assert!(
+            !result.contains("step4 content"),
+            "Step 4 は 8h 未満でスキップ"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_always_includes_step1_step5_step6() {
+        let now = chrono::Local::now();
+        let checks = serde_json::json!({
+            "weather": mins_ago(1),
+            "calendar": mins_ago(1),
+            "email": mins_ago(1),
+            "lastUserContact": mins_ago(1),
+        });
+        let result = Pipeline::select_heartbeat_steps(make_heartbeat_content(), &checks, now);
+        assert!(result.contains("step1 content"), "Step 1 は常に含まれる");
+        assert!(result.contains("step5 content"), "Step 5 は常に含まれる");
+        assert!(result.contains("step6 content"), "Step 6 は常に含まれる");
+        assert!(
+            result.contains("quiet content"),
+            "Quiet hours は常に含まれる"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_fallback_no_h2_sections() {
+        let now = chrono::Local::now();
+        let content = "no sections here, no ## headings";
+        let checks = serde_json::json!({});
+        let result = Pipeline::select_heartbeat_steps(content, &checks, now);
+        assert_eq!(result, content, "## 見出しなし → 全文フォールバック");
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_fallback_invalid_timestamp() {
+        let now = chrono::Local::now();
+        let content = make_heartbeat_content();
+        let checks = serde_json::json!({
+            "weather": "not-a-valid-timestamp",
+            "calendar": mins_ago(120),
+            "email": mins_ago(120),
+            "lastUserContact": mins_ago(600),
+        });
+        let result = Pipeline::select_heartbeat_steps(content, &checks, now);
+        assert!(
+            result.contains("step2 content"),
+            "タイムスタンプ不正 → fail-open でStep 2を含める"
+        );
+    }
+
+    #[test]
+    fn test_select_heartbeat_steps_fallback_missing_key() {
+        let now = chrono::Local::now();
+        let content = make_heartbeat_content();
+        let checks = serde_json::json!({
+            "calendar": mins_ago(120),
+            "email": mins_ago(120),
+            "lastUserContact": mins_ago(600),
+        });
+        let result = Pipeline::select_heartbeat_steps(content, &checks, now);
+        assert!(
+            result.contains("step2 content"),
+            "キー欠如 → fail-open でStep 2を含める"
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_context_falls_back_without_state_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        std::fs::write(
+            ws.join("HEARTBEAT.md"),
+            "## Step 1: Review\nstep1\n\n## Step 2: Weather\nstep2\n",
+        )
+        .unwrap();
+        let config = make_test_config_with_url("http://localhost");
+        let sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+        let ctx = pipeline.build_heartbeat_context(ws).unwrap();
+        assert!(ctx.contains("step1"), "state なし → 全文含まれる");
+        assert!(ctx.contains("step2"), "state なし → 全文含まれる");
+    }
+
+    #[test]
+    fn test_build_heartbeat_context_falls_back_with_invalid_json() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        std::fs::write(
+            ws.join("HEARTBEAT.md"),
+            "## Step 1: Review\nstep1\n\n## Step 2: Weather\nstep2\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(ws.join("memory")).unwrap();
+        std::fs::write(
+            ws.join("memory").join("heartbeat-state.json"),
+            "not valid json",
+        )
+        .unwrap();
+        let config = make_test_config_with_url("http://localhost");
+        let sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+        let ctx = pipeline.build_heartbeat_context(ws).unwrap();
+        assert!(ctx.contains("step1"), "JSON 不正 → 全文フォールバック");
+        assert!(ctx.contains("step2"), "JSON 不正 → 全文フォールバック");
+    }
+
+    #[test]
+    fn test_generate_session_guide_xml_has_required_structure() {
+        let messages = vec![
+            Message { role: "user".to_string(), content: "タスクXを実装して".to_string(), name: None, ..Default::default() },
+            Message { role: "assistant".to_string(), content: "実装しました。次はテストです".to_string(), name: None, ..Default::default() },
+        ];
+        let xml = Pipeline::generate_session_guide_xml(&messages);
+        assert!(xml.contains("<session_guide"), "session_guide タグが必要");
+        assert!(xml.contains("<task_context>"), "task_context タグが必要");
+        assert!(xml.contains("<current_goal>"), "current_goal タグが必要");
+        assert!(xml.contains("<next_steps>"), "next_steps タグが必要");
+        assert!(xml.contains("</session_guide>"), "閉じタグが必要");
+        assert!(xml.contains("タスクXを実装して"), "最後のユーザーメッセージが含まれる");
+    }
+
+    #[test]
+    fn test_generate_session_guide_xml_empty_history() {
+        let messages: Vec<Message> = vec![];
+        let xml = Pipeline::generate_session_guide_xml(&messages);
+        assert!(xml.contains("<session_guide"), "空履歴でも session_guide タグは生成される");
+        assert!(xml.contains("message_count=\"0\""), "message_count=0");
+    }
+
+    #[test]
+    fn test_generate_session_guide_xml_escapes_special_chars() {
+        let messages = vec![
+            Message { role: "user".to_string(), content: "a < b & c > d".to_string(), name: None, ..Default::default() },
+        ];
+        let xml = Pipeline::generate_session_guide_xml(&messages);
+        assert!(xml.contains("&lt;"), "< を &lt; にエスケープ");
+        assert!(xml.contains("&amp;"), "& を &amp; にエスケープ");
+        assert!(xml.contains("&gt;"), "> を &gt; にエスケープ");
+    }
+
+    #[tokio::test]
+    async fn test_try_write_session_guide_creates_xml_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        let messages = vec![
+            Message { role: "user".to_string(), content: "hello".to_string(), name: None, ..Default::default() },
+        ];
+        Pipeline::try_write_session_guide(ws, &messages).await;
+
+        let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let xml_path = ws.join("memory").join("sessions").join(format!("{date_str}.xml"));
+        assert!(xml_path.exists(), "XML ファイルが作成される");
+        let content = std::fs::read_to_string(&xml_path).unwrap();
+        assert!(content.contains("<session_guide"), "XML 内容が正しい");
+    }
+
+    #[tokio::test]
+    async fn test_try_write_session_guide_skips_empty_messages() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        Pipeline::try_write_session_guide(ws, &[]).await;
+        assert!(!ws.join("memory").join("sessions").exists());
+    }
+
+    #[tokio::test]
+    async fn test_try_inject_yesterday_guide_injects_when_no_today_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        let sessions_dir = ws.join("memory").join("sessions");
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+
+        let yesterday = chrono::Local::now().date_naive().pred_opt().unwrap();
+        let yesterday_path = sessions_dir.join(format!("{}.xml", yesterday.format("%Y-%m-%d")));
+        tokio::fs::write(&yesterday_path, "<session_guide><task_context><current_goal>前日ゴール</current_goal></task_context></session_guide>").await.unwrap();
+
+        let mut context = String::new();
+        Pipeline::try_inject_yesterday_session_guide(ws, &mut context).await;
+
+        assert!(context.contains("前日ゴール"), "前日のセッションガイドが注入される");
+        assert!(context.contains("# Yesterday's Session Guide"), "ヘッダーが注入される");
+    }
+
+    #[tokio::test]
+    async fn test_try_inject_yesterday_guide_skips_when_today_file_exists() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        let sessions_dir = ws.join("memory").join("sessions");
+        tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+
+        let today = chrono::Local::now().date_naive();
+        let today_path = sessions_dir.join(format!("{}.xml", today.format("%Y-%m-%d")));
+        tokio::fs::write(&today_path, "<session_guide/>").await.unwrap();
+
+        let yesterday = today.pred_opt().unwrap();
+        let yesterday_path = sessions_dir.join(format!("{}.xml", yesterday.format("%Y-%m-%d")));
+        tokio::fs::write(&yesterday_path, "<session_guide><task_context><current_goal>前日ゴール</current_goal></task_context></session_guide>").await.unwrap();
+
+        let mut context = String::new();
+        Pipeline::try_inject_yesterday_session_guide(ws, &mut context).await;
+
+        assert!(context.is_empty(), "今日の XML がある場合は注入しない");
+    }
+
+    #[tokio::test]
+    async fn test_build_system_context_injects_yesterday_guide() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ws = dir.path();
+        std::fs::write(ws.join("SOUL.md"), "soul").unwrap();
+
+        let sessions_dir = ws.join("memory").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let yesterday = chrono::Local::now().date_naive().pred_opt().unwrap();
+        let yesterday_path = sessions_dir.join(format!("{}.xml", yesterday.format("%Y-%m-%d")));
+        std::fs::write(&yesterday_path, "<session_guide><task_context><current_goal>昨日のゴール</current_goal></task_context></session_guide>").unwrap();
+
+        let config = make_test_config_with_url("http://localhost");
+        let sem = Arc::new(Semaphore::new(1));
+        let pipeline = Pipeline::new(config, sem);
+        let ctx = pipeline.build_system_context(ws, 32_768).await.unwrap();
+
+        assert!(ctx.contains("昨日のゴール"), "build_system_context に前日ガイドが注入される");
+        assert!(ctx.contains("# Yesterday's Session Guide"), "ヘッダーが含まれる");
+        assert!(ctx.contains("# SOUL.md"), "SOUL.md も引き続き含まれる");
     }
 }
 
